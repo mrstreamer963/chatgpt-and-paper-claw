@@ -1,0 +1,16 @@
+.squad-marker { padding-top: 26px; pointer-events: none; }
+.cat-silhouette { color: #f4dfad; font-size: 28px; line-height: 20px; text-shadow: 0 0 8px #e58943, 0 2px 4px #000; }
+.squad-marker b { color: #fff1c8; }
+
+.cleanup-pin.assigned {
+  opacity: 1;
+  color: #78df91;
+}
+
+.cleanup-pin.assigned span {
+  border-color: #78df91;
+  color: #78df91;
+  box-shadow: 0 0 16px #48bf6a88;
+}
+
+.cleanup-pin.assigned small { color: #b5e7bd; }

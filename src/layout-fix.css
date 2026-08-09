@@ -1,0 +1,22 @@
+.map-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  height: calc(100vh - 76px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.map-view .map-grid,
+.map-view > aside {
+  min-height: 0;
+  height: 100%;
+}
+
+.map-view > aside {
+  width: auto;
+  border-left: 1px solid #384042;
+}
+
+@media (max-width: 900px) {
+  .map-view { grid-template-columns: minmax(0, 1fr) 290px; }
+}
