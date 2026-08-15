@@ -113,6 +113,14 @@ export type State = {
   log: LogEntry[]
 }
 export type RaidOption = { available: boolean; chance?: number; reason?: string; supportSquadName?: string }
+export type CleanupForecast = {
+  total: number
+  base: number
+  skill: number
+  traits: number
+  equipment: number
+  fatigue: number
+}
 export type Achievement = {
   id: AchievementId
   title: string
@@ -810,14 +818,31 @@ function baseTeamChance(members: Cat[], baseChance: number, skillSum: number, st
 }
 
 export function getSquadCleanupChance(state: State, squad: Squad) {
+  return getSquadCleanupForecast(state, squad).total
+}
+
+export function getSquadCleanupForecast(state: State, squad: Squad): CleanupForecast {
   const members = membersOf(state, squad)
-  if (!members.length) return 0
+  if (!members.length) return { total: 0, base: CONFIG.chance.cleanupBase, skill: 0, traits: 0, equipment: 0, fatigue: 0 }
   const skillSum = members.reduce((sum, cat) => sum + cat.tech + cat.perception, 0)
+  const skill = Math.min(CONFIG.chance.teamSkillBonusCap, Math.floor(skillSum * CONFIG.chance.teamSkillMultiplier))
   const traitBonus = members.reduce((sum, cat) => sum + cat.cleanupTrait, 0)
   const equipmentBonus = members.reduce((sum, cat) => sum
     + (hasEquipped(cat, 'toolkit') ? itemBonus('toolkit', 'cleanupBonus') : 0)
     + (hasEquipped(cat, 'scanner') ? itemBonus('scanner', 'cleanupBonus') : 0), 0)
-  return baseTeamChance(members, CONFIG.chance.cleanupBase, skillSum, 0, traitBonus, equipmentBonus)
+  const averageEnergy = members.reduce((sum, cat) => sum + cat.energy, 0) / members.length
+  const fatigue = Math.min(
+    CONFIG.chance.fatiguePenaltyCap,
+    Math.floor(Math.max(0, CONFIG.chance.fatigueStartsBelowEnergy - averageEnergy) / CONFIG.chance.fatiguePenaltyEnergyStep),
+  )
+  return {
+    total: baseTeamChance(members, CONFIG.chance.cleanupBase, skillSum, 0, traitBonus, equipmentBonus),
+    base: CONFIG.chance.cleanupBase,
+    skill,
+    traits: traitBonus,
+    equipment: equipmentBonus,
+    fatigue,
+  }
 }
 
 function actionChance(state: State, squad: Squad, action: 'support' | 'attack') {

@@ -10,6 +10,7 @@ import {
   equipItem,
   getAchievements,
   getRaidOptions,
+  getSquadCleanupForecast,
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
@@ -18,6 +19,26 @@ import {
   successfulCleanups,
   tick,
 } from './simulation.ts'
+
+test('cleanup forecast exposes the same deterministic modifier breakdown as its total', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  equipItem(state, 'pixel', 'hands', 'toolkit')
+  const forecast = getSquadCleanupForecast(state, state.squads[0])
+
+  assert.deepEqual(forecast, {
+    total: 73,
+    base: 35,
+    skill: 21,
+    traits: 5,
+    equipment: 12,
+    fatigue: 0,
+  })
+
+  state.cats.find(cat => cat.id === 'pixel')!.energy = 40
+  assert.equal(getSquadCleanupForecast(state, state.squads[0]).fatigue, 6)
+  assert.equal(getSquadCleanupForecast(state, state.squads[0]).total, 67)
+})
 
 function openRaid() {
   const state = createState()

@@ -296,6 +296,11 @@
 
 .squad-config { display: grid; grid-template-columns: minmax(0, 1fr) 112px; align-items: center; gap: 9px; }
 .squad-config select { width: 100%; padding: 6px; font-size: 9px; }
+.forecast-breakdown { grid-column: 1 / -1; padding-top: 6px; border-top: 1px solid #303b3b; color: #71807a; font-size: 8px; }
+.forecast-breakdown summary { cursor: pointer; color: #9caaa4; line-height: 1.45; }
+.forecast-breakdown[open] summary { margin-bottom: 7px; color: #d6ae71; }
+.forecast-breakdown > span { display: inline-flex; gap: 4px; margin: 0 10px 4px 0; }
+.forecast-breakdown b { color: #c6d1ca; font-weight: 600; }
 
 .cat-card { margin-top: 7px; border: 1px solid #303b3b; background: #1b2224; }
 .cat-card[open] { border-color: #4d5c59; }

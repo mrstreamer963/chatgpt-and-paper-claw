@@ -1,0 +1,86 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { createServer, type ViteDevServer } from 'vite'
+import { createSSRApp, h, type Component } from 'vue'
+import { renderToString } from 'vue/server-renderer'
+import {
+  assignCat,
+  createState,
+  drainEvents,
+  getAchievements,
+  resolveNinthLife,
+  resolveRaidDecision,
+  resolveRaidFollowup,
+  tick,
+} from './core/simulation.ts'
+
+let vite: ViteDevServer
+
+test.before(async () => {
+  vite = await createServer({ appType: 'custom', server: { middlewareMode: true }, logLevel: 'silent' })
+})
+
+test.after(async () => {
+  await vite.close()
+})
+
+async function loadComponent(path: string) {
+  return (await vite.ssrLoadModule(path)).default as Component
+}
+
+async function render(component: Component, props: Record<string, unknown>) {
+  return renderToString(createSSRApp({ render: () => h(component, props) }))
+}
+
+test('UI smoke: a prepared operation renders every blocking stage through the final report', async () => {
+  const BaseOperations = await loadComponent('/src/components/BaseOperations.vue')
+  const GameOverlays = await loadComponent('/src/components/GameOverlays.vue')
+  const state = createState()
+  for (const catId of ['pixel', 'rust', 'bastion']) assignCat(state, catId, 'alpha')
+  for (const catId of ['marlowe', 'shorokh', 'myata']) assignCat(state, catId, 'bravo')
+  drainEvents(state)
+
+  const achievements = getAchievements(state)
+  const baseHtml = await render(BaseOperations, {
+    state,
+    locale: 'ru',
+    panel: 'teams',
+    achievements,
+    completedAchievementCount: achievements.filter(item => item.completed).length,
+    nextAchievement: achievements.find(item => !item.completed),
+    hintsVisible: true,
+    totalRuns: 0,
+    saveStatus: { key: 'save.ready' },
+  })
+  assert.match(baseHtml, /прогноз уборки/)
+  assert.match(baseHtml, /техника \+ восприятие/)
+  assert.match(baseHtml, /Пиксель/)
+
+  state.squads[0].completed = 2
+  state.fame = 30
+  state.speed = 10
+  for (let step = 0; step < 100 && !state.incident; step++) tick(state, 0.25)
+  assert.ok(state.incident)
+  state.incident.supportRoll = 1
+
+  let overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 2 })
+  assert.match(overlayHtml, /Встреча с рейдерами/)
+  assert.match(overlayHtml, /Укрыться и запросить поддержку/)
+
+  assert.equal(resolveRaidDecision(state, 'support'), true)
+  state.speed = 1
+  tick(state, 8)
+  overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 2 })
+  assert.match(overlayHtml, /Поддержка прибыла/)
+
+  assert.equal(resolveRaidFollowup(state, 'continue'), true)
+  assert.ok(state.storyIncident)
+  overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 3 })
+  assert.match(overlayHtml, /Девятая жизнь/)
+  assert.match(overlayHtml, /Укрыть дезертира/)
+
+  assert.equal(resolveNinthLife(state, 'shelter'), true)
+  overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 3 })
+  assert.match(overlayHtml, /ДЕЛО ЗАКРЫТО/)
+  assert.match(overlayHtml, /Продолжить в песочнице/)
+})
