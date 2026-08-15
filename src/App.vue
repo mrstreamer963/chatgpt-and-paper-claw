@@ -1,22 +1,35 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import {
+  EQUIPMENT_SLOTS,
+  ITEM_DEFINITIONS,
+  RESEARCH_DEFINITIONS,
+  RESEARCH_RULES,
   assignCat,
   canEditCat,
+  equipItem,
+  getResearchWorker,
   continueAfterFinale,
   createState,
   getRaidOptions,
+  getSquadCleanupChance,
   resolveRaidDecision,
   resolveRaidFollowup,
   resolveNinthLife,
+  selectResearch,
+  setSquadStyle,
   tick,
+  type EquipmentSlot,
+  type ItemId,
   type NinthLifeDecision,
+  type ResearchId,
   type Speed,
   type Squad,
 } from './core/simulation'
 
 const state = reactive(createState())
 let timer: number
+const basePanel = ref<'teams' | 'lab'>('teams')
 
 const speedControls: { speed: Speed; label: string; shortcut: string }[] = [
   { speed: 0, label: 'Ⅱ', shortcut: 'Пробел' },
@@ -60,6 +73,7 @@ const primarySquad = computed(() => state.squads.find(squad => squad.id === stat
 const supportSquad = computed(() => state.squads.find(squad => squad.id === state.incident?.supportSquadId))
 const supportSeconds = computed(() => Math.max(0, Math.ceil((supportSquad.value?.travelDuration ?? 0) - (supportSquad.value?.travel ?? 0))))
 const storySquad = computed(() => state.squads.find(squad => squad.id === state.storyIncident?.foundBySquadId))
+const researchWorker = computed(() => getResearchWorker(state))
 
 const storyChoices: { id: NinthLifeDecision; title: string; tag: string; description: string; fame: number; threat: number; tone: string }[] = [
   { id: 'shelter', title: 'Укрыть дезертира', tag: 'Гуманность', description: 'Дать убежище на базе. Слух укрепит имя корпорации, но приведёт преследователей к нашим воротам.', fame: 15, threat: 20, tone: 'danger' },
@@ -76,6 +90,34 @@ function setSpeed(speed: Speed) {
 
 function handleAssignment(catId: string, event: Event) {
   assignCat(state, catId, (event.target as HTMLSelectElement).value)
+}
+
+function handleEquipment(catId: string, slot: EquipmentSlot, event: Event) {
+  const value = (event.target as HTMLSelectElement).value as ItemId | ''
+  equipItem(state, catId, slot, value || undefined)
+}
+
+function handleSquadStyle(squadId: string, event: Event) {
+  setSquadStyle(state, squadId, (event.target as HTMLSelectElement).value as Squad['style'])
+}
+
+function equipmentOptions(slot: EquipmentSlot) {
+  return ITEM_DEFINITIONS.filter(item => item.slot === slot)
+}
+
+function researchPercent(researchId: ResearchId) {
+  return Math.min(100, Math.round(state.research.nodes[researchId].progress / RESEARCH_RULES.duration * 100))
+}
+
+function catTrait(catId: string) {
+  return {
+    marlowe: 'Деэскалация · +5 к поддержке',
+    pixel: 'Самодиагностика · +5 к уборке',
+    rust: 'Тяжёлая работа · +5 к уборке',
+    shorokh: 'Паранойя · +10 к поддержке',
+    bastion: 'Силовой ответ · +10 к нападению',
+    myata: 'Бережёт команду · −10 к ранению',
+  }[catId] ?? ''
 }
 
 function squadStyle(squad: Squad) {
@@ -187,29 +229,81 @@ function squadLabel(squad: Squad) {
 
     <section v-else class="base-view">
       <div class="cutaway">
-        <div class="room lab">ЛАБОРАТОРИЯ<br><small>Исследования — следующий этап</small></div>
+        <button class="room lab" :class="{ selected: basePanel === 'lab' }" @click="basePanel = 'lab'">
+          ЛАБОРАТОРИЯ
+          <small v-if="state.research.activeId">{{ researchWorker?.name || 'Нет исполнителя' }} · {{ researchPercent(state.research.activeId) }}%</small>
+          <small v-else>{{ Object.values(state.research.nodes).filter(node => node.completed).length }} / 3 исследований</small>
+        </button>
         <div class="room control">ДИСПЕТЧЕРСКАЯ<br><small>{{ totalRuns }} заверш. уборок</small></div>
-        <div class="room garage">ГАРАЖ<br><small>2 отряда на готовности</small></div>
+        <button class="room garage" :class="{ selected: basePanel === 'teams' }" @click="basePanel = 'teams'">
+          ГАРАЖ И АРСЕНАЛ
+          <small>{{ state.squads.filter(squad => squad.phase === 'base').length }} / 2 отряда на базе · {{ Object.values(state.inventory).reduce((sum, count) => sum + count, 0) }} предметов на складе</small>
+        </button>
       </div>
-      <aside class="roster">
-        <h2>СОСТАВ И ОТРЯДЫ</h2>
-        <p class="roster-hint">Изменение состава ставит время на паузу. Отряд в поле заблокирован до возвращения.</p>
-        <div v-for="cat in state.cats" :key="cat.id" class="cat" :class="{ injured: cat.injuredRemaining > 0 }">
-          <img :src="`/assets/art/portrait-${cat.id}-v1.png`" :alt="cat.name">
-          <div>
-            <b>{{ cat.name }}</b>
-            <small v-if="cat.injuredRemaining > 0" class="injury-label">РАНЕН · {{ Math.ceil(cat.injuredRemaining) }} с</small>
-            <small v-else>{{ cat.role }} · бодрость {{ Math.round(cat.energy) }}%</small>
-          </div>
-          <select :value="cat.assignedTo || ''" :disabled="!canEditCat(state, cat.id)" @change="handleAssignment(cat.id, $event)">
-            <option value="">не назначен</option>
-            <option v-for="squad in state.squads" :key="squad.id" :value="squad.id" :disabled="squad.phase !== 'base'">{{ squad.name }}</option>
+      <aside v-if="basePanel === 'teams'" class="roster base-panel">
+        <div class="panel-tabs">
+          <button class="active" @click="basePanel = 'teams'">Состав / склад</button>
+          <button @click="basePanel = 'lab'">Лаборатория</button>
+        </div>
+        <h2>СОСТАВ И ЭКИПИРОВКА</h2>
+        <p class="roster-hint">Любое изменение ставит время на паузу. Состав и снаряжение отряда в поле заблокированы.</p>
+        <div v-for="squad in state.squads" :key="squad.id" class="squad-status squad-config">
+          <div><b>{{ squad.name }}</b><span>{{ squad.members.length }} кот. · прогноз уборки {{ getSquadCleanupChance(state, squad) }}%</span></div>
+          <select :value="squad.style" :disabled="squad.phase !== 'base'" @change="handleSquadStyle(squad.id, $event)">
+            <option value="careful">осторожный</option>
+            <option value="balanced">стандартный</option>
+            <option value="risky">рискованный</option>
           </select>
         </div>
-        <div v-for="squad in state.squads" :key="squad.id" class="squad-status">
-          <b>{{ squad.name }}</b>
-          <span>{{ squad.members.length }} кот. · {{ squad.phase === 'base' ? 'на базе' : 'состав заблокирован' }}</span>
+        <details v-for="cat in state.cats" :key="cat.id" class="cat-card" :class="{ injured: cat.injuredRemaining > 0 }">
+          <summary>
+            <img :src="`/assets/art/portrait-${cat.id}-v1.png`" :alt="cat.name">
+            <span><b>{{ cat.name }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">РАНЕН · {{ Math.ceil(cat.injuredRemaining) }} с</small><small v-else>{{ cat.role }} · бодрость {{ Math.round(cat.energy) }}%</small></span>
+            <select :value="cat.assignedTo || ''" :disabled="!canEditCat(state, cat.id)" aria-label="Назначение в отряд" @click.stop @change="handleAssignment(cat.id, $event)">
+              <option value="">не назначен</option>
+              <option v-for="squad in state.squads" :key="squad.id" :value="squad.id" :disabled="squad.phase !== 'base'">{{ squad.name }}</option>
+            </select>
+          </summary>
+          <div class="cat-trait"><span>{{ catTrait(cat.id) }}</span><small>БОЙ {{ cat.combat }} · ТЕХ {{ cat.tech }} · ВОСП {{ cat.perception }} · РАЗВ {{ cat.scouting }}</small></div>
+          <div class="equipment-grid">
+            <label v-for="slot in EQUIPMENT_SLOTS" :key="slot.id">
+              <span>{{ slot.name }}</span>
+              <select :value="cat.equipment[slot.id] || ''" :disabled="!canEditCat(state, cat.id) || slot.id === 'suit'" @change="handleEquipment(cat.id, slot.id, $event)">
+                <option value="">{{ slot.id === 'suit' ? 'нет предметов в PoC' : 'пусто' }}</option>
+                <option v-for="item in equipmentOptions(slot.id)" :key="item.id" :value="item.id" :disabled="state.inventory[item.id] <= 0 && cat.equipment[slot.id] !== item.id">
+                  {{ item.name }} · склад {{ state.inventory[item.id] }}
+                </option>
+              </select>
+            </label>
+          </div>
+        </details>
+        <section class="warehouse">
+          <h3>СКЛАД</h3>
+          <div v-for="item in ITEM_DEFINITIONS" :key="item.id" :class="{ empty: state.inventory[item.id] === 0 }">
+            <span><b>{{ item.name }}</b><small>{{ item.effect }}</small></span><strong>×{{ state.inventory[item.id] }}</strong>
+          </div>
+        </section>
+      </aside>
+      <aside v-else class="base-panel laboratory-panel">
+        <div class="panel-tabs">
+          <button @click="basePanel = 'teams'">Состав / склад</button>
+          <button class="active" @click="basePanel = 'lab'">Лаборатория</button>
         </div>
+        <h2>ЛАБОРАТОРИЯ</h2>
+        <div class="lab-status">
+          <span>ИСПОЛНИТЕЛЬ</span>
+          <b>{{ researchWorker?.name || (state.research.activeId ? 'Нет доступного кота' : 'Не назначен') }}</b>
+          <small v-if="researchWorker">техника {{ researchWorker.tech }} · бодрость {{ Math.round(researchWorker.energy) }}%</small>
+          <small v-else>Нужен свободный здоровый кот с бодростью от 50%</small>
+        </div>
+        <p class="roster-hint">Работа идёт автоматически: {{ RESEARCH_RULES.duration }} секунд и {{ RESEARCH_RULES.scrapCost }} лома. При нехватке лома или исполнителя прогресс сохраняется.</p>
+        <article v-for="research in RESEARCH_DEFINITIONS" :key="research.id" class="research-card" :class="{ active: state.research.activeId === research.id, complete: state.research.nodes[research.id].completed }">
+          <header><span>{{ state.research.nodes[research.id].completed ? 'ЗАВЕРШЕНО' : state.research.activeId === research.id ? 'В РАБОТЕ' : 'ДОСТУПНО' }}</span><strong>{{ researchPercent(research.id) }}%</strong></header>
+          <h3>{{ research.name }}</h3>
+          <p>{{ research.result }}</p>
+          <div class="research-progress"><i :style="{ width: `${researchPercent(research.id)}%` }"></i></div>
+          <footer><span>{{ state.research.nodes[research.id].scrapSpent }} / {{ RESEARCH_RULES.scrapCost }} лома</span><button v-if="!state.research.nodes[research.id].completed" :class="{ active: state.research.activeId === research.id }" @click="selectResearch(state, state.research.activeId === research.id ? undefined : research.id)">{{ state.research.activeId === research.id ? 'Приостановить' : 'Исследовать' }}</button></footer>
+        </article>
       </aside>
     </section>
 
@@ -229,10 +323,10 @@ function squadLabel(squad: Squad) {
               <span><b>Сбежать</b><small>Миссия отменится без добычи и ранений.</small></span><strong>100%</strong>
             </button>
             <button class="choice" :disabled="!raidOptions?.attack.available" @click="resolveRaidDecision(state, 'attack')">
-              <span><b>Напасть</b><small>{{ raidOptions?.attack.reason }}</small></span><strong>ЗАКРЫТО</strong>
+              <span><b>Напасть</b><small>{{ raidOptions?.attack.available ? 'Использовать нелетальное оружие и вытеснить рейдеров.' : raidOptions?.attack.reason }}</small></span><strong>{{ raidOptions?.attack.chance ? `${raidOptions.attack.chance}%` : 'ЗАКРЫТО' }}</strong>
             </button>
             <button class="choice support" :disabled="!raidOptions?.support.available" @click="resolveRaidDecision(state, 'support')">
-              <span><b>Укрыться и запросить поддержку</b><small v-if="raidOptions?.support.available">{{ raidOptions.support.supportSquadName }} будет отозван и прибудет через 8 секунд.</small><small v-else>{{ raidOptions?.support.reason }}</small></span>
+              <span><b>Укрыться и запросить поддержку</b><small v-if="raidOptions?.support.available">{{ raidOptions.support.supportSquadName }} будет отозван и прибудет через {{ state.research.nodes.emergency_dispatch.completed ? RESEARCH_RULES.researchedSupportTravelTime : RESEARCH_RULES.supportTravelTime }} секунд.</small><small v-else>{{ raidOptions?.support.reason }}</small></span>
               <strong>{{ raidOptions?.support.chance ? `${raidOptions.support.chance}%` : 'НЕТ' }}</strong>
             </button>
           </div>

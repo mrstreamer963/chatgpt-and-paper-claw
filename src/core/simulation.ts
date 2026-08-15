@@ -2,6 +2,10 @@ import { SIMULATION_CONFIG as CONFIG } from './config.ts'
 
 export type Speed = 0 | 1 | 5 | 10
 export type SquadStyle = 'careful' | 'balanced' | 'risky'
+export type EquipmentSlot = 'armor' | 'suit' | 'belt' | 'hands'
+export type ItemId = 'armor_vest' | 'toolkit' | 'headset' | 'medkit' | 'scanner' | 'nonlethal_weapon'
+export type ResearchId = 'field_scanners' | 'emergency_dispatch' | 'improvised_defense'
+export type Equipment = Record<EquipmentSlot, ItemId | undefined>
 export type Cat = {
   id: string
   name: string
@@ -12,10 +16,13 @@ export type Cat = {
   tech: number
   perception: number
   scouting: number
+  cleanupTrait: number
   supportTrait: number
+  attackTrait: number
   injuryTrait: number
   assignedTo?: string
   injuredRemaining: number
+  equipment: Equipment
 }
 export type Mission = { id: string; title: string; x: number; y: number; priority: number; status: 'available' | 'assigned'; squadId?: string }
 export type Phase = 'base' | 'outbound' | 'cleanup' | 'incident' | 'support' | 'returning'
@@ -81,9 +88,31 @@ export type State = {
   storyResolution?: StoryResolution
   finalSummaryVisible: boolean
   finalSummarySeen: boolean
+  inventory: Record<ItemId, number>
+  research: {
+    activeId?: ResearchId
+    workerCatId?: string
+    nodes: Record<ResearchId, { progress: number; scrapSpent: number; spendClock: number; completed: boolean }>
+  }
   log: string[]
 }
 export type RaidOption = { available: boolean; chance?: number; reason?: string; supportSquadName?: string }
+
+export const EQUIPMENT_SLOTS: { id: EquipmentSlot; name: string }[] = [
+  { id: 'armor', name: 'Бронежилет' },
+  { id: 'suit', name: 'Комбинезон' },
+  { id: 'belt', name: 'Пояс' },
+  { id: 'hands', name: 'Руки' },
+]
+
+export const ITEM_DEFINITIONS = CONFIG.equipment.items
+export const RESEARCH_DEFINITIONS = CONFIG.research.nodes
+export const RESEARCH_RULES = {
+  duration: CONFIG.research.duration,
+  scrapCost: CONFIG.research.scrapCost,
+  supportTravelTime: CONFIG.raid.supportTravelTime,
+  researchedSupportTravelTime: CONFIG.raid.researchedSupportTravelTime,
+}
 
 const templates: Mission[] = [
   { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1, status: 'available' },
@@ -93,6 +122,7 @@ const templates: Mission[] = [
 ]
 
 export function createState(): State {
+  const emptyEquipment = (): Equipment => ({ armor: undefined, suit: undefined, belt: undefined, hands: undefined })
   return {
     fame: CONFIG.initial.fame,
     scrap: CONFIG.initial.scrap,
@@ -100,7 +130,7 @@ export function createState(): State {
     speed: 0,
     time: 0,
     activeView: 'map',
-    cats: CONFIG.cats.map(cat => ({ ...cat, injuredRemaining: 0 })),
+    cats: CONFIG.cats.map(cat => ({ ...cat, injuredRemaining: 0, equipment: emptyEquipment() })),
     missions: structuredClone(templates.slice(0, 2)),
     missionSerial: 0,
     rngSeed: CONFIG.initial.rngSeed,
@@ -108,6 +138,14 @@ export function createState(): State {
     storyTriggered: false,
     finalSummaryVisible: false,
     finalSummarySeen: false,
+    inventory: Object.fromEntries(CONFIG.equipment.items.map(item => [item.id, item.initialCount])) as Record<ItemId, number>,
+    research: {
+      nodes: {
+        field_scanners: { progress: 0, scrapSpent: 0, spendClock: 0, completed: false },
+        emergency_dispatch: { progress: 0, scrapSpent: 0, spendClock: 0, completed: false },
+        improvised_defense: { progress: 0, scrapSpent: 0, spendClock: 0, completed: false },
+      },
+    },
     squads: [
       { id: 'alpha', name: 'Отряд «Альфа»', members: [], style: 'balanced', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
       { id: 'bravo', name: 'Отряд «Браво»', members: [], style: 'careful', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
@@ -148,12 +186,79 @@ export function assignCat(state: State, catId: string, squadId: string) {
   if (targetSquad) {
     targetSquad.members.push(catId)
     cat.assignedTo = targetSquad.id
+    if (state.research.workerCatId === cat.id) state.research.workerCatId = undefined
     note(state, `${cat.name} назначен в ${targetSquad.name}`)
   } else {
     cat.assignedTo = undefined
     note(state, `${cat.name} выведен из состава ${currentSquad?.name ?? ''}`.trim())
   }
   return true
+}
+
+export function setSquadStyle(state: State, squadId: string, style: SquadStyle) {
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!squad || squad.phase !== 'base' || squad.style === style) return false
+  state.speed = 0
+  squad.style = style
+  note(state, `${squad.name}: выбран стиль «${style === 'careful' ? 'осторожный' : style === 'risky' ? 'рискованный' : 'стандартный'}»`)
+  return true
+}
+
+function itemDefinition(itemId: ItemId) {
+  return CONFIG.equipment.items.find(item => item.id === itemId)
+}
+
+function hasEquipped(cat: Cat, itemId: ItemId) {
+  return Object.values(cat.equipment).includes(itemId)
+}
+
+function itemBonus(itemId: ItemId, key: 'cleanupBonus' | 'supportBonus' | 'attackBonus' | 'injuryReduction') {
+  const definition = itemDefinition(itemId)
+  return definition && key in definition ? Number(definition[key as keyof typeof definition]) : 0
+}
+
+export function canEditEquipment(state: State, catId: string) {
+  return canEditCat(state, catId)
+}
+
+export function equipItem(state: State, catId: string, slot: EquipmentSlot, itemId?: ItemId) {
+  const cat = state.cats.find(candidate => candidate.id === catId)
+  if (!cat || !canEditEquipment(state, catId)) return false
+  const currentItemId = cat.equipment[slot]
+  if (currentItemId === itemId) return false
+  if (itemId) {
+    const definition = itemDefinition(itemId)
+    if (!definition || definition.slot !== slot || state.inventory[itemId] <= 0) return false
+  }
+
+  state.speed = 0
+  if (currentItemId) state.inventory[currentItemId]++
+  if (itemId) state.inventory[itemId]--
+  cat.equipment[slot] = itemId
+  if (itemId === 'medkit' && cat.injuredRemaining > CONFIG.raid.medkitRecoveryTime) {
+    cat.injuredRemaining = CONFIG.raid.medkitRecoveryTime
+  }
+  note(state, itemId ? `${cat.name} получил: ${itemDefinition(itemId)?.name}` : `${cat.name}: слот «${EQUIPMENT_SLOTS.find(candidate => candidate.id === slot)?.name}» освобождён`)
+  return true
+}
+
+export function selectResearch(state: State, researchId?: ResearchId) {
+  if (researchId && state.research.nodes[researchId].completed) return false
+  if (state.research.activeId === researchId) return false
+  state.research.activeId = researchId
+  state.research.workerCatId = undefined
+  if (researchId) {
+    chooseResearchWorker(state)
+    const definition = CONFIG.research.nodes.find(node => node.id === researchId)
+    note(state, `Выбрано исследование: ${definition?.name}`)
+  } else {
+    note(state, 'Работа лаборатории приостановлена')
+  }
+  return true
+}
+
+export function getResearchWorker(state: State) {
+  return state.cats.find(cat => cat.id === state.research.workerCatId)
 }
 
 function distanceFromBase(target: Pick<Mission, 'x' | 'y'>) {
@@ -318,18 +423,36 @@ function membersOf(state: State, squad: Squad) {
   return squad.members.map(id => state.cats.find(cat => cat.id === id)).filter((cat): cat is Cat => Boolean(cat))
 }
 
-function actionChance(state: State, squad: Squad, action: 'support' | 'attack') {
-  const members = membersOf(state, squad)
-  const skillSum = members.reduce((sum, cat) => sum + (action === 'support' ? cat.scouting + cat.perception : cat.combat + cat.reaction), 0)
+function baseTeamChance(members: Cat[], baseChance: number, skillSum: number, styleBonus = 0, traitBonus = 0, equipmentBonus = 0) {
   const teamSkillBonus = Math.min(45, Math.floor(skillSum * 1.5))
   const averageEnergy = members.reduce((sum, cat) => sum + cat.energy, 0) / Math.max(1, members.length)
   const fatiguePenalty = Math.min(10, Math.floor(Math.max(0, 70 - averageEnergy) / 5))
+  return Math.max(5, Math.min(100, baseChance + teamSkillBonus + styleBonus + traitBonus + equipmentBonus - fatiguePenalty))
+}
+
+export function getSquadCleanupChance(state: State, squad: Squad) {
+  const members = membersOf(state, squad)
+  if (!members.length) return 0
+  const skillSum = members.reduce((sum, cat) => sum + cat.tech + cat.perception, 0)
+  const traitBonus = members.reduce((sum, cat) => sum + cat.cleanupTrait, 0)
+  const equipmentBonus = members.reduce((sum, cat) => sum
+    + (hasEquipped(cat, 'toolkit') ? itemBonus('toolkit', 'cleanupBonus') : 0)
+    + (hasEquipped(cat, 'scanner') ? itemBonus('scanner', 'cleanupBonus') : 0), 0)
+  return baseTeamChance(members, 35, skillSum, 0, traitBonus, equipmentBonus)
+}
+
+function actionChance(state: State, squad: Squad, action: 'support' | 'attack') {
+  const members = membersOf(state, squad)
+  const skillSum = members.reduce((sum, cat) => sum + (action === 'support' ? cat.scouting + cat.perception : cat.combat + cat.reaction), 0)
   const styleBonus = action === 'support'
     ? squad.style === 'careful' ? 10 : squad.style === 'risky' ? -10 : 0
     : squad.style === 'careful' ? -10 : squad.style === 'risky' ? 10 : 0
-  const traitBonus = action === 'support' ? members.reduce((sum, cat) => sum + cat.supportTrait, 0) : 0
+  const traitBonus = members.reduce((sum, cat) => sum + (action === 'support' ? cat.supportTrait : cat.attackTrait), 0)
+  const equipmentBonus = members.reduce((sum, cat) => sum
+    + (action === 'support' && hasEquipped(cat, 'headset') ? itemBonus('headset', 'supportBonus') : 0)
+    + (action === 'attack' && hasEquipped(cat, 'nonlethal_weapon') ? itemBonus('nonlethal_weapon', 'attackBonus') : 0), 0)
   const baseChance = action === 'support' ? CONFIG.raid.supportBaseChance : CONFIG.raid.attackBaseChance
-  return Math.max(5, Math.min(100, baseChance + teamSkillBonus + styleBonus + traitBonus - fatiguePenalty))
+  return baseTeamChance(members, baseChance, skillSum, styleBonus, traitBonus, equipmentBonus)
 }
 
 function eligibleSupportSquad(state: State, primarySquadId: string) {
@@ -361,9 +484,14 @@ function startRaidIncident(state: State, squad: Squad) {
 export function getRaidOptions(state: State) {
   if (!state.incident) return undefined
   const supportSquad = eligibleSupportSquad(state, state.incident.primarySquadId)
+  const primarySquad = state.squads.find(squad => squad.id === state.incident?.primarySquadId)
+  const hasWeapon = Boolean(primarySquad && membersOf(state, primarySquad).some(cat => hasEquipped(cat, 'nonlethal_weapon')))
+  const defenseReady = state.research.nodes.improvised_defense.completed
   return {
     escape: { available: true, chance: 100 } satisfies RaidOption,
-    attack: { available: false, reason: 'Нужно исследовать защиту и выдать нелетальное оружие.' } satisfies RaidOption,
+    attack: defenseReady && hasWeapon
+      ? { available: true, chance: state.incident.attackChance } satisfies RaidOption
+      : { available: false, reason: defenseReady ? 'Выдайте участнику отряда нелетальное оружие.' : 'Нужно завершить исследование «Импровизированная защита».' } satisfies RaidOption,
     support: supportSquad
       ? { available: true, chance: state.incident.supportChance, supportSquadName: supportSquad.name }
       : { available: false, reason: 'Во втором отряде нет готовых к выезду котов.' } satisfies RaidOption,
@@ -384,8 +512,10 @@ function sendHome(squad: Squad) {
 }
 
 function injuryChance(state: State, squad: Squad) {
-  const traitReduction = membersOf(state, squad).reduce((sum, cat) => sum + cat.injuryTrait, 0)
-  return Math.max(CONFIG.raid.minimumInjuryChance, CONFIG.raid.injuryBaseChance - traitReduction)
+  const members = membersOf(state, squad)
+  const traitReduction = members.reduce((sum, cat) => sum + cat.injuryTrait, 0)
+  const armorReduction = members.reduce((sum, cat) => sum + (hasEquipped(cat, 'armor_vest') ? itemBonus('armor_vest', 'injuryReduction') : 0), 0)
+  return Math.max(CONFIG.raid.minimumInjuryChance, CONFIG.raid.injuryBaseChance - traitReduction - armorReduction)
 }
 
 function maybeInjureCat(state: State, squad: Squad, incident: RaidIncident) {
@@ -393,7 +523,7 @@ function maybeInjureCat(state: State, squad: Squad, incident: RaidIncident) {
   const memberId = squad.members[(incident.injuredMemberRoll - 1) % squad.members.length]
   const cat = state.cats.find(candidate => candidate.id === memberId)
   if (!cat) return
-  cat.injuredRemaining = CONFIG.raid.injuryRecoveryTime
+  cat.injuredRemaining = hasEquipped(cat, 'medkit') ? CONFIG.raid.medkitRecoveryTime : CONFIG.raid.injuryRecoveryTime
   note(state, `${cat.name} ранен. Восстановление начнётся после возвращения на базу`)
 }
 
@@ -423,7 +553,20 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
     note(state, `${primary.name} отступает без добычи`)
     return true
   }
-  if (action === 'attack') return false
+  if (action === 'attack') {
+    const attackAvailable = state.research.nodes.improvised_defense.completed
+      && membersOf(state, primary).some(cat => hasEquipped(cat, 'nonlethal_weapon'))
+    if (!attackAvailable) return false
+    if (incident.attackRoll > incident.attackChance) {
+      failRaid(state, primary, incident, `Атака сорвалась. ${primary.name} отступает`)
+      return true
+    }
+    rewardMission(state, primary)
+    state.incident = undefined
+    note(state, `${primary.name} вытеснил рейдеров и закончил уборку`)
+    afterSuccessfulCleanup(state, primary)
+    return true
+  }
 
   const support = eligibleSupportSquad(state, primary.id)
   if (!support) return false
@@ -441,9 +584,11 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
   support.phase = 'support'
   support.target = primary.target ? { ...primary.target } : undefined
   support.travel = 0
-  support.travelDuration = CONFIG.raid.supportTravelTime
+  support.travelDuration = state.research.nodes.emergency_dispatch.completed
+    ? CONFIG.raid.researchedSupportTravelTime
+    : CONFIG.raid.supportTravelTime
   support.progress = 0
-  note(state, `${support.name} направлен на поддержку. Прибытие через ${CONFIG.raid.supportTravelTime} с`)
+  note(state, `${support.name} направлен на поддержку. Прибытие через ${support.travelDuration} с`)
   return true
 }
 
@@ -477,12 +622,70 @@ function arriveAtBase(state: State, squad: Squad) {
   note(state, `${squad.name} вернулся на базу`)
 }
 
-function updateRestAndRecovery(state: State, elapsed: number) {
+function chooseResearchWorker(state: State) {
+  const current = getResearchWorker(state)
+  if (current && !current.assignedTo && current.injuredRemaining <= 0 && current.energy >= CONFIG.research.minimumContinueEnergy) return current
+  const next = state.cats
+    .filter(cat => !cat.assignedTo && cat.injuredRemaining <= 0 && cat.energy >= CONFIG.research.minimumStartEnergy)
+    .sort((a, b) => b.tech - a.tech || a.id.localeCompare(b.id))[0]
+  state.research.workerCatId = next?.id
+  return next
+}
+
+function completeResearch(state: State, researchId: ResearchId) {
+  const node = state.research.nodes[researchId]
+  const definition = CONFIG.research.nodes.find(candidate => candidate.id === researchId)
+  node.progress = CONFIG.research.duration
+  node.completed = true
+  state.research.activeId = undefined
+  state.research.workerCatId = undefined
+  if (definition && 'rewardItemId' in definition) {
+    const itemId = definition.rewardItemId as ItemId
+    state.inventory[itemId] += definition.rewardCount
+  }
+  note(state, `ИССЛЕДОВАНИЕ ЗАВЕРШЕНО: ${definition?.name}`)
+}
+
+function updateResearch(state: State, elapsed: number) {
+  const researchId = state.research.activeId
+  if (!researchId) {
+    state.research.workerCatId = undefined
+    return undefined
+  }
+  const node = state.research.nodes[researchId]
+  if (node.completed) {
+    state.research.activeId = undefined
+    state.research.workerCatId = undefined
+    return undefined
+  }
+  const worker = chooseResearchWorker(state)
+  if (!worker || state.scrap <= 0) return undefined
+
+  const remainingWork = CONFIG.research.duration - node.progress
+  const fundedWork = state.scrap * CONFIG.research.scrapInterval - node.spendClock
+  const energyWork = Math.max(0, (worker.energy - CONFIG.research.minimumContinueEnergy) * CONFIG.research.duration / CONFIG.research.energyCost)
+  const work = Math.min(elapsed, remainingWork, fundedWork, energyWork)
+  if (work <= 0) return undefined
+
+  node.progress += work
+  node.spendClock += work
+  const spent = Math.min(state.scrap, Math.floor((node.spendClock + 1e-9) / CONFIG.research.scrapInterval))
+  if (spent > 0) {
+    state.scrap -= spent
+    node.scrapSpent += spent
+    node.spendClock -= spent * CONFIG.research.scrapInterval
+  }
+  worker.energy = Math.max(0, worker.energy - work * CONFIG.research.energyCost / CONFIG.research.duration)
+  if (node.progress + 1e-9 >= CONFIG.research.duration) completeResearch(state, researchId)
+  return worker.id
+}
+
+function updateRestAndRecovery(state: State, elapsed: number, workingCatId?: string) {
   state.cats.forEach(cat => {
     const squad = state.squads.find(candidate => candidate.id === cat.assignedTo)
     const isAtBase = !squad || squad.phase === 'base'
     if (!isAtBase) return
-    cat.energy = Math.min(100, cat.energy + elapsed * CONFIG.mission.restPerSecond)
+    if (cat.id !== workingCatId) cat.energy = Math.min(100, cat.energy + elapsed * CONFIG.mission.restPerSecond)
     if (cat.injuredRemaining > 0) {
       cat.injuredRemaining = Math.max(0, cat.injuredRemaining - elapsed)
       if (cat.injuredRemaining === 0) note(state, `${cat.name} восстановился после ранения`)
@@ -495,7 +698,8 @@ export function tick(state: State, seconds: number) {
   const elapsed = seconds * state.speed
   state.time += elapsed
   reconcileMissionFlow(state)
-  updateRestAndRecovery(state, elapsed)
+  const workingCatId = updateResearch(state, elapsed)
+  updateRestAndRecovery(state, elapsed, workingCatId)
 
   for (const squad of state.squads) {
     if (squad.phase === 'base') {
