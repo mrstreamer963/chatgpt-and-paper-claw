@@ -4,6 +4,7 @@ import {
   assignCat,
   continueAfterFinale,
   createState,
+  drainEvents,
   equipItem,
   getAchievements,
   resolveNinthLife,
@@ -61,6 +62,24 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
   assert.equal(state.fame, 50)
   assert.equal(state.threat, 40)
   assert.equal(state.finalSummaryVisible, true)
+  const eventTypes = drainEvents(state).map(event => event.type)
+  const requiredEventOrder = [
+    'achievement_unlocked',
+    'research_started',
+    'mission_started',
+    'mission_completed',
+    'incident_started',
+    'support_requested',
+    'support_arrived',
+    'story_started',
+    'story_resolved',
+    'final_summary_available',
+  ] as const
+  let eventCursor = -1
+  for (const eventType of requiredEventOrder) {
+    eventCursor = eventTypes.indexOf(eventType, eventCursor + 1)
+    assert.notEqual(eventCursor, -1, `Missing or out-of-order domain event: ${eventType}`)
+  }
   assert.deepEqual(
     getAchievements(state).filter(achievement => achievement.completed).map(achievement => achievement.id),
     ['first_squad', 'field_kit', 'first_cleanup', 'research_started', 'raiders_resolved', 'ninth_life_closed'],

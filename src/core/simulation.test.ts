@@ -6,6 +6,7 @@ import {
   continueAfterFinale,
   createState,
   deserializeState,
+  drainEvents,
   equipItem,
   getAchievements,
   getRaidOptions,
@@ -95,6 +96,26 @@ test('a versioned save restores the complete simulation state', () => {
   assert.notEqual(restored, state)
 })
 
+test('core exposes typed transient events without persisting them', () => {
+  const state = createState()
+  assert.equal(assignCat(state, 'pixel', 'alpha'), true)
+  assert.deepEqual(drainEvents(state), [
+    { type: 'achievement_unlocked', achievementId: 'first_squad' },
+  ])
+  assert.deepEqual(drainEvents(state), [])
+
+  state.speed = 1
+  tick(state, 0.25)
+  const mission = state.squads[0].missionId
+  assert.ok(mission)
+  assert.deepEqual(drainEvents(state), [
+    { type: 'mission_started', squadId: 'alpha', missionId: mission },
+  ])
+
+  const restored = deserializeState(serializeState(state))
+  assert.deepEqual(drainEvents(restored), [])
+})
+
 test('a prepared raid keeps its deterministic rolls after loading', () => {
   const state = openRaid()
   const restored = deserializeState(serializeState(state))
@@ -105,9 +126,9 @@ test('a prepared raid keeps its deterministic rolls after loading', () => {
 test('unsupported and malformed save files are rejected', () => {
   const envelope = JSON.parse(serializeState(createState()))
   envelope.version = 99
-  assert.throws(() => deserializeState(JSON.stringify(envelope)), /не поддерживается/)
-  assert.throws(() => deserializeState('{oops'), /корректным JSON/)
-  assert.throws(() => deserializeState(JSON.stringify({ format: 'foreign', version: 1 })), /Неизвестный формат/)
+  assert.throws(() => deserializeState(JSON.stringify(envelope)), /save\.error\.unsupported_version/)
+  assert.throws(() => deserializeState('{oops'), /save\.error\.invalid_json/)
+  assert.throws(() => deserializeState(JSON.stringify({ format: 'foreign', version: 1 })), /save\.error\.unknown_format/)
 })
 
 test('version one saves migrate their text log into legacy entries', () => {
@@ -115,12 +136,31 @@ test('version one saves migrate their text log into legacy entries', () => {
   envelope.version = 1
   envelope.state.log = ['09:16 · Пиксель назначен в Отряд «Альфа»', '09:15 · Старая запись']
   const restored = deserializeState(JSON.stringify(envelope))
-  assert.deepEqual(restored.log[0], { time: 960, key: 'log.cat_assigned', params: { cat: 'Пиксель', squad: 'Отряд «Альфа»' } })
+  assert.deepEqual(restored.log[0], { time: 960, key: 'log.cat_assigned', params: { cat: 'cat.pixel.name', squad: 'squad.alpha' } })
   assert.deepEqual(restored.log[1], { time: 900, key: 'log.legacy', params: { text: 'Старая запись' } })
 })
 
+test('version two saves migrate presentation text and discard the saved view', () => {
+  const envelope = JSON.parse(serializeState(createState()))
+  envelope.version = 2
+  envelope.state.activeView = 'base'
+  envelope.state.cats[0].name = 'Марлоу'
+  envelope.state.cats[0].role = 'переговорщик'
+  envelope.state.squads[0].name = 'Отряд «Альфа»'
+  envelope.state.missions[0].title = 'Свалка у эстакады'
+  envelope.state.log = [{ time: 0, key: 'log.cat_assigned', params: { cat: 'Марлоу', squad: 'Отряд «Альфа»' } }]
+
+  const restored = deserializeState(JSON.stringify(envelope))
+  assert.equal('activeView' in restored, false)
+  assert.equal(restored.cats[0].name, 'cat.marlowe.name')
+  assert.equal(restored.cats[0].role, 'cat.marlowe.role')
+  assert.equal(restored.squads[0].name, 'squad.alpha')
+  assert.equal(restored.missions[0].title, 'mission.a')
+  assert.deepEqual(restored.log[0].params, { cat: 'cat.marlowe.name', squad: 'squad.alpha' })
+})
+
 test('domain log events render in either language with localized parameters', () => {
-  const params = { cat: 'Пиксель', squad: 'Отряд «Альфа»' }
+  const params = { cat: 'cat.pixel.name', squad: 'squad.alpha' }
   assert.equal(translate('ru', 'log.cat_assigned', params), 'Пиксель назначен в Отряд «Альфа»')
   assert.equal(translate('en', 'log.cat_assigned', params), 'Pixel assigned to Squad “Alpha”')
 })
@@ -206,7 +246,7 @@ test('sheltering the deserter reaches the goal and opens the final summary', () 
   assert.equal(resolveNinthLife(state, 'shelter'), true)
   assert.equal(state.fame, 50)
   assert.equal(state.threat, 40)
-  assert.equal(state.storyResolution?.branch, 'Защита свидетеля')
+  assert.equal(state.storyResolution?.branch, 'story.shelter.branch')
   assert.equal(getAchievements(state).find(achievement => achievement.id === 'first_cleanup')?.completed, true)
   assert.equal(getAchievements(state).find(achievement => achievement.id === 'ninth_life_closed')?.completed, true)
   assert.equal(state.finalSummaryVisible, true)

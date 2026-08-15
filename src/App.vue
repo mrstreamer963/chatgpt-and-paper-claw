@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRaw, watch } from 'vue'
+import { computed, ref } from 'vue'
 import {
   EQUIPMENT_SLOTS,
   GAME_RULES,
@@ -7,23 +7,11 @@ import {
   RESEARCH_DEFINITIONS,
   RESEARCH_RULES,
   STORY_DECISION_BALANCE,
-  assignCat,
   canEditCat,
-  equipItem,
   getAchievements,
   getResearchWorker,
-  continueAfterFinale,
-  createState,
-  deserializeState,
   getRaidOptions,
   getSquadCleanupChance,
-  resolveRaidDecision,
-  resolveRaidFollowup,
-  resolveNinthLife,
-  selectResearch,
-  serializeState,
-  setSquadStyle,
-  tick,
   type EquipmentSlot,
   type ItemId,
   type LogEntry,
@@ -33,8 +21,8 @@ import {
   type State,
   type Squad,
 } from './core/simulation'
-import { translate, type Locale } from './i18n'
-import { createSoundSystem, normalizeSoundPreferences, type SoundPreferences } from './audio'
+import { translate } from './i18n'
+import { useGameSession } from './useGameSession'
 import baseCutawayUrl from '../assets/art/base-cutaway-v1.png?url'
 import catTokensUrl from '../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../assets/art/ui-icons.svg?url'
@@ -45,68 +33,37 @@ import portraitShorokhUrl from '../assets/art/portrait-shorokh-v1.png?url'
 import portraitBastionUrl from '../assets/art/portrait-bastion-v1.png?url'
 import portraitMyataUrl from '../assets/art/portrait-myata-v1.png?url'
 
-const AUTOSAVE_KEY = 'nine-lives-corp-autosave-v1'
-const HINTS_KEY = 'nine-lives-corp-hints-v1'
-const LOCALE_KEY = 'nine-lives-corp-locale-v1'
-const SOUND_KEY = 'nine-lives-corp-sound-v1'
-let restoredAutosave = false
-let initialSaveError = ''
+const {
+  state,
+  activeView,
+  hintsVisible,
+  locale,
+  achievementToast,
+  newGameConfirmOpen,
+  soundPreferences,
+  soundSettingsOpen,
+  audioStarted,
+  audioUnavailable,
+  saveStatus,
+  setSpeed,
+  assignCat,
+  equipItem,
+  setSquadStyle,
+  selectResearch,
+  resolveRaidDecision,
+  resolveRaidFollowup,
+  resolveNinthLife,
+  continueAfterFinale,
+  exportSave,
+  importSave,
+  requestNewGame,
+  resetProgress: resetSessionProgress,
+  toggleMuted,
+  testSignal,
+} = useGameSession()
 
-function loadInitialState() {
-  try {
-    const payload = window.localStorage.getItem(AUTOSAVE_KEY)
-    if (!payload) return createState()
-    const restored = deserializeState(payload)
-    restoredAutosave = true
-    return restored
-  } catch (error) {
-    initialSaveError = error instanceof Error ? error.message : 'Не удалось прочитать автосохранение.'
-    return createState()
-  }
-}
-
-function loadHintsPreference() {
-  try {
-    return window.localStorage.getItem(HINTS_KEY) !== 'hidden'
-  } catch {
-    return true
-  }
-}
-
-function loadLocale(): Locale {
-  try {
-    return window.localStorage.getItem(LOCALE_KEY) === 'en' ? 'en' : 'ru'
-  } catch {
-    return 'ru'
-  }
-}
-
-function loadSoundPreferences(): SoundPreferences {
-  try {
-    const payload = window.localStorage.getItem(SOUND_KEY)
-    return normalizeSoundPreferences(payload ? JSON.parse(payload) : undefined)
-  } catch {
-    return normalizeSoundPreferences(undefined)
-  }
-}
-
-const state = reactive(loadInitialState())
-let timer: number
-let achievementToastTimer: number | undefined
-let autosaveTimer: number | undefined
-let lastAutosaveAt = 0
-let suppressAchievementToast = false
 const basePanel = ref<'teams' | 'lab' | 'achievements'>('teams')
-const hintsVisible = ref(loadHintsPreference())
-const locale = ref<Locale>(loadLocale())
-const achievementToast = ref<string>()
 const saveInput = ref<HTMLInputElement>()
-const newGameConfirmOpen = ref(false)
-const soundPreferences = reactive(loadSoundPreferences())
-const soundSettingsOpen = ref(false)
-const audioStarted = ref(false)
-const audioUnavailable = ref(false)
-const soundSystem = createSoundSystem(soundPreferences)
 const portraitUrls: Record<string, string> = {
   marlowe: portraitMarloweUrl,
   pixel: portraitPixelUrl,
@@ -115,9 +72,6 @@ const portraitUrls: Record<string, string> = {
   bastion: portraitBastionUrl,
   myata: portraitMyataUrl,
 }
-const saveStatus = ref<{ key: string; params?: Record<string, string | number> }>({
-  key: initialSaveError || (restoredAutosave ? 'save.restored' : 'save.ready'),
-})
 const tr = (key: string, params?: Record<string, string | number>) => translate(locale.value, key, params)
 
 const speedControls: { speed: Speed; label: string; shortcut: string }[] = [
@@ -126,168 +80,10 @@ const speedControls: { speed: Speed; label: string; shortcut: string }[] = [
   { speed: 5, label: '×5', shortcut: '2' },
   { speed: 10, label: '×10', shortcut: '3' },
 ]
-const speedByKey: Partial<Record<string, Speed>> = {
-  Space: 0,
-  Digit1: 1,
-  Numpad1: 1,
-  Digit2: 5,
-  Numpad2: 5,
-  Digit3: 10,
-  Numpad3: 10,
-}
-
-function handleSpeedShortcut(event: KeyboardEvent) {
-  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
-  const target = event.target as HTMLElement | null
-  if (target?.matches('input, select, textarea, [contenteditable="true"]')) return
-  const speed = speedByKey[event.code]
-  if (speed === undefined) return
-  event.preventDefault()
-  setSpeed(speed)
-}
-
-function persistAutosave() {
-  if (autosaveTimer) clearTimeout(autosaveTimer)
-  autosaveTimer = undefined
-  try {
-    window.localStorage.setItem(AUTOSAVE_KEY, serializeState(toRaw(state) as State))
-    lastAutosaveAt = Date.now()
-    saveStatus.value = { key: 'save.autosaved', params: { time: new Date(lastAutosaveAt).toLocaleTimeString(locale.value === 'ru' ? 'ru-RU' : 'en-US') } }
-  } catch (error) {
-    saveStatus.value = { key: 'save.error', params: { error: error instanceof Error ? error.message : 'Не удалось обновить автослот' } }
-  }
-}
-
-function scheduleAutosave() {
-  if (autosaveTimer) return
-  const delay = Math.max(0, 1000 - (Date.now() - lastAutosaveAt))
-  if (delay === 0) persistAutosave()
-  else autosaveTimer = window.setTimeout(persistAutosave, delay)
-}
-
-function handleVisibilityChange() {
-  if (document.visibilityState === 'hidden') persistAutosave()
-}
-
-function exportSave() {
-  persistAutosave()
-  const blob = new Blob([serializeState(toRaw(state) as State)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  const stamp = new Date().toISOString().slice(0, 19).replaceAll(':', '-')
-  link.href = url
-  link.download = `nine-lives-corp-${stamp}.json`
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 0)
-  saveStatus.value = { key: 'save.exported' }
-}
-
-async function importSave(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-  try {
-    const restored = deserializeState(await file.text())
-    suppressAchievementToast = true
-    state.incident = undefined
-    state.storyIncident = undefined
-    state.storyResolution = undefined
-    Object.assign(state, restored)
-    await nextTick()
-    suppressAchievementToast = false
-    persistAutosave()
-    saveStatus.value = { key: 'save.imported', params: { file: file.name } }
-  } catch (error) {
-    suppressAchievementToast = false
-    saveStatus.value = { key: 'save.import_rejected', params: { error: error instanceof Error ? error.message : 'Импорт сохранения не удался' } }
-  } finally {
-    input.value = ''
-  }
-}
-
-function requestNewGame() {
-  state.speed = 0
-  newGameConfirmOpen.value = true
-}
-
 async function resetProgress() {
-  suppressAchievementToast = true
-  if (autosaveTimer) clearTimeout(autosaveTimer)
-  autosaveTimer = undefined
-  achievementToast.value = undefined
-  state.incident = undefined
-  state.storyIncident = undefined
-  state.storyResolution = undefined
-  Object.assign(state, createState())
+  await resetSessionProgress()
   basePanel.value = 'teams'
-  newGameConfirmOpen.value = false
-  await nextTick()
-  suppressAchievementToast = false
-  persistAutosave()
-  saveStatus.value = { key: 'save.new_game' }
 }
-
-watch(state, scheduleAutosave, { deep: true })
-watch(hintsVisible, visible => {
-  try {
-    window.localStorage.setItem(HINTS_KEY, visible ? 'visible' : 'hidden')
-  } catch {
-    // Игра остаётся работоспособной, даже если браузер запретил локальное хранилище.
-  }
-})
-watch(locale, value => {
-  document.documentElement.lang = value
-  try {
-    window.localStorage.setItem(LOCALE_KEY, value)
-  } catch {
-    // Локализация продолжает работать в текущей сессии без localStorage.
-  }
-}, { immediate: true })
-watch(soundPreferences, value => {
-  soundSystem.setPreferences(value)
-  try {
-    window.localStorage.setItem(SOUND_KEY, JSON.stringify(value))
-  } catch {
-    // Настройки остаются активны до конца текущей сессии.
-  }
-}, { deep: true })
-
-async function unlockAudio() {
-  if (audioStarted.value) return
-  const started = await soundSystem.start()
-  audioStarted.value = started
-  audioUnavailable.value = !started
-}
-
-function toggleMuted() {
-  soundPreferences.muted = !soundPreferences.muted
-}
-
-function testSignal() {
-  void unlockAudio().then(() => soundSystem.play('support'))
-}
-
-onMounted(() => {
-  timer = window.setInterval(() => tick(state, 0.25), 250)
-  window.addEventListener('keydown', handleSpeedShortcut)
-  window.addEventListener('beforeunload', persistAutosave)
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  window.addEventListener('click', unlockAudio, { capture: true })
-  window.addEventListener('keydown', unlockAudio, { capture: true })
-})
-onUnmounted(() => {
-  clearInterval(timer)
-  if (achievementToastTimer) clearTimeout(achievementToastTimer)
-  if (autosaveTimer) clearTimeout(autosaveTimer)
-  window.removeEventListener('keydown', handleSpeedShortcut)
-  window.removeEventListener('beforeunload', persistAutosave)
-  document.removeEventListener('visibilitychange', handleVisibilityChange)
-  window.removeEventListener('click', unlockAudio, { capture: true })
-  window.removeEventListener('keydown', unlockAudio, { capture: true })
-  void soundSystem.dispose()
-})
 
 const totalRuns = computed(() => state.squads.reduce((total, squad) => total + squad.completed, 0))
 const fmtTime = computed(() => `${String(9 + Math.floor(state.time / 3600)).padStart(2, '0')}:${String(Math.floor(state.time / 60) % 60).padStart(2, '0')}`)
@@ -301,26 +97,6 @@ const achievements = computed(() => getAchievements(state))
 const completedAchievementCount = computed(() => achievements.value.filter(achievement => achievement.completed).length)
 const nextAchievement = computed(() => achievements.value.find(achievement => !achievement.completed))
 
-watch(() => state.achievements.completedIds.length, () => {
-  if (suppressAchievementToast) return
-  const achievementId = state.achievements.completedIds.at(-1)
-  const unlocked = achievements.value.find(achievement => achievement.id === achievementId)
-  if (!unlocked) return
-  achievementToast.value = unlocked.title
-  soundSystem.play('achievement')
-  if (achievementToastTimer) clearTimeout(achievementToastTimer)
-  achievementToastTimer = window.setTimeout(() => { achievementToast.value = undefined }, 4200)
-})
-
-watch(() => state.incident?.stage, (stage, previousStage) => {
-  if (stage === 'decision' && previousStage !== 'decision') soundSystem.play('alert')
-  if (stage === 'support_decision' && previousStage !== 'support_decision') soundSystem.play('support')
-})
-
-watch(() => Boolean(state.storyIncident), (active, wasActive) => {
-  if (active && !wasActive) soundSystem.play('investigation')
-})
-
 const storyChoicePresentation: { id: NinthLifeDecision; title: string; tag: string; description: string; tone: string }[] = [
   { id: 'shelter', title: 'Укрыть дезертира', tag: 'Гуманность', description: 'Дать убежище на базе. Слух укрепит имя корпорации, но приведёт преследователей к нашим воротам.', tone: 'danger' },
   { id: 'interrogate', title: 'Допросить', tag: 'Разведданные', description: 'Проверить показания и собрать полное досье на укрепление ежей. Без эскалации в секторе.', tone: 'intel' },
@@ -329,36 +105,30 @@ const storyChoicePresentation: { id: NinthLifeDecision; title: string; tag: stri
 ]
 const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STORY_DECISION_BALANCE[choice.id] }))
 
-function setSpeed(speed: Speed) {
-  const blockingIncident = state.incident && state.incident.stage !== 'support_en_route'
-  if (blockingIncident && speed !== 0) return
-  state.speed = speed
-}
-
 function goToNextAchievement() {
   const id = nextAchievement.value?.id
   if (id === 'first_squad' || id === 'field_kit') {
-    state.activeView = 'base'
+    activeView.value = 'base'
     basePanel.value = 'teams'
   } else if (id === 'research_started') {
-    state.activeView = 'base'
+    activeView.value = 'base'
     basePanel.value = 'lab'
   } else {
-    state.activeView = 'map'
+    activeView.value = 'map'
   }
 }
 
 function handleAssignment(catId: string, event: Event) {
-  assignCat(state, catId, (event.target as HTMLSelectElement).value)
+  assignCat(catId, (event.target as HTMLSelectElement).value)
 }
 
 function handleEquipment(catId: string, slot: EquipmentSlot, event: Event) {
   const value = (event.target as HTMLSelectElement).value as ItemId | ''
-  equipItem(state, catId, slot, value || undefined)
+  equipItem(catId, slot, value || undefined)
 }
 
 function handleSquadStyle(squadId: string, event: Event) {
-  setSquadStyle(state, squadId, (event.target as HTMLSelectElement).value as Squad['style'])
+  setSquadStyle(squadId, (event.target as HTMLSelectElement).value as Squad['style'])
 }
 
 function equipmentOptions(slot: EquipmentSlot) {
@@ -444,8 +214,8 @@ function formatLog(entry: LogEntry) {
         <span>{{ tr('ВРЕМЯ') }} <b>{{ fmtTime }}</b></span>
       </div>
       <nav>
-        <button :class="{ active: state.activeView === 'map' }" @click="state.activeView = 'map'">{{ tr('Карта') }}</button>
-        <button :class="{ active: state.activeView === 'base' }" @click="state.activeView = 'base'">{{ tr('База') }}</button>
+        <button :class="{ active: activeView === 'map' }" @click="activeView = 'map'">{{ tr('Карта') }}</button>
+        <button :class="{ active: activeView === 'base' }" @click="activeView = 'base'">{{ tr('База') }}</button>
       </nav>
       <div class="language-toggle" :aria-label="tr('Язык')">
         <button :class="{ active: locale === 'ru' }" @click="locale = 'ru'">RU</button>
@@ -529,7 +299,7 @@ function formatLog(entry: LogEntry) {
       <button v-if="state.speed === 0" @click="setSpeed(1)">{{ tr('Продолжить на ×1') }}</button>
     </div>
 
-    <section v-if="state.activeView === 'map'" class="map-view">
+    <section v-if="activeView === 'map'" class="map-view">
       <div class="map-grid" :class="{ 'incident-active': state.incident }">
         <svg class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
           <line
@@ -684,7 +454,7 @@ function formatLog(entry: LogEntry) {
           <h3>{{ tr(research.name) }}</h3>
           <p>{{ tr(research.result) }}</p>
           <div class="research-progress"><i :style="{ width: `${researchPercent(research.id)}%` }"></i></div>
-          <footer><span>{{ tr('research.scrap', { spent: state.research.nodes[research.id].scrapSpent, cost: RESEARCH_RULES.scrapCost }) }}</span><button v-if="!state.research.nodes[research.id].completed" :class="{ active: state.research.activeId === research.id }" @click="selectResearch(state, state.research.activeId === research.id ? undefined : research.id)">{{ tr(state.research.activeId === research.id ? 'Приостановить' : 'Исследовать') }}</button></footer>
+          <footer><span>{{ tr('research.scrap', { spent: state.research.nodes[research.id].scrapSpent, cost: RESEARCH_RULES.scrapCost }) }}</span><button v-if="!state.research.nodes[research.id].completed" :class="{ active: state.research.activeId === research.id }" @click="selectResearch(state.research.activeId === research.id ? undefined : research.id)">{{ tr(state.research.activeId === research.id ? 'Приостановить' : 'Исследовать') }}</button></footer>
         </article>
       </aside>
       <aside v-else class="base-panel achievements-panel">
@@ -760,13 +530,13 @@ function formatLog(entry: LogEntry) {
             <span>{{ tr('НАГРАДА ПОД УГРОЗОЙ') }} <b>{{ tr('scrap.count', { count: GAME_RULES.cleanupRewardScrap }) }}</b></span>
           </div>
           <div class="incident-actions">
-            <button class="choice safe" @click="resolveRaidDecision(state, 'escape')">
+            <button class="choice safe" @click="resolveRaidDecision('escape')">
               <span><b>{{ tr('Сбежать') }}</b><small>{{ tr('Миссия отменится без добычи и ранений.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong>
             </button>
-            <button class="choice" :disabled="!raidOptions?.attack.available" @click="resolveRaidDecision(state, 'attack')">
+            <button class="choice" :disabled="!raidOptions?.attack.available" @click="resolveRaidDecision('attack')">
               <span><b>{{ tr('Напасть') }}</b><small>{{ tr(raidOptions?.attack.available ? 'Использовать нелетальное оружие и вытеснить рейдеров.' : raidOptions?.attack.reason ?? '') }}</small></span><strong>{{ raidOptions?.attack.chance ? `${raidOptions.attack.chance}%` : tr('ЗАКРЫТО') }}</strong>
             </button>
-            <button class="choice support" :disabled="!raidOptions?.support.available" @click="resolveRaidDecision(state, 'support')">
+            <button class="choice support" :disabled="!raidOptions?.support.available" @click="resolveRaidDecision('support')">
               <span><b>{{ tr('Укрыться и запросить поддержку') }}</b><small v-if="raidOptions?.support.available">{{ tr('raid.support_description', { squad: raidOptions.support.supportSquadName ?? '', seconds: state.research.nodes.emergency_dispatch.completed ? RESEARCH_RULES.researchedSupportTravelTime : RESEARCH_RULES.supportTravelTime }) }}</small><small v-else>{{ tr(raidOptions?.support.reason ?? '') }}</small></span>
               <strong>{{ raidOptions?.support.chance ? `${raidOptions.support.chance}%` : tr('НЕТ') }}</strong>
             </button>
@@ -776,10 +546,10 @@ function formatLog(entry: LogEntry) {
           <h1 id="incident-title">{{ tr('Поддержка прибыла') }}</h1>
           <p>{{ tr('raid.support_arrived_description', { squad: supportSquad?.name ?? '' }) }}</p>
           <div class="incident-actions followup">
-            <button class="choice safe" @click="resolveRaidFollowup(state, 'retreat')">
+            <button class="choice safe" @click="resolveRaidFollowup('retreat')">
               <span><b>{{ tr('Отступить вместе') }}</b><small>{{ tr('Безопасно уйти без добычи.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong>
             </button>
-            <button class="choice support" @click="resolveRaidFollowup(state, 'continue')">
+            <button class="choice support" @click="resolveRaidFollowup('continue')">
               <span><b>{{ tr('Продолжить разбор ситуации') }}</b><small>{{ tr('Вытеснить рейдеров и закончить уборку.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong>
             </button>
           </div>
@@ -802,7 +572,7 @@ function formatLog(entry: LogEntry) {
             :key="choice.id"
             class="story-choice"
             :class="choice.tone"
-            @click="resolveNinthLife(state, choice.id)"
+            @click="resolveNinthLife(choice.id)"
           >
             <span class="choice-index">0{{ storyChoices.indexOf(choice) + 1 }}</span>
             <span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(choice.description) }}</em></span>
@@ -830,7 +600,7 @@ function formatLog(entry: LogEntry) {
           <p>{{ tr('Открыта будущая ветка:') }} <b>{{ tr(state.storyResolution.branch) }}</b></p>
           <div><i>{{ tr('fame.delta', { fame: state.storyResolution.fameDelta }) }}</i><i :class="{ calm: !state.storyResolution.threatDelta }">{{ tr(state.storyResolution.threatDelta ? 'threat.delta' : 'угроза без изменений', { threat: state.storyResolution.threatDelta }) }}</i></div>
         </div>
-        <button class="continue-button" @click="continueAfterFinale(state)">{{ tr('Продолжить в песочнице') }} <span>→</span></button>
+        <button class="continue-button" @click="continueAfterFinale()">{{ tr('Продолжить в песочнице') }} <span>→</span></button>
       </section>
     </div>
   </main>

@@ -71,13 +71,26 @@ export type StoryResolution = {
   unlockedLocation: boolean
 }
 export type LogEntry = { time: number; key: string; params?: Record<string, string | number> }
+export type GameEvent =
+  | { type: 'mission_started'; squadId: string; missionId: string }
+  | { type: 'mission_completed'; squadId: string; missionId: string }
+  | { type: 'mission_failed'; squadId: string; missionId?: string; reason: 'escape' | 'attack' | 'support' | 'recalled' | 'retreat' }
+  | { type: 'incident_started'; incident: 'raiders'; squadId: string; missionId: string }
+  | { type: 'support_requested'; squadId: string; primarySquadId: string; seconds: number }
+  | { type: 'support_arrived'; squadId: string; primarySquadId: string }
+  | { type: 'cat_injured'; catId: string; seconds: number }
+  | { type: 'research_started'; researchId: ResearchId }
+  | { type: 'research_completed'; researchId: ResearchId }
+  | { type: 'achievement_unlocked'; achievementId: AchievementId }
+  | { type: 'story_started'; story: 'ninth_life'; squadId: string }
+  | { type: 'story_resolved'; story: 'ninth_life'; decision: NinthLifeDecision }
+  | { type: 'final_summary_available' }
 export type State = {
   fame: number
   scrap: number
   threat: number
   speed: Speed
   time: number
-  activeView: 'map' | 'base'
   cats: Cat[]
   squads: Squad[]
   missions: Mission[]
@@ -109,7 +122,26 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 2
+export const SAVE_VERSION = 3
+export type SaveErrorKey =
+  | 'save.error.invalid_json'
+  | 'save.error.unknown_format'
+  | 'save.error.unsupported_version'
+  | 'save.error.invalid_date'
+  | 'save.error.corrupted'
+
+export class SaveError extends Error {
+  readonly key: SaveErrorKey
+  readonly params: Record<string, string | number>
+
+  constructor(key: SaveErrorKey, params: Record<string, string | number> = {}) {
+    super(key)
+    this.name = 'SaveError'
+    this.key = key
+    this.params = params
+  }
+}
+
 export type SaveEnvelope = {
   format: typeof SAVE_FORMAT
   version: typeof SAVE_VERSION
@@ -118,19 +150,19 @@ export type SaveEnvelope = {
 }
 
 const ACHIEVEMENT_DEFINITIONS: Omit<Achievement, 'completed'>[] = [
-  { id: 'first_squad', title: 'Собрать звено', description: 'Назначить хотя бы одного кота в отряд.', hint: 'Откройте «База → Гараж и арсенал» и назначьте кота в любой отряд.' },
-  { id: 'field_kit', title: 'Готовы к выезду', description: 'Выдать оперативнику первый предмет снаряжения.', hint: 'Раскройте карточку кота на базе и выдайте предмет со склада.' },
-  { id: 'first_cleanup', title: 'Чистая работа', description: 'Успешно завершить первую уборку.', hint: 'Включите время: подготовленный отряд сам выберет уборку и отправится на место.' },
-  { id: 'research_started', title: 'Лабораторная смена', description: 'Запустить первое исследование.', hint: 'Откройте лабораторию, выберите исследование и оставьте одного кота свободным.' },
-  { id: 'raiders_resolved', title: 'Нештатная ситуация', description: 'Разрешить встречу с рейдерами.', hint: 'После двух уборок подготовьте второй отряд: он сможет прийти первому на поддержку.' },
-  { id: 'ninth_life_closed', title: 'Девятая жизнь', description: 'Принять решение по делу 09.', hint: 'Добейтесь третьей успешной уборки и решите судьбу дезертира.' },
+  { id: 'first_squad', title: 'achievement.first_squad.title', description: 'achievement.first_squad.description', hint: 'achievement.first_squad.hint' },
+  { id: 'field_kit', title: 'achievement.field_kit.title', description: 'achievement.field_kit.description', hint: 'achievement.field_kit.hint' },
+  { id: 'first_cleanup', title: 'achievement.first_cleanup.title', description: 'achievement.first_cleanup.description', hint: 'achievement.first_cleanup.hint' },
+  { id: 'research_started', title: 'achievement.research_started.title', description: 'achievement.research_started.description', hint: 'achievement.research_started.hint' },
+  { id: 'raiders_resolved', title: 'achievement.raiders_resolved.title', description: 'achievement.raiders_resolved.description', hint: 'achievement.raiders_resolved.hint' },
+  { id: 'ninth_life_closed', title: 'achievement.ninth_life_closed.title', description: 'achievement.ninth_life_closed.description', hint: 'achievement.ninth_life_closed.hint' },
 ]
 
 export const EQUIPMENT_SLOTS: { id: EquipmentSlot; name: string }[] = [
-  { id: 'armor', name: 'Бронежилет' },
-  { id: 'suit', name: 'Комбинезон' },
-  { id: 'belt', name: 'Пояс' },
-  { id: 'hands', name: 'Руки' },
+  { id: 'armor', name: 'slot.armor' },
+  { id: 'suit', name: 'slot.suit' },
+  { id: 'belt', name: 'slot.belt' },
+  { id: 'hands', name: 'slot.hands' },
 ]
 
 export const ITEM_DEFINITIONS = CONFIG.equipment.items
@@ -154,6 +186,19 @@ export const GAME_RULES = {
 export const STORY_DECISION_BALANCE = CONFIG.story.decisions
 
 const templates: Mission[] = CONFIG.mission.templates.map(template => ({ ...template, status: 'available' }))
+const pendingEvents = new WeakMap<State, GameEvent[]>()
+
+function emitEvent(state: State, event: GameEvent) {
+  const events = pendingEvents.get(state)
+  if (events) events.push(event)
+  else pendingEvents.set(state, [event])
+}
+
+export function drainEvents(state: State) {
+  const events = pendingEvents.get(state) ?? []
+  pendingEvents.delete(state)
+  return events
+}
 
 export function createState(): State {
   const emptyEquipment = (): Equipment => ({ armor: undefined, suit: undefined, belt: undefined, hands: undefined })
@@ -163,7 +208,6 @@ export function createState(): State {
     threat: CONFIG.initial.threat,
     speed: 0,
     time: 0,
-    activeView: 'map',
     cats: CONFIG.cats.map(cat => ({ ...cat, injuredRemaining: 0, equipment: emptyEquipment() })),
     missions: structuredClone(templates.slice(0, CONFIG.mission.initialAvailableCount)),
     missionSerial: 0,
@@ -182,8 +226,8 @@ export function createState(): State {
     },
     achievements: { completedIds: [] },
     squads: [
-      { id: 'alpha', name: 'Отряд «Альфа»', members: [], style: 'balanced', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
-      { id: 'bravo', name: 'Отряд «Браво»', members: [], style: 'careful', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
+      { id: 'alpha', name: 'squad.alpha', members: [], style: 'balanced', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
+      { id: 'bravo', name: 'squad.bravo', members: [], style: 'careful', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
     ],
     log: [{ time: 0, key: 'log.base_ready' }],
   }
@@ -210,6 +254,7 @@ export function syncAchievements(state: State) {
     state.achievements.completedIds.push(achievement.id)
     unlocked.push(achievement.id)
     note(state, 'log.achievement', { achievement: achievement.title })
+    emitEvent(state, { type: 'achievement_unlocked', achievementId: achievement.id })
   }
   return unlocked
 }
@@ -344,9 +389,72 @@ function migrateV1State(value: unknown) {
   return migrated
 }
 
+const LEGACY_TEXT_KEYS: Record<string, string> = {
+  'Марлоу': 'cat.marlowe.name', 'переговорщик': 'cat.marlowe.role',
+  'Пиксель': 'cat.pixel.name', 'техник': 'cat.pixel.role',
+  'Ржа': 'cat.rust.name', 'грузчик': 'cat.rust.role',
+  'Шорох': 'cat.shorokh.name', 'разведчик': 'cat.shorokh.role',
+  'Бастион': 'cat.bastion.name', 'защитник': 'cat.bastion.role',
+  'Мята': 'cat.myata.name', 'медик': 'cat.myata.role',
+  'Отряд «Альфа»': 'squad.alpha', 'Отряд «Браво»': 'squad.bravo',
+  'Свалка у эстакады': 'mission.a', 'Складской квартал': 'mission.b',
+  'Ржавый терминал': 'mission.c', 'Старый коллектор': 'mission.d',
+  'Бронежилет': 'slot.armor', 'Комбинезон': 'slot.suit', 'Пояс': 'slot.belt', 'Руки': 'slot.hands',
+  'Инструментальный набор': 'item.toolkit.name', 'Переговорная гарнитура': 'item.headset.name',
+  'Аптечка': 'item.medkit.name', 'Полевой сканер': 'item.scanner.name', 'Нелетальное оружие': 'item.nonlethal_weapon.name',
+  '−10 п.п. к вероятности ранения': 'item.armor_vest.effect', '+12 п.п. к уборке': 'item.toolkit.effect',
+  '+15 п.п. к запросу поддержки': 'item.headset.effect', 'Лечение ранения за 20 секунд': 'item.medkit.effect',
+  '+8 п.п. к уборке': 'item.scanner.effect', '+25 п.п. к нападению': 'item.nonlethal_weapon.effect',
+  'Полевые сканеры': 'research.field_scanners.name', '2 сканера на складе': 'research.field_scanners.result',
+  'Протокол экстренной диспетчеризации': 'research.emergency_dispatch.name',
+  'Поддержка прибывает за 5 секунд': 'research.emergency_dispatch.result',
+  'Импровизированная защита': 'research.improvised_defense.name',
+  'Нелетальное оружие и действие «Напасть»': 'research.improvised_defense.result',
+  'Собрать звено': 'achievement.first_squad.title',
+  'Назначить хотя бы одного кота в отряд.': 'achievement.first_squad.description',
+  'Откройте «База → Гараж и арсенал» и назначьте кота в любой отряд.': 'achievement.first_squad.hint',
+  'Готовы к выезду': 'achievement.field_kit.title',
+  'Выдать оперативнику первый предмет снаряжения.': 'achievement.field_kit.description',
+  'Раскройте карточку кота на базе и выдайте предмет со склада.': 'achievement.field_kit.hint',
+  'Чистая работа': 'achievement.first_cleanup.title',
+  'Успешно завершить первую уборку.': 'achievement.first_cleanup.description',
+  'Включите время: подготовленный отряд сам выберет уборку и отправится на место.': 'achievement.first_cleanup.hint',
+  'Лабораторная смена': 'achievement.research_started.title',
+  'Запустить первое исследование.': 'achievement.research_started.description',
+  'Откройте лабораторию, выберите исследование и оставьте одного кота свободным.': 'achievement.research_started.hint',
+  'Нештатная ситуация': 'achievement.raiders_resolved.title',
+  'Разрешить встречу с рейдерами.': 'achievement.raiders_resolved.description',
+  'После двух уборок подготовьте второй отряд: он сможет прийти первому на поддержку.': 'achievement.raiders_resolved.hint',
+  'Девятая жизнь': 'achievement.ninth_life_closed.title',
+  'Принять решение по делу 09.': 'achievement.ninth_life_closed.description',
+  'Добейтесь третьей успешной уборки и решите судьбу дезертира.': 'achievement.ninth_life_closed.hint',
+  'Укрыть дезертира': 'story.shelter.title', 'Защита свидетеля': 'story.shelter.branch',
+  'Дезертир остаётся под защитой корпорации. По району расходится слух: NINE LIVES своих не выдаёт.': 'story.shelter.outcome',
+  'Допросить': 'story.interrogate.title', 'Архив «Иглы»': 'story.interrogate.branch',
+  'Аналитики получают полную схему базы ежей, маршруты патрулей и позывные командиров.': 'story.interrogate.outcome',
+  'Сопроводить к границе': 'story.escort.title', 'Тихий коридор': 'story.escort.branch',
+  'Дезертир безопасно покидает сектор. Корпорация сохраняет нейтралитет и не привлекает лишнего внимания.': 'story.escort.outcome',
+  'Использовать данные сразу': 'story.exploit.title', 'Координаты «Девятки»': 'story.exploit.branch',
+  'Оперативники подтверждают координаты укрепления ежей. Новая цель нанесена на карту, но противник замечает разведку.': 'story.exploit.outcome',
+}
+
+function replaceLegacyText(value: unknown): unknown {
+  if (typeof value === 'string') return LEGACY_TEXT_KEYS[value] ?? value
+  if (Array.isArray(value)) return value.map(replaceLegacyText)
+  if (!isRecord(value)) return value
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, replaceLegacyText(entry)]))
+}
+
+function migrateLegacyState(value: unknown) {
+  const migrated = replaceLegacyText(value)
+  if (!isRecord(migrated)) return undefined
+  delete migrated.activeView
+  return migrated
+}
+
 function isValidState(value: unknown): value is State {
   if (!isRecord(value)) return false
-  if (![0, 1, 5, 10].includes(value.speed as number) || !['map', 'base'].includes(value.activeView as string)) return false
+  if (![0, 1, 5, 10].includes(value.speed as number)) return false
   if (![value.fame, value.scrap, value.threat, value.time, value.missionSerial, value.rngSeed].every(isFiniteNumber)) return false
   if (![value.raidTriggered, value.storyTriggered, value.finalSummaryVisible, value.finalSummarySeen].every(flag => typeof flag === 'boolean')) return false
   if (!Array.isArray(value.cats) || !value.cats.every(isValidCat)) return false
@@ -391,13 +499,16 @@ export function deserializeState(payload: string): State {
   try {
     envelope = JSON.parse(payload)
   } catch {
-    throw new Error('Файл не является корректным JSON-сохранением.')
+    throw new SaveError('save.error.invalid_json')
   }
-  if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new Error('Неизвестный формат сохранения.')
-  if (envelope.version !== 1 && envelope.version !== SAVE_VERSION) throw new Error(`Версия сохранения ${String(envelope.version)} не поддерживается.`)
-  if (typeof envelope.savedAt !== 'string') throw new Error('Сохранение не содержит корректную дату.')
-  const candidate = envelope.version === 1 ? migrateV1State(envelope.state) : envelope.state
-  if (!isValidState(candidate)) throw new Error('Сохранение повреждено или содержит неполные данные.')
+  if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
+  if (![1, 2, SAVE_VERSION].includes(envelope.version as number)) {
+    throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
+  }
+  if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
+  const legacyCandidate = envelope.version === 1 ? migrateV1State(envelope.state) : envelope.state
+  const candidate = envelope.version === SAVE_VERSION ? legacyCandidate : migrateLegacyState(legacyCandidate)
+  if (!isValidState(candidate)) throw new SaveError('save.error.corrupted')
 
   const restored = structuredClone(candidate)
   restored.cats.forEach(cat => {
@@ -502,6 +613,7 @@ export function selectResearch(state: State, researchId?: ResearchId) {
     chooseResearchWorker(state)
     const definition = CONFIG.research.nodes.find(node => node.id === researchId)
     note(state, 'log.research_selected', { research: definition?.name ?? researchId })
+    emitEvent(state, { type: 'research_started', researchId })
   } else {
     note(state, 'log.research_paused')
   }
@@ -534,9 +646,11 @@ function startMission(state: State, squad: Squad) {
   squad.travel = 0
   squad.travelDuration = travelTime(mission)
   note(state, 'log.mission_started', { squad: squad.name, mission: mission.title })
+  emitEvent(state, { type: 'mission_started', squadId: squad.id, missionId: mission.id })
 }
 
 function rewardMission(state: State, squad: Squad) {
+  const missionId = squad.missionId
   squad.completed++
   state.scrap += CONFIG.mission.rewardScrap
   state.fame = Math.min(CONFIG.limits.fame, state.fame + CONFIG.mission.rewardFame)
@@ -548,6 +662,7 @@ function rewardMission(state: State, squad: Squad) {
   squad.travel = 0
   squad.progress = 0
   note(state, 'log.cleanup_completed', { squad: squad.name, scrap: CONFIG.mission.rewardScrap, fame: CONFIG.mission.rewardFame })
+  if (missionId) emitEvent(state, { type: 'mission_completed', squadId: squad.id, missionId })
 }
 
 function maybeShowFinalSummary(state: State) {
@@ -555,13 +670,13 @@ function maybeShowFinalSummary(state: State) {
   state.speed = 0
   state.finalSummaryVisible = true
   note(state, 'log.goal_reached')
+  emitEvent(state, { type: 'final_summary_available' })
 }
 
 function startNinthLife(state: State, squad: Squad) {
   if (state.storyTriggered || successfulCleanups(state) < CONFIG.story.successfulCleanupsBeforeTrigger) return
   state.storyTriggered = true
   state.speed = 0
-  state.activeView = 'map'
   state.storyIncident = {
     kind: 'ninth_life',
     foundBySquadId: squad.id,
@@ -569,6 +684,7 @@ function startNinthLife(state: State, squad: Squad) {
     y: squad.target?.y ?? 36,
   }
   note(state, 'log.story_found', { squad: squad.name })
+  emitEvent(state, { type: 'story_started', story: 'ninth_life', squadId: squad.id })
 }
 
 function afterSuccessfulCleanup(state: State, squad: Squad) {
@@ -578,27 +694,27 @@ function afterSuccessfulCleanup(state: State, squad: Squad) {
 
 const STORY_OUTCOMES: Record<NinthLifeDecision, Omit<StoryResolution, 'decision' | 'fameDelta' | 'threatDelta'>> = {
   shelter: {
-    title: 'Укрыть дезертира',
-    branch: 'Защита свидетеля',
-    outcome: 'Дезертир остаётся под защитой корпорации. По району расходится слух: NINE LIVES своих не выдаёт.',
+    title: 'story.shelter.title',
+    branch: 'story.shelter.branch',
+    outcome: 'story.shelter.outcome',
     unlockedLocation: false,
   },
   interrogate: {
-    title: 'Допросить',
-    branch: 'Архив «Иглы»',
-    outcome: 'Аналитики получают полную схему базы ежей, маршруты патрулей и позывные командиров.',
+    title: 'story.interrogate.title',
+    branch: 'story.interrogate.branch',
+    outcome: 'story.interrogate.outcome',
     unlockedLocation: false,
   },
   escort: {
-    title: 'Сопроводить к границе',
-    branch: 'Тихий коридор',
-    outcome: 'Дезертир безопасно покидает сектор. Корпорация сохраняет нейтралитет и не привлекает лишнего внимания.',
+    title: 'story.escort.title',
+    branch: 'story.escort.branch',
+    outcome: 'story.escort.outcome',
     unlockedLocation: false,
   },
   exploit: {
-    title: 'Использовать данные сразу',
-    branch: 'Координаты «Девятки»',
-    outcome: 'Оперативники подтверждают координаты укрепления ежей. Новая цель нанесена на карту, но противник замечает разведку.',
+    title: 'story.exploit.title',
+    branch: 'story.exploit.branch',
+    outcome: 'story.exploit.outcome',
     unlockedLocation: true,
   },
 }
@@ -620,6 +736,7 @@ export function resolveNinthLife(state: State, decision: NinthLifeDecision) {
   }
   state.storyIncident = undefined
   note(state, balance.threat ? 'log.story_closed_threat' : 'log.story_closed', { decision: outcome.title, fame: balance.fame, threat: balance.threat })
+  emitEvent(state, { type: 'story_resolved', story: 'ninth_life', decision })
   if (state.fame < CONFIG.goal.fame) note(state, 'log.fame_needed', { fame: CONFIG.goal.fame - state.fame })
   maybeShowFinalSummary(state)
   syncAchievements(state)
@@ -741,6 +858,7 @@ function startRaidIncident(state: State, squad: Squad) {
     injuredMemberRoll: randomPercent(state),
   }
   note(state, 'log.raid_started', { squad: squad.name })
+  emitEvent(state, { type: 'incident_started', incident: 'raiders', squadId: squad.id, missionId: squad.missionId })
 }
 
 export function getRaidOptions(state: State) {
@@ -787,6 +905,7 @@ function maybeInjureCat(state: State, squad: Squad, incident: RaidIncident) {
   if (!cat) return
   cat.injuredRemaining = hasEquipped(cat, 'medkit') ? CONFIG.raid.medkitRecoveryTime : CONFIG.raid.injuryRecoveryTime
   note(state, 'log.cat_injured', { cat: cat.name })
+  emitEvent(state, { type: 'cat_injured', catId: cat.id, seconds: cat.injuredRemaining })
 }
 
 function failRaid(state: State, squad: Squad, incident: RaidIncident, messageKey: string) {
@@ -794,6 +913,12 @@ function failRaid(state: State, squad: Squad, incident: RaidIncident, messageKey
   sendHome(squad)
   state.incident = undefined
   note(state, messageKey, { squad: squad.name })
+  emitEvent(state, {
+    type: 'mission_failed',
+    squadId: squad.id,
+    missionId: incident.missionId,
+    reason: messageKey === 'log.raid_attack_failed' ? 'attack' : 'support',
+  })
 }
 
 function cancelSquadMission(state: State, squad: Squad) {
@@ -813,6 +938,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
     sendHome(primary)
     state.incident = undefined
     note(state, 'log.raid_escape', { squad: primary.name })
+    emitEvent(state, { type: 'mission_failed', squadId: primary.id, missionId: incident.missionId, reason: 'escape' })
     syncAchievements(state)
     return true
   }
@@ -842,8 +968,10 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
   }
 
   if (support.phase !== 'base') {
+    const recalledMissionId = support.missionId
     cancelSquadMission(state, support)
     note(state, 'log.support_recalled', { squad: support.name })
+    emitEvent(state, { type: 'mission_failed', squadId: support.id, missionId: recalledMissionId, reason: 'recalled' })
   }
   incident.stage = 'support_en_route'
   incident.supportSquadId = support.id
@@ -855,6 +983,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
     : CONFIG.raid.supportTravelTime
   support.progress = 0
   note(state, 'log.support_dispatched', { squad: support.name, seconds: support.travelDuration })
+  emitEvent(state, { type: 'support_requested', squadId: support.id, primarySquadId: primary.id, seconds: support.travelDuration })
   return true
 }
 
@@ -871,6 +1000,7 @@ export function resolveRaidFollowup(state: State, action: 'retreat' | 'continue'
   } else {
     sendHome(primary)
     note(state, 'log.raid_retreat')
+    emitEvent(state, { type: 'mission_failed', squadId: primary.id, missionId: incident.missionId, reason: 'retreat' })
   }
   sendHome(support)
   state.incident = undefined
@@ -911,6 +1041,7 @@ function completeResearch(state: State, researchId: ResearchId) {
     state.inventory[itemId] += definition.rewardCount
   }
   note(state, 'log.research_completed', { research: definition?.name ?? researchId })
+  emitEvent(state, { type: 'research_completed', researchId })
 }
 
 function updateResearch(state: State, elapsed: number) {
@@ -983,6 +1114,7 @@ export function tick(state: State, seconds: number) {
         state.incident.stage = 'support_decision'
         state.speed = 0
         note(state, 'log.support_arrived', { squad: squad.name })
+        emitEvent(state, { type: 'support_arrived', squadId: squad.id, primarySquadId: state.incident.primarySquadId })
         break
       }
       continue
