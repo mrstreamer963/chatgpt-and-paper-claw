@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { translate } from '../i18n.ts'
 import {
   assignCat,
   continueAfterFinale,
   createState,
+  deserializeState,
   equipItem,
+  getAchievements,
   getRaidOptions,
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
   selectResearch,
+  serializeState,
   successfulCleanups,
   tick,
 } from './simulation.ts'
@@ -59,6 +63,68 @@ test('a cat can be removed from a squad while it is at base', () => {
   assert.equal(state.speed, 0)
 })
 
+test('open achievements unlock once and stay completed', () => {
+  const state = createState()
+  assert.equal(getAchievements(state).filter(achievement => achievement.completed).length, 0)
+
+  assignCat(state, 'pixel', 'alpha')
+  assert.equal(getAchievements(state).find(achievement => achievement.id === 'first_squad')?.completed, true)
+  assignCat(state, 'pixel', '')
+  assert.equal(getAchievements(state).find(achievement => achievement.id === 'first_squad')?.completed, true)
+
+  equipItem(state, 'pixel', 'hands', 'toolkit')
+  equipItem(state, 'pixel', 'hands')
+  assert.equal(getAchievements(state).find(achievement => achievement.id === 'field_kit')?.completed, true)
+
+  selectResearch(state, 'field_scanners')
+  selectResearch(state)
+  assert.equal(getAchievements(state).find(achievement => achievement.id === 'research_started')?.completed, true)
+  assert.equal(new Set(state.achievements.completedIds).size, state.achievements.completedIds.length)
+})
+
+test('a versioned save restores the complete simulation state', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  equipItem(state, 'pixel', 'hands', 'toolkit')
+  selectResearch(state, 'field_scanners')
+  state.speed = 5
+  tick(state, 2)
+
+  const restored = deserializeState(serializeState(state))
+  assert.deepEqual(restored, state)
+  assert.notEqual(restored, state)
+})
+
+test('a prepared raid keeps its deterministic rolls after loading', () => {
+  const state = openRaid()
+  const restored = deserializeState(serializeState(state))
+  assert.deepEqual(restored.incident, state.incident)
+  assert.equal(restored.rngSeed, state.rngSeed)
+})
+
+test('unsupported and malformed save files are rejected', () => {
+  const envelope = JSON.parse(serializeState(createState()))
+  envelope.version = 99
+  assert.throws(() => deserializeState(JSON.stringify(envelope)), /не поддерживается/)
+  assert.throws(() => deserializeState('{oops'), /корректным JSON/)
+  assert.throws(() => deserializeState(JSON.stringify({ format: 'foreign', version: 1 })), /Неизвестный формат/)
+})
+
+test('version one saves migrate their text log into legacy entries', () => {
+  const envelope = JSON.parse(serializeState(createState()))
+  envelope.version = 1
+  envelope.state.log = ['09:16 · Пиксель назначен в Отряд «Альфа»', '09:15 · Старая запись']
+  const restored = deserializeState(JSON.stringify(envelope))
+  assert.deepEqual(restored.log[0], { time: 960, key: 'log.cat_assigned', params: { cat: 'Пиксель', squad: 'Отряд «Альфа»' } })
+  assert.deepEqual(restored.log[1], { time: 900, key: 'log.legacy', params: { text: 'Старая запись' } })
+})
+
+test('domain log events render in either language with localized parameters', () => {
+  const params = { cat: 'Пиксель', squad: 'Отряд «Альфа»' }
+  assert.equal(translate('ru', 'log.cat_assigned', params), 'Пиксель назначен в Отряд «Альфа»')
+  assert.equal(translate('en', 'log.cat_assigned', params), 'Pixel assigned to Squad “Alpha”')
+})
+
 test('a deployed squad composition is locked', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
@@ -96,6 +162,7 @@ test('escaping cancels the raid mission without a reward', () => {
   assert.equal(state.squads[0].phase, 'returning')
   assert.equal(state.fame, fame)
   assert.equal(state.scrap, scrap)
+  assert.equal(getAchievements(state).find(achievement => achievement.id === 'raiders_resolved')?.completed, true)
 })
 
 test('successful support arrives after eight seconds and can complete the cleanup', () => {
@@ -140,6 +207,8 @@ test('sheltering the deserter reaches the goal and opens the final summary', () 
   assert.equal(state.fame, 50)
   assert.equal(state.threat, 40)
   assert.equal(state.storyResolution?.branch, 'Защита свидетеля')
+  assert.equal(getAchievements(state).find(achievement => achievement.id === 'first_cleanup')?.completed, true)
+  assert.equal(getAchievements(state).find(achievement => achievement.id === 'ninth_life_closed')?.completed, true)
   assert.equal(state.finalSummaryVisible, true)
   assert.equal(continueAfterFinale(state), true)
   assert.equal(state.finalSummaryVisible, false)

@@ -5,6 +5,7 @@ export type SquadStyle = 'careful' | 'balanced' | 'risky'
 export type EquipmentSlot = 'armor' | 'suit' | 'belt' | 'hands'
 export type ItemId = 'armor_vest' | 'toolkit' | 'headset' | 'medkit' | 'scanner' | 'nonlethal_weapon'
 export type ResearchId = 'field_scanners' | 'emergency_dispatch' | 'improvised_defense'
+export type AchievementId = 'first_squad' | 'field_kit' | 'first_cleanup' | 'research_started' | 'raiders_resolved' | 'ninth_life_closed'
 export type Equipment = Record<EquipmentSlot, ItemId | undefined>
 export type Cat = {
   id: string
@@ -69,6 +70,7 @@ export type StoryResolution = {
   outcome: string
   unlockedLocation: boolean
 }
+export type LogEntry = { time: number; key: string; params?: Record<string, string | number> }
 export type State = {
   fame: number
   scrap: number
@@ -94,9 +96,35 @@ export type State = {
     workerCatId?: string
     nodes: Record<ResearchId, { progress: number; scrapSpent: number; spendClock: number; completed: boolean }>
   }
-  log: string[]
+  achievements: { completedIds: AchievementId[] }
+  log: LogEntry[]
 }
 export type RaidOption = { available: boolean; chance?: number; reason?: string; supportSquadName?: string }
+export type Achievement = {
+  id: AchievementId
+  title: string
+  description: string
+  hint: string
+  completed: boolean
+}
+
+export const SAVE_FORMAT = 'nine-lives-corp-save'
+export const SAVE_VERSION = 2
+export type SaveEnvelope = {
+  format: typeof SAVE_FORMAT
+  version: typeof SAVE_VERSION
+  savedAt: string
+  state: State
+}
+
+const ACHIEVEMENT_DEFINITIONS: Omit<Achievement, 'completed'>[] = [
+  { id: 'first_squad', title: 'Собрать звено', description: 'Назначить хотя бы одного кота в отряд.', hint: 'Откройте «База → Гараж и арсенал» и назначьте кота в любой отряд.' },
+  { id: 'field_kit', title: 'Готовы к выезду', description: 'Выдать оперативнику первый предмет снаряжения.', hint: 'Раскройте карточку кота на базе и выдайте предмет со склада.' },
+  { id: 'first_cleanup', title: 'Чистая работа', description: 'Успешно завершить первую уборку.', hint: 'Включите время: подготовленный отряд сам выберет уборку и отправится на место.' },
+  { id: 'research_started', title: 'Лабораторная смена', description: 'Запустить первое исследование.', hint: 'Откройте лабораторию, выберите исследование и оставьте одного кота свободным.' },
+  { id: 'raiders_resolved', title: 'Нештатная ситуация', description: 'Разрешить встречу с рейдерами.', hint: 'После двух уборок подготовьте второй отряд: он сможет прийти первому на поддержку.' },
+  { id: 'ninth_life_closed', title: 'Девятая жизнь', description: 'Принять решение по делу 09.', hint: 'Добейтесь третьей успешной уборки и решите судьбу дезертира.' },
+]
 
 export const EQUIPMENT_SLOTS: { id: EquipmentSlot; name: string }[] = [
   { id: 'armor', name: 'Бронежилет' },
@@ -146,21 +174,235 @@ export function createState(): State {
         improvised_defense: { progress: 0, scrapSpent: 0, spendClock: 0, completed: false },
       },
     },
+    achievements: { completedIds: [] },
     squads: [
       { id: 'alpha', name: 'Отряд «Альфа»', members: [], style: 'balanced', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
       { id: 'bravo', name: 'Отряд «Браво»', members: [], style: 'careful', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
     ],
-    log: ['09:00 · База NINE LIVES CORP готова к работе'],
+    log: [{ time: 0, key: 'log.base_ready' }],
   }
 }
 
-function clock(t: number) {
-  const minutes = 540 + Math.floor(t / 60)
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+function note(state: State, key: string, params?: Record<string, string | number>) {
+  state.log = [{ time: state.time, key, params }, ...state.log].slice(0, 20)
 }
 
-function note(state: State, text: string) {
-  state.log = [`${clock(state.time)} · ${text}`, ...state.log].slice(0, 20)
+function achievementCondition(state: State, id: AchievementId) {
+  if (id === 'first_squad') return state.squads.some(squad => squad.members.length > 0)
+  if (id === 'field_kit') return state.cats.some(cat => Object.values(cat.equipment).some(Boolean))
+  if (id === 'first_cleanup') return successfulCleanups(state) >= 1
+  if (id === 'research_started') return Boolean(state.research.activeId)
+    || Object.values(state.research.nodes).some(node => node.progress > 0 || node.completed)
+  if (id === 'raiders_resolved') return state.raidTriggered && !state.incident
+  return Boolean(state.storyResolution)
+}
+
+export function syncAchievements(state: State) {
+  const unlocked: AchievementId[] = []
+  for (const achievement of ACHIEVEMENT_DEFINITIONS) {
+    if (state.achievements.completedIds.includes(achievement.id) || !achievementCondition(state, achievement.id)) continue
+    state.achievements.completedIds.push(achievement.id)
+    unlocked.push(achievement.id)
+    note(state, 'log.achievement', { achievement: achievement.title })
+  }
+  return unlocked
+}
+
+export function getAchievements(state: State): Achievement[] {
+  return ACHIEVEMENT_DEFINITIONS.map(achievement => ({
+    ...achievement,
+    completed: state.achievements.completedIds.includes(achievement.id),
+  }))
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isValidEquipment(value: unknown) {
+  if (!isRecord(value)) return false
+  return EQUIPMENT_SLOTS.every(slot => value[slot.id] === undefined
+    || ITEM_DEFINITIONS.some(item => item.id === value[slot.id] && item.slot === slot.id))
+}
+
+function isValidCat(value: unknown) {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.role !== 'string') return false
+  const numericFields = ['energy', 'reaction', 'combat', 'tech', 'perception', 'scouting', 'cleanupTrait', 'supportTrait', 'attackTrait', 'injuryTrait', 'injuredRemaining']
+  return numericFields.every(field => isFiniteNumber(value[field]))
+    && (value.assignedTo === undefined || typeof value.assignedTo === 'string')
+    && isValidEquipment(value.equipment)
+}
+
+function isValidTarget(value: unknown) {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.title === 'string'
+    && isFiniteNumber(value.x) && isFiniteNumber(value.y) && isFiniteNumber(value.priority)
+}
+
+function isValidSquad(value: unknown) {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string') return false
+  if (!Array.isArray(value.members) || !value.members.every(member => typeof member === 'string')) return false
+  if (!['careful', 'balanced', 'risky'].includes(value.style as string)
+    || !['base', 'outbound', 'cleanup', 'incident', 'support', 'returning'].includes(value.phase as string)) return false
+  if (![value.travel, value.travelDuration, value.progress, value.completed].every(isFiniteNumber)) return false
+  return (value.missionId === undefined || typeof value.missionId === 'string')
+    && (value.target === undefined || isValidTarget(value.target))
+}
+
+function isValidMission(value: unknown) {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.title === 'string'
+    && isFiniteNumber(value.x) && isFiniteNumber(value.y) && isFiniteNumber(value.priority)
+    && ['available', 'assigned'].includes(value.status as string)
+    && (value.squadId === undefined || typeof value.squadId === 'string')
+}
+
+function isValidIncident(value: unknown) {
+  if (!isRecord(value)) return false
+  const rolls = ['supportChance', 'attackChance', 'supportRoll', 'attackRoll', 'injuryRoll', 'injuredMemberRoll']
+  return value.kind === 'raiders' && ['decision', 'support_en_route', 'support_decision'].includes(value.stage as string)
+    && typeof value.primarySquadId === 'string' && typeof value.missionId === 'string'
+    && (value.supportSquadId === undefined || typeof value.supportSquadId === 'string')
+    && rolls.every(field => isFiniteNumber(value[field]))
+}
+
+function isValidStoryIncident(value: unknown) {
+  return isRecord(value) && value.kind === 'ninth_life' && typeof value.foundBySquadId === 'string'
+    && isFiniteNumber(value.x) && isFiniteNumber(value.y)
+}
+
+function isValidStoryResolution(value: unknown) {
+  return isRecord(value) && ['shelter', 'interrogate', 'escort', 'exploit'].includes(value.decision as string)
+    && typeof value.title === 'string' && isFiniteNumber(value.fameDelta) && isFiniteNumber(value.threatDelta)
+    && typeof value.branch === 'string' && typeof value.outcome === 'string' && typeof value.unlockedLocation === 'boolean'
+}
+
+function isValidLogEntry(value: unknown) {
+  if (!isRecord(value) || !isFiniteNumber(value.time) || typeof value.key !== 'string') return false
+  if (value.params === undefined) return true
+  return isRecord(value.params) && Object.values(value.params).every(param => typeof param === 'string' || isFiniteNumber(param))
+}
+
+function migrateV1LogText(text: string): Pick<LogEntry, 'key' | 'params'> {
+  let match: RegExpExecArray | null
+  if (text === 'База NINE LIVES CORP готова к работе') return { key: 'log.base_ready' }
+  if (text === 'Работа лаборатории приостановлена') return { key: 'log.research_paused' }
+  if (text === 'ЦЕЛЬ ДОСТИГНУТА: дело «Девятая жизнь» закрыто') return { key: 'log.goal_reached' }
+  if (text === 'Сводка архивирована. Корпорация продолжает работу') return { key: 'log.summary_archived' }
+  if (text === 'Два отряда вытеснили рейдеров и закончили уборку') return { key: 'log.raid_support_won' }
+  if (text === 'Оба отряда безопасно отходят без добычи') return { key: 'log.raid_retreat' }
+  if ((match = /^ДОСТИЖЕНИЕ: (.+)$/.exec(text))) return { key: 'log.achievement', params: { achievement: match[1] } }
+  if ((match = /^(.+) назначен в (Отряд .+)$/.exec(text))) return { key: 'log.cat_assigned', params: { cat: match[1], squad: match[2] } }
+  if ((match = /^(.+) выведен из состава (Отряд .+)$/.exec(text))) return { key: 'log.cat_unassigned', params: { cat: match[1], squad: match[2] } }
+  if ((match = /^(Отряд .+): выбран стиль «(.+)»$/.exec(text))) {
+    const styles: Record<string, string> = { осторожный: 'careful', стандартный: 'balanced', рискованный: 'risky' }
+    return { key: 'log.squad_style', params: { squad: match[1], style: styles[match[2]] ?? match[2] } }
+  }
+  if ((match = /^(.+) получил: (.+)$/.exec(text))) return { key: 'log.item_equipped', params: { cat: match[1], item: match[2] } }
+  if ((match = /^(.+): слот «(.+)» освобождён$/.exec(text))) return { key: 'log.slot_cleared', params: { cat: match[1], slot: match[2] } }
+  if ((match = /^Выбрано исследование: (.+)$/.exec(text))) return { key: 'log.research_selected', params: { research: match[1] } }
+  if ((match = /^(Отряд .+) выехал: (.+)$/.exec(text))) return { key: 'log.mission_started', params: { squad: match[1], mission: match[2] } }
+  if ((match = /^(Отряд .+) прибыл на место уборки$/.exec(text))) return { key: 'log.mission_arrived', params: { squad: match[1] } }
+  if ((match = /^(Отряд .+) закончил уборку: \+(\d+) лома, \+(\d+) известности$/.exec(text))) return { key: 'log.cleanup_completed', params: { squad: match[1], scrap: Number(match[2]), fame: Number(match[3]) } }
+  if ((match = /^РАССЛЕДОВАНИЕ: (Отряд .+) обнаружил дезертира с данными о базе ежей$/.exec(text))) return { key: 'log.story_found', params: { squad: match[1] } }
+  if ((match = /^ДЕЛО ЗАКРЫТО: (.+) · \+(\d+) известности(?: · \+(\d+) угрозы)?$/.exec(text))) return {
+    key: match[3] ? 'log.story_closed_threat' : 'log.story_closed',
+    params: { decision: match[1], fame: Number(match[2]), threat: Number(match[3] ?? 0) },
+  }
+  if ((match = /^Для финальной сводки нужно ещё (\d+) известности$/.exec(text))) return { key: 'log.fame_needed', params: { fame: Number(match[1]) } }
+  if ((match = /^ТРЕВОГА: (Отряд .+) столкнулся с рейдерами$/.exec(text))) return { key: 'log.raid_started', params: { squad: match[1] } }
+  if ((match = /^(.+) ранен\. Восстановление начнётся после возвращения на базу$/.exec(text))) return { key: 'log.cat_injured', params: { cat: match[1] } }
+  if ((match = /^(Отряд .+) отступает без добычи$/.exec(text))) return { key: 'log.raid_escape', params: { squad: match[1] } }
+  if ((match = /^Атака сорвалась\. (Отряд .+) отступает$/.exec(text))) return { key: 'log.raid_attack_failed', params: { squad: match[1] } }
+  if ((match = /^(Отряд .+) вытеснил рейдеров и закончил уборку$/.exec(text))) return { key: 'log.raid_attack_won', params: { squad: match[1] } }
+  if ((match = /^Запрос поддержки сорван\. (Отряд .+) отступает$/.exec(text))) return { key: 'log.raid_support_failed', params: { squad: match[1] } }
+  if ((match = /^(Отряд .+) отозван с текущей уборки без награды$/.exec(text))) return { key: 'log.support_recalled', params: { squad: match[1] } }
+  if ((match = /^(Отряд .+) направлен на поддержку\. Прибытие через (\d+) с$/.exec(text))) return { key: 'log.support_dispatched', params: { squad: match[1], seconds: Number(match[2]) } }
+  if ((match = /^(Отряд .+) вернулся на базу$/.exec(text))) return { key: 'log.squad_returned', params: { squad: match[1] } }
+  if ((match = /^ИССЛЕДОВАНИЕ ЗАВЕРШЕНО: (.+)$/.exec(text))) return { key: 'log.research_completed', params: { research: match[1] } }
+  if ((match = /^(.+) восстановился после ранения$/.exec(text))) return { key: 'log.cat_recovered', params: { cat: match[1] } }
+  if ((match = /^(Отряд .+) прибыл на поддержку$/.exec(text))) return { key: 'log.support_arrived', params: { squad: match[1] } }
+  return { key: 'log.legacy', params: { text } }
+}
+
+function migrateV1State(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.log) || !value.log.every(entry => typeof entry === 'string')) return undefined
+  const migrated = structuredClone(value)
+  migrated.log = value.log.map(entry => {
+    const match = /^(\d{2}):(\d{2}) · (.*)$/.exec(entry)
+    const time = match ? Math.max(0, ((Number(match[1]) * 60 + Number(match[2])) - 540) * 60) : 0
+    return { time, ...migrateV1LogText(match?.[3] ?? entry) }
+  })
+  return migrated
+}
+
+function isValidState(value: unknown): value is State {
+  if (!isRecord(value)) return false
+  if (![0, 1, 5, 10].includes(value.speed as number) || !['map', 'base'].includes(value.activeView as string)) return false
+  if (![value.fame, value.scrap, value.threat, value.time, value.missionSerial, value.rngSeed].every(isFiniteNumber)) return false
+  if (![value.raidTriggered, value.storyTriggered, value.finalSummaryVisible, value.finalSummarySeen].every(flag => typeof flag === 'boolean')) return false
+  if (!Array.isArray(value.cats) || !value.cats.every(isValidCat)) return false
+  if (!Array.isArray(value.squads) || !value.squads.every(isValidSquad)) return false
+  if (!Array.isArray(value.missions) || !value.missions.every(isValidMission)) return false
+  if (!isRecord(value.inventory)) return false
+  const inventory = value.inventory
+  if (!ITEM_DEFINITIONS.every(item => isFiniteNumber(inventory[item.id]))) return false
+  if (!isRecord(value.research) || !isRecord(value.research.nodes)) return false
+  const researchState = value.research
+  const researchNodes = researchState.nodes as Record<string, unknown>
+  if ((researchState.activeId !== undefined && !RESEARCH_DEFINITIONS.some(research => research.id === researchState.activeId))
+    || (researchState.workerCatId !== undefined && typeof researchState.workerCatId !== 'string')
+    || !RESEARCH_DEFINITIONS.every(research => {
+      const node = researchNodes[research.id]
+      return isRecord(node) && isFiniteNumber(node.progress) && isFiniteNumber(node.scrapSpent)
+        && isFiniteNumber(node.spendClock) && typeof node.completed === 'boolean'
+    })) return false
+  if (!isRecord(value.achievements) || !Array.isArray(value.achievements.completedIds)) return false
+  const completedIds = value.achievements.completedIds
+  if (new Set(completedIds).size !== completedIds.length
+    || !completedIds.every(id => ACHIEVEMENT_DEFINITIONS.some(achievement => achievement.id === id))) return false
+  if (!Array.isArray(value.log) || !value.log.every(isValidLogEntry)) return false
+  if (value.incident !== undefined && !isValidIncident(value.incident)) return false
+  if (value.storyIncident !== undefined && !isValidStoryIncident(value.storyIncident)) return false
+  if (value.storyResolution !== undefined && !isValidStoryResolution(value.storyResolution)) return false
+  return true
+}
+
+export function serializeState(state: State) {
+  const envelope: SaveEnvelope = {
+    format: SAVE_FORMAT,
+    version: SAVE_VERSION,
+    savedAt: new Date().toISOString(),
+    state,
+  }
+  return JSON.stringify(envelope, null, 2)
+}
+
+export function deserializeState(payload: string): State {
+  let envelope: unknown
+  try {
+    envelope = JSON.parse(payload)
+  } catch {
+    throw new Error('Файл не является корректным JSON-сохранением.')
+  }
+  if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new Error('Неизвестный формат сохранения.')
+  if (envelope.version !== 1 && envelope.version !== SAVE_VERSION) throw new Error(`Версия сохранения ${String(envelope.version)} не поддерживается.`)
+  if (typeof envelope.savedAt !== 'string') throw new Error('Сохранение не содержит корректную дату.')
+  const candidate = envelope.version === 1 ? migrateV1State(envelope.state) : envelope.state
+  if (!isValidState(candidate)) throw new Error('Сохранение повреждено или содержит неполные данные.')
+
+  const restored = structuredClone(candidate)
+  restored.cats.forEach(cat => {
+    cat.equipment = {
+      armor: cat.equipment.armor,
+      suit: cat.equipment.suit,
+      belt: cat.equipment.belt,
+      hands: cat.equipment.hands,
+    }
+  })
+  return restored
 }
 
 export function successfulCleanups(state: State) {
@@ -187,11 +429,12 @@ export function assignCat(state: State, catId: string, squadId: string) {
     targetSquad.members.push(catId)
     cat.assignedTo = targetSquad.id
     if (state.research.workerCatId === cat.id) state.research.workerCatId = undefined
-    note(state, `${cat.name} назначен в ${targetSquad.name}`)
+    note(state, 'log.cat_assigned', { cat: cat.name, squad: targetSquad.name })
   } else {
     cat.assignedTo = undefined
-    note(state, `${cat.name} выведен из состава ${currentSquad?.name ?? ''}`.trim())
+    note(state, 'log.cat_unassigned', { cat: cat.name, squad: currentSquad?.name ?? '' })
   }
+  syncAchievements(state)
   return true
 }
 
@@ -200,7 +443,7 @@ export function setSquadStyle(state: State, squadId: string, style: SquadStyle) 
   if (!squad || squad.phase !== 'base' || squad.style === style) return false
   state.speed = 0
   squad.style = style
-  note(state, `${squad.name}: выбран стиль «${style === 'careful' ? 'осторожный' : style === 'risky' ? 'рискованный' : 'стандартный'}»`)
+  note(state, 'log.squad_style', { squad: squad.name, style })
   return true
 }
 
@@ -238,7 +481,9 @@ export function equipItem(state: State, catId: string, slot: EquipmentSlot, item
   if (itemId === 'medkit' && cat.injuredRemaining > CONFIG.raid.medkitRecoveryTime) {
     cat.injuredRemaining = CONFIG.raid.medkitRecoveryTime
   }
-  note(state, itemId ? `${cat.name} получил: ${itemDefinition(itemId)?.name}` : `${cat.name}: слот «${EQUIPMENT_SLOTS.find(candidate => candidate.id === slot)?.name}» освобождён`)
+  if (itemId) note(state, 'log.item_equipped', { cat: cat.name, item: itemDefinition(itemId)?.name ?? itemId })
+  else note(state, 'log.slot_cleared', { cat: cat.name, slot: EQUIPMENT_SLOTS.find(candidate => candidate.id === slot)?.name ?? slot })
+  syncAchievements(state)
   return true
 }
 
@@ -250,10 +495,11 @@ export function selectResearch(state: State, researchId?: ResearchId) {
   if (researchId) {
     chooseResearchWorker(state)
     const definition = CONFIG.research.nodes.find(node => node.id === researchId)
-    note(state, `Выбрано исследование: ${definition?.name}`)
+    note(state, 'log.research_selected', { research: definition?.name ?? researchId })
   } else {
-    note(state, 'Работа лаборатории приостановлена')
+    note(state, 'log.research_paused')
   }
+  syncAchievements(state)
   return true
 }
 
@@ -281,7 +527,7 @@ function startMission(state: State, squad: Squad) {
   squad.phase = 'outbound'
   squad.travel = 0
   squad.travelDuration = travelTime(mission)
-  note(state, `${squad.name} выехал: ${mission.title}`)
+  note(state, 'log.mission_started', { squad: squad.name, mission: mission.title })
 }
 
 function rewardMission(state: State, squad: Squad) {
@@ -295,14 +541,14 @@ function rewardMission(state: State, squad: Squad) {
   squad.phase = 'returning'
   squad.travel = 0
   squad.progress = 0
-  note(state, `${squad.name} закончил уборку: +${CONFIG.mission.rewardScrap} лома, +${CONFIG.mission.rewardFame} известности`)
+  note(state, 'log.cleanup_completed', { squad: squad.name, scrap: CONFIG.mission.rewardScrap, fame: CONFIG.mission.rewardFame })
 }
 
 function maybeShowFinalSummary(state: State) {
   if (!state.storyResolution || state.fame < 50 || state.finalSummarySeen || state.finalSummaryVisible) return
   state.speed = 0
   state.finalSummaryVisible = true
-  note(state, 'ЦЕЛЬ ДОСТИГНУТА: дело «Девятая жизнь» закрыто')
+  note(state, 'log.goal_reached')
 }
 
 function startNinthLife(state: State, squad: Squad) {
@@ -316,7 +562,7 @@ function startNinthLife(state: State, squad: Squad) {
     x: squad.target?.x ?? 68,
     y: squad.target?.y ?? 36,
   }
-  note(state, `РАССЛЕДОВАНИЕ: ${squad.name} обнаружил дезертира с данными о базе ежей`)
+  note(state, 'log.story_found', { squad: squad.name })
 }
 
 function afterSuccessfulCleanup(state: State, squad: Squad) {
@@ -367,9 +613,10 @@ export function resolveNinthLife(state: State, decision: NinthLifeDecision) {
     unlockedLocation: outcome.unlockedLocation,
   }
   state.storyIncident = undefined
-  note(state, `ДЕЛО ЗАКРЫТО: ${outcome.title} · +${balance.fame} известности${balance.threat ? ` · +${balance.threat} угрозы` : ''}`)
-  if (state.fame < 50) note(state, `Для финальной сводки нужно ещё ${50 - state.fame} известности`)
+  note(state, balance.threat ? 'log.story_closed_threat' : 'log.story_closed', { decision: outcome.title, fame: balance.fame, threat: balance.threat })
+  if (state.fame < 50) note(state, 'log.fame_needed', { fame: 50 - state.fame })
   maybeShowFinalSummary(state)
+  syncAchievements(state)
   return true
 }
 
@@ -377,7 +624,7 @@ export function continueAfterFinale(state: State) {
   if (!state.finalSummaryVisible) return false
   state.finalSummaryVisible = false
   state.finalSummarySeen = true
-  note(state, 'Сводка архивирована. Корпорация продолжает работу')
+  note(state, 'log.summary_archived')
   return true
 }
 
@@ -478,7 +725,7 @@ function startRaidIncident(state: State, squad: Squad) {
     injuryRoll: randomPercent(state),
     injuredMemberRoll: randomPercent(state),
   }
-  note(state, `ТРЕВОГА: ${squad.name} столкнулся с рейдерами`)
+  note(state, 'log.raid_started', { squad: squad.name })
 }
 
 export function getRaidOptions(state: State) {
@@ -491,10 +738,10 @@ export function getRaidOptions(state: State) {
     escape: { available: true, chance: 100 } satisfies RaidOption,
     attack: defenseReady && hasWeapon
       ? { available: true, chance: state.incident.attackChance } satisfies RaidOption
-      : { available: false, reason: defenseReady ? 'Выдайте участнику отряда нелетальное оружие.' : 'Нужно завершить исследование «Импровизированная защита».' } satisfies RaidOption,
+      : { available: false, reason: defenseReady ? 'raid.reason.equip_weapon' : 'raid.reason.research_defense' } satisfies RaidOption,
     support: supportSquad
       ? { available: true, chance: state.incident.supportChance, supportSquadName: supportSquad.name }
-      : { available: false, reason: 'Во втором отряде нет готовых к выезду котов.' } satisfies RaidOption,
+      : { available: false, reason: 'raid.reason.no_support_squad' } satisfies RaidOption,
   }
 }
 
@@ -524,14 +771,14 @@ function maybeInjureCat(state: State, squad: Squad, incident: RaidIncident) {
   const cat = state.cats.find(candidate => candidate.id === memberId)
   if (!cat) return
   cat.injuredRemaining = hasEquipped(cat, 'medkit') ? CONFIG.raid.medkitRecoveryTime : CONFIG.raid.injuryRecoveryTime
-  note(state, `${cat.name} ранен. Восстановление начнётся после возвращения на базу`)
+  note(state, 'log.cat_injured', { cat: cat.name })
 }
 
-function failRaid(state: State, squad: Squad, incident: RaidIncident, message: string) {
+function failRaid(state: State, squad: Squad, incident: RaidIncident, messageKey: string) {
   maybeInjureCat(state, squad, incident)
   sendHome(squad)
   state.incident = undefined
-  note(state, message)
+  note(state, messageKey, { squad: squad.name })
 }
 
 function cancelSquadMission(state: State, squad: Squad) {
@@ -550,7 +797,8 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
   if (action === 'escape') {
     sendHome(primary)
     state.incident = undefined
-    note(state, `${primary.name} отступает без добычи`)
+    note(state, 'log.raid_escape', { squad: primary.name })
+    syncAchievements(state)
     return true
   }
   if (action === 'attack') {
@@ -558,26 +806,29 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
       && membersOf(state, primary).some(cat => hasEquipped(cat, 'nonlethal_weapon'))
     if (!attackAvailable) return false
     if (incident.attackRoll > incident.attackChance) {
-      failRaid(state, primary, incident, `Атака сорвалась. ${primary.name} отступает`)
+      failRaid(state, primary, incident, 'log.raid_attack_failed')
+      syncAchievements(state)
       return true
     }
     rewardMission(state, primary)
     state.incident = undefined
-    note(state, `${primary.name} вытеснил рейдеров и закончил уборку`)
+    note(state, 'log.raid_attack_won', { squad: primary.name })
     afterSuccessfulCleanup(state, primary)
+    syncAchievements(state)
     return true
   }
 
   const support = eligibleSupportSquad(state, primary.id)
   if (!support) return false
   if (incident.supportRoll > incident.supportChance) {
-    failRaid(state, primary, incident, `Запрос поддержки сорван. ${primary.name} отступает`)
+    failRaid(state, primary, incident, 'log.raid_support_failed')
+    syncAchievements(state)
     return true
   }
 
   if (support.phase !== 'base') {
     cancelSquadMission(state, support)
-    note(state, `${support.name} отозван с текущей уборки без награды`)
+    note(state, 'log.support_recalled', { squad: support.name })
   }
   incident.stage = 'support_en_route'
   incident.supportSquadId = support.id
@@ -588,7 +839,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
     ? CONFIG.raid.researchedSupportTravelTime
     : CONFIG.raid.supportTravelTime
   support.progress = 0
-  note(state, `${support.name} направлен на поддержку. Прибытие через ${support.travelDuration} с`)
+  note(state, 'log.support_dispatched', { squad: support.name, seconds: support.travelDuration })
   return true
 }
 
@@ -601,14 +852,15 @@ export function resolveRaidFollowup(state: State, action: 'retreat' | 'continue'
 
   if (action === 'continue') {
     rewardMission(state, primary)
-    note(state, 'Два отряда вытеснили рейдеров и закончили уборку')
+    note(state, 'log.raid_support_won')
   } else {
     sendHome(primary)
-    note(state, 'Оба отряда безопасно отходят без добычи')
+    note(state, 'log.raid_retreat')
   }
   sendHome(support)
   state.incident = undefined
   if (action === 'continue') afterSuccessfulCleanup(state, primary)
+  syncAchievements(state)
   return true
 }
 
@@ -619,7 +871,7 @@ function arriveAtBase(state: State, squad: Squad) {
   squad.target = undefined
   squad.travel = 0
   squad.travelDuration = 0
-  note(state, `${squad.name} вернулся на базу`)
+  note(state, 'log.squad_returned', { squad: squad.name })
 }
 
 function chooseResearchWorker(state: State) {
@@ -643,7 +895,7 @@ function completeResearch(state: State, researchId: ResearchId) {
     const itemId = definition.rewardItemId as ItemId
     state.inventory[itemId] += definition.rewardCount
   }
-  note(state, `ИССЛЕДОВАНИЕ ЗАВЕРШЕНО: ${definition?.name}`)
+  note(state, 'log.research_completed', { research: definition?.name ?? researchId })
 }
 
 function updateResearch(state: State, elapsed: number) {
@@ -688,7 +940,7 @@ function updateRestAndRecovery(state: State, elapsed: number, workingCatId?: str
     if (cat.id !== workingCatId) cat.energy = Math.min(100, cat.energy + elapsed * CONFIG.mission.restPerSecond)
     if (cat.injuredRemaining > 0) {
       cat.injuredRemaining = Math.max(0, cat.injuredRemaining - elapsed)
-      if (cat.injuredRemaining === 0) note(state, `${cat.name} восстановился после ранения`)
+      if (cat.injuredRemaining === 0) note(state, 'log.cat_recovered', { cat: cat.name })
     }
   })
 }
@@ -715,7 +967,7 @@ export function tick(state: State, seconds: number) {
         squad.phase = 'incident'
         state.incident.stage = 'support_decision'
         state.speed = 0
-        note(state, `${squad.name} прибыл на поддержку`)
+        note(state, 'log.support_arrived', { squad: squad.name })
         break
       }
       continue
@@ -726,7 +978,7 @@ export function tick(state: State, seconds: number) {
         if (squad.phase === 'outbound') {
           squad.phase = 'cleanup'
           squad.progress = 0
-          note(state, `${squad.name} прибыл на место уборки`)
+          note(state, 'log.mission_arrived', { squad: squad.name })
         } else {
           arriveAtBase(state, squad)
         }
@@ -748,4 +1000,5 @@ export function tick(state: State, seconds: number) {
       afterSuccessfulCleanup(state, squad)
     }
   }
+  syncAchievements(state)
 }
