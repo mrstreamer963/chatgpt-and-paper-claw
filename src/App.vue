@@ -33,6 +33,15 @@ import {
 } from './core/simulation'
 import { translate, type Locale } from './i18n'
 import { createSoundSystem, normalizeSoundPreferences, type SoundPreferences } from './audio'
+import baseCutawayUrl from '../assets/art/base-cutaway-v1.png?url'
+import catTokensUrl from '../assets/art/cat-tokens.svg?url'
+import uiIconsUrl from '../assets/art/ui-icons.svg?url'
+import portraitMarloweUrl from '../assets/art/portrait-marlowe-v1.png?url'
+import portraitPixelUrl from '../assets/art/portrait-pixel-v1.png?url'
+import portraitRustUrl from '../assets/art/portrait-rust-v1.png?url'
+import portraitShorokhUrl from '../assets/art/portrait-shorokh-v1.png?url'
+import portraitBastionUrl from '../assets/art/portrait-bastion-v1.png?url'
+import portraitMyataUrl from '../assets/art/portrait-myata-v1.png?url'
 
 const AUTOSAVE_KEY = 'nine-lives-corp-autosave-v1'
 const HINTS_KEY = 'nine-lives-corp-hints-v1'
@@ -95,6 +104,14 @@ const soundSettingsOpen = ref(false)
 const audioStarted = ref(false)
 const audioUnavailable = ref(false)
 const soundSystem = createSoundSystem(soundPreferences)
+const portraitUrls: Record<string, string> = {
+  marlowe: portraitMarloweUrl,
+  pixel: portraitPixelUrl,
+  rust: portraitRustUrl,
+  shorokh: portraitShorokhUrl,
+  bastion: portraitBastionUrl,
+  myata: portraitMyataUrl,
+}
 const saveStatus = ref<{ key: string; params?: Record<string, string | number> }>({
   key: initialSaveError || (restoredAutosave ? 'save.restored' : 'save.ready'),
 })
@@ -347,7 +364,29 @@ function squadStyle(squad: Squad) {
     : squad.phase === 'returning'
       ? 1 - Math.min(1, squad.travel / duration)
       : 1
-  return { left: `${base.x + (target.x - base.x) * ratio}%`, top: `${base.y + (target.y - base.y) * ratio}%` }
+  const lane = squad.id === 'alpha' ? -1 : 1
+  const x = base.x + (target.x - base.x) * ratio + lane * 4.2
+  const y = base.y + (target.y - base.y) * ratio + lane * 3.1
+  return { left: `${Math.max(5, Math.min(95, x))}%`, top: `${Math.max(7, Math.min(93, y))}%` }
+}
+
+function baseCatStyle(cat: State['cats'][number], index: number) {
+  const lane = index % 3
+  if (cat.assignedTo) {
+    const squad = state.squads.find(candidate => candidate.id === cat.assignedTo)
+    if (squad && squad.phase !== 'base') return { left: '50%', top: '50%', opacity: 0 }
+  }
+
+  const positions = cat.injuredRemaining > 0
+    ? [{ left: 66, top: 68 }, { left: 76, top: 71 }, { left: 86, top: 67 }]
+    : researchWorker.value?.id === cat.id
+      ? [{ left: 14, top: 63 }, { left: 24, top: 66 }, { left: 34, top: 62 }]
+      : cat.assignedTo
+        ? [{ left: 61, top: 29 }, { left: 73, top: 32 }, { left: 85, top: 28 }]
+        : [{ left: 13, top: 29 }, { left: 24, top: 32 }, { left: 35, top: 28 }]
+
+  const position = positions[lane]
+  return { left: `${position.left}%`, top: `${position.top}%`, opacity: 1 }
 }
 
 function squadLabel(squad: Squad) {
@@ -467,6 +506,17 @@ function formatLog(entry: LogEntry) {
 
     <section v-if="state.activeView === 'map'" class="map-view">
       <div class="map-grid" :class="{ 'incident-active': state.incident }">
+        <svg class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <line
+            v-for="squad in state.squads.filter(candidate => candidate.target && candidate.phase !== 'base')"
+            :key="`route-${squad.id}`"
+            x1="46"
+            y1="51"
+            :x2="squad.target?.x"
+            :y2="squad.target?.y"
+            :class="squad.id"
+          />
+        </svg>
         <div class="threat-zone" :class="{ elevated: state.threat >= 35, severe: state.threat >= 50 }"></div>
         <div class="district d1">{{ tr('Старый сектор') }}</div>
         <div class="district d2">{{ tr('Промзона') }}</div>
@@ -483,24 +533,27 @@ function formatLog(entry: LogEntry) {
           :key="mission.id"
           class="cleanup-pin"
           :style="{ left: `${mission.x}%`, top: `${mission.y}%` }"
-        ><span>♜</span><b>{{ tr('УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
+        ><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr('УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
         <div
           v-for="mission in state.missions.filter(mission => mission.status === 'assigned')"
           :key="`assigned-${mission.id}`"
           class="cleanup-pin assigned"
           :class="{ danger: state.incident?.missionId === mission.id }"
           :style="{ left: `${mission.x}%`, top: `${mission.y}%` }"
-        ><span>♜</span><b>{{ tr(state.incident?.missionId === mission.id ? 'ТРЕВОГА' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
+        ><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(state.incident?.missionId === mission.id ? 'ТРЕВОГА' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
         <div
           v-for="squad in state.squads"
           :key="squad.id"
           class="squad-marker"
-          :class="squad.phase"
+          :class="[squad.phase, squad.id]"
           :style="squadStyle(squad)"
         >
-          <span v-for="member in squad.members" :key="member" class="cat-silhouette">♟</span>
-          <b>{{ tr(squad.name) }}</b>
-          <small>{{ squadLabel(squad) }}</small>
+          <div class="map-squad-tokens">
+            <svg v-for="member in squad.members" :key="member" class="cat-silhouette" viewBox="0 0 64 64" aria-hidden="true">
+              <use :href="`${catTokensUrl}#token-${member}`" />
+            </svg>
+          </div>
+          <div class="squad-callout"><b>{{ tr(squad.name) }}</b><small>{{ squadLabel(squad) }}</small></div>
         </div>
       </div>
       <aside>
@@ -516,19 +569,30 @@ function formatLog(entry: LogEntry) {
 
     <section v-else class="base-view">
       <div class="cutaway">
-        <button class="room lab" :class="{ selected: basePanel === 'lab' }" @click="basePanel = 'lab'">
-          {{ tr('ЛАБОРАТОРИЯ') }}
-          <small v-if="state.research.activeId">{{ researchWorker ? tr(researchWorker.name) : tr('Нет исполнителя') }} · {{ researchPercent(state.research.activeId) }}%</small>
-          <small v-else>{{ tr('research.count', { completed: Object.values(state.research.nodes).filter(node => node.completed).length }) }}</small>
-        </button>
-        <button class="room control" :class="{ selected: basePanel === 'achievements' }" @click="basePanel = 'achievements'">
-          {{ tr('ДИСПЕТЧЕРСКАЯ') }}
-          <small>{{ tr('base.achievement_summary', { completed: completedAchievementCount, total: achievements.length, cleanups: totalRuns }) }}</small>
-        </button>
-        <button class="room garage" :class="{ selected: basePanel === 'teams' }" @click="basePanel = 'teams'">
-          {{ tr('ГАРАЖ И АРСЕНАЛ') }}
-          <small>{{ tr('base.garage_summary', { squads: state.squads.filter(squad => squad.phase === 'base').length, items: Object.values(state.inventory).reduce((sum, count) => sum + count, 0) }) }}</small>
-        </button>
+        <div class="base-artboard" :style="{ backgroundImage: `url(${baseCutawayUrl})` }">
+          <button class="room control" :class="{ selected: basePanel === 'achievements' }" @click="basePanel = 'achievements'">
+            <span>{{ tr('ДИСПЕТЧЕРСКАЯ') }}</span>
+            <small>{{ tr('base.achievement_summary', { completed: completedAchievementCount, total: achievements.length, cleanups: totalRuns }) }}</small>
+          </button>
+          <button class="room lab" :class="{ selected: basePanel === 'lab' }" @click="basePanel = 'lab'">
+            <span>{{ tr('ЛАБОРАТОРИЯ') }}</span>
+            <small v-if="state.research.activeId">{{ researchWorker ? tr(researchWorker.name) : tr('Нет исполнителя') }} · {{ researchPercent(state.research.activeId) }}%</small>
+            <small v-else>{{ tr('research.count', { completed: Object.values(state.research.nodes).filter(node => node.completed).length }) }}</small>
+          </button>
+          <button class="room garage" :class="{ selected: basePanel === 'teams' }" @click="basePanel = 'teams'">
+            <span>{{ tr('ГАРАЖ И АРСЕНАЛ') }}</span>
+            <small>{{ tr('base.garage_summary', { squads: state.squads.filter(squad => squad.phase === 'base').length, items: Object.values(state.inventory).reduce((sum, count) => sum + count, 0) }) }}</small>
+          </button>
+          <svg
+            v-for="(cat, index) in state.cats"
+            :key="`base-${cat.id}`"
+            class="base-cat-token"
+            :class="{ injured: cat.injuredRemaining > 0, away: cat.assignedTo && state.squads.find(squad => squad.id === cat.assignedTo)?.phase !== 'base' }"
+            :style="baseCatStyle(cat, index)"
+            viewBox="0 0 64 64"
+            :aria-label="tr(cat.name)"
+          ><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg>
+        </div>
       </div>
       <aside v-if="basePanel === 'teams'" class="roster base-panel">
         <div class="panel-tabs">
@@ -548,7 +612,7 @@ function formatLog(entry: LogEntry) {
         </div>
         <details v-for="cat in state.cats" :key="cat.id" class="cat-card" :class="{ injured: cat.injuredRemaining > 0 }">
           <summary>
-            <img :src="`/assets/art/portrait-${cat.id}-v1.png`" :alt="tr(cat.name)">
+            <img :src="portraitUrls[cat.id]" :alt="tr(cat.name)">
             <span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span>
             <select :value="cat.assignedTo || ''" :disabled="!canEditCat(state, cat.id)" :aria-label="tr('Назначение в отряд')" @click.stop @change="handleAssignment(cat.id, $event)">
               <option value="">{{ tr('не назначен') }}</option>
@@ -571,6 +635,7 @@ function formatLog(entry: LogEntry) {
         <section class="warehouse">
           <h3>{{ tr('СКЛАД') }}</h3>
           <div v-for="item in ITEM_DEFINITIONS" :key="item.id" :class="{ empty: state.inventory[item.id] === 0 }">
+            <svg class="item-icon" viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-${item.id}`" /></svg>
             <span><b>{{ tr(item.name) }}</b><small>{{ tr(item.effect) }}</small></span><strong>×{{ state.inventory[item.id] }}</strong>
           </div>
         </section>
