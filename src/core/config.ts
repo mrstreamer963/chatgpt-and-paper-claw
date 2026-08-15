@@ -1,0 +1,43 @@
+export const SIMULATION_CONFIG = {
+  initial: { fame: 20, scrap: 0, threat: 20, rngSeed: 0x9e3779b9 },
+  mission: {
+    cleanupDuration: 30,
+    raidTriggerProgress: 15,
+    rewardScrap: 10,
+    rewardFame: 5,
+    energyCost: 20,
+    minimumDepartureEnergy: 50,
+    restPerSecond: 1,
+    mapSpeed: 4,
+    minimumTravelTime: 2,
+    flowInterval: 35,
+    flowCycle: [2, 5, 1, 4, 3],
+  },
+  raid: {
+    successfulCleanupsBeforeTrigger: 2,
+    supportTravelTime: 8,
+    supportBaseChance: 35,
+    attackBaseChance: 20,
+    injuryBaseChance: 60,
+    minimumInjuryChance: 20,
+    injuryRecoveryTime: 60,
+  },
+  story: {
+    successfulCleanupsBeforeTrigger: 3,
+    decisions: {
+      shelter: { fame: 15, threat: 20 },
+      interrogate: { fame: 10, threat: 0 },
+      escort: { fame: 5, threat: 0 },
+      exploit: { fame: 15, threat: 15 },
+    },
+  },
+  map: { base: { x: 46, y: 51 } },
+  cats: [
+    { id: 'marlowe', name: 'Марлоу', role: 'переговорщик', energy: 88, reaction: 4, combat: 2, tech: 4, perception: 6, scouting: 5, supportTrait: 5, injuryTrait: 0 },
+    { id: 'pixel', name: 'Пиксель', role: 'техник', energy: 92, reaction: 5, combat: 2, tech: 9, perception: 5, scouting: 4, supportTrait: 0, injuryTrait: 0 },
+    { id: 'rust', name: 'Ржа', role: 'грузчик', energy: 78, reaction: 5, combat: 5, tech: 8, perception: 4, scouting: 3, supportTrait: 0, injuryTrait: 0 },
+    { id: 'shorokh', name: 'Шорох', role: 'разведчик', energy: 83, reaction: 7, combat: 3, tech: 4, perception: 10, scouting: 9, supportTrait: 10, injuryTrait: 0 },
+    { id: 'bastion', name: 'Бастион', role: 'защитник', energy: 95, reaction: 8, combat: 9, tech: 3, perception: 5, scouting: 3, supportTrait: 0, injuryTrait: 0 },
+    { id: 'myata', name: 'Мята', role: 'медик', energy: 86, reaction: 5, combat: 3, tech: 5, perception: 8, scouting: 6, supportTrait: 0, injuryTrait: 10 },
+  ],
+} as const
