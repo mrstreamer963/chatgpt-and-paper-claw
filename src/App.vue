@@ -2,9 +2,11 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, toRaw, watch } from 'vue'
 import {
   EQUIPMENT_SLOTS,
+  GAME_RULES,
   ITEM_DEFINITIONS,
   RESEARCH_DEFINITIONS,
   RESEARCH_RULES,
+  STORY_DECISION_BALANCE,
   assignCat,
   canEditCat,
   equipItem,
@@ -319,12 +321,13 @@ watch(() => Boolean(state.storyIncident), (active, wasActive) => {
   if (active && !wasActive) soundSystem.play('investigation')
 })
 
-const storyChoices: { id: NinthLifeDecision; title: string; tag: string; description: string; fame: number; threat: number; tone: string }[] = [
-  { id: 'shelter', title: 'Укрыть дезертира', tag: 'Гуманность', description: 'Дать убежище на базе. Слух укрепит имя корпорации, но приведёт преследователей к нашим воротам.', fame: 15, threat: 20, tone: 'danger' },
-  { id: 'interrogate', title: 'Допросить', tag: 'Разведданные', description: 'Проверить показания и собрать полное досье на укрепление ежей. Без эскалации в секторе.', fame: 10, threat: 0, tone: 'intel' },
-  { id: 'escort', title: 'Сопроводить к границе', tag: 'Безопасность', description: 'Вывести свидетеля из сектора по тихому маршруту. Надёжно, но без громкой победы.', fame: 5, threat: 0, tone: 'safe' },
-  { id: 'exploit', title: 'Использовать данные сразу', tag: 'Инициатива', description: 'Не теряя времени, отправить разведку по координатам. Получим новую точку, но раскроем интерес к базе.', fame: 15, threat: 15, tone: 'action' },
+const storyChoicePresentation: { id: NinthLifeDecision; title: string; tag: string; description: string; tone: string }[] = [
+  { id: 'shelter', title: 'Укрыть дезертира', tag: 'Гуманность', description: 'Дать убежище на базе. Слух укрепит имя корпорации, но приведёт преследователей к нашим воротам.', tone: 'danger' },
+  { id: 'interrogate', title: 'Допросить', tag: 'Разведданные', description: 'Проверить показания и собрать полное досье на укрепление ежей. Без эскалации в секторе.', tone: 'intel' },
+  { id: 'escort', title: 'Сопроводить к границе', tag: 'Безопасность', description: 'Вывести свидетеля из сектора по тихому маршруту. Надёжно, но без громкой победы.', tone: 'safe' },
+  { id: 'exploit', title: 'Использовать данные сразу', tag: 'Инициатива', description: 'Не теряя времени, отправить разведку по координатам. Получим новую точку, но раскроем интерес к базе.', tone: 'action' },
 ]
+const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STORY_DECISION_BALANCE[choice.id] }))
 
 function setSpeed(speed: Speed) {
   const blockingIncident = state.incident && state.incident.stage !== 'support_en_route'
@@ -366,15 +369,14 @@ function researchPercent(researchId: ResearchId) {
   return Math.min(100, Math.round(state.research.nodes[researchId].progress / RESEARCH_RULES.duration * 100))
 }
 
-function catTrait(catId: string) {
-  return {
-    marlowe: 'Деэскалация · +5 к поддержке',
-    pixel: 'Самодиагностика · +5 к уборке',
-    rust: 'Тяжёлая работа · +5 к уборке',
-    shorokh: 'Паранойя · +10 к поддержке',
-    bastion: 'Силовой ответ · +10 к нападению',
-    myata: 'Бережёт команду · −10 к ранению',
-  }[catId] ?? ''
+function catTraitText(cat: State['cats'][number]) {
+  if (cat.id === 'marlowe') return tr('cat.trait.bonus', { trait: 'Деэскалация', bonus: cat.supportTrait, action: 'поддержке' })
+  if (cat.id === 'pixel') return tr('cat.trait.bonus', { trait: 'Самодиагностика', bonus: cat.cleanupTrait, action: 'уборке' })
+  if (cat.id === 'rust') return tr('cat.trait.bonus', { trait: 'Тяжёлая работа', bonus: cat.cleanupTrait, action: 'уборке' })
+  if (cat.id === 'shorokh') return tr('cat.trait.bonus', { trait: 'Паранойя', bonus: cat.supportTrait, action: 'поддержке' })
+  if (cat.id === 'bastion') return tr('cat.trait.bonus', { trait: 'Силовой ответ', bonus: cat.attackTrait, action: 'нападению' })
+  if (cat.id === 'myata') return tr('cat.trait.reduction', { trait: 'Бережёт команду', bonus: cat.injuryTrait, action: 'ранению' })
+  return ''
 }
 
 function squadStyle(squad: Squad) {
@@ -418,7 +420,7 @@ function squadLabel(squad: Squad) {
   if (squad.phase === 'returning') return tr('status.returning')
   if (squad.phase === 'support') return tr('status.support', { seconds: Math.max(0, Math.ceil(squad.travelDuration - squad.travel)) })
   if (squad.phase === 'incident') return tr('status.incident')
-  return tr('status.cleanup', { progress: Math.round(squad.progress / 30 * 100) })
+  return tr('status.cleanup', { progress: Math.round(squad.progress / GAME_RULES.cleanupDuration * 100) })
 }
 
 function formatLogTime(time: number) {
@@ -436,9 +438,9 @@ function formatLog(entry: LogEntry) {
     <header class="topbar">
       <div class="brand">NINE <i>LIVES</i><small>CORP / OPERATIONS</small></div>
       <div class="metrics">
-        <span>{{ tr('ИЗВЕСТНОСТЬ') }} <b>{{ state.fame }}</b><em>/ 50</em></span>
+        <span>{{ tr('ИЗВЕСТНОСТЬ') }} <b>{{ state.fame }}</b><em>/ {{ GAME_RULES.fameGoal }}</em></span>
         <span>{{ tr('ЛОМ') }} <b>{{ state.scrap }}</b></span>
-        <span>{{ tr('УГРОЗА') }} <b :class="{ hot: state.threat >= 35 }">{{ state.threat }}</b></span>
+        <span>{{ tr('УГРОЗА') }} <b :class="{ hot: state.threat >= GAME_RULES.elevatedThreat }">{{ state.threat }}</b></span>
         <span>{{ tr('ВРЕМЯ') }} <b>{{ fmtTime }}</b></span>
       </div>
       <nav>
@@ -540,7 +542,7 @@ function formatLog(entry: LogEntry) {
             :class="squad.id"
           />
         </svg>
-        <div class="threat-zone" :class="{ elevated: state.threat >= 35, severe: state.threat >= 50 }"></div>
+        <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
         <div class="district d1">{{ tr('Старый сектор') }}</div>
         <div class="district d2">{{ tr('Промзона') }}</div>
         <div class="district d3">{{ tr('Терминал') }}</div>
@@ -581,7 +583,7 @@ function formatLog(entry: LogEntry) {
       </div>
       <aside>
         <h2>{{ tr('ОПЕРАТИВНАЯ ЛЕНТА') }}</h2>
-        <p class="goal">{{ tr('Цель: 50 известности и закрытое расследование.') }}</p>
+        <p class="goal">{{ tr('objective.summary', { fame: GAME_RULES.fameGoal }) }}</p>
         <div class="case-progress" :class="{ done: state.storyResolution }">
           <span>{{ tr('ДЕЛО 09') }}</span>
           <b>{{ tr(state.storyResolution ? 'ЗАКРЫТО' : state.storyIncident ? 'ТРЕБУЕТ РЕШЕНИЯ' : 'ОЖИДАЕТ СИГНАЛА') }}</b>
@@ -600,11 +602,11 @@ function formatLog(entry: LogEntry) {
           <button class="room lab" :class="{ selected: basePanel === 'lab' }" @click="basePanel = 'lab'">
             <span>{{ tr('ЛАБОРАТОРИЯ') }}</span>
             <small v-if="state.research.activeId">{{ researchWorker ? tr(researchWorker.name) : tr('Нет исполнителя') }} · {{ researchPercent(state.research.activeId) }}%</small>
-            <small v-else>{{ tr('research.count', { completed: Object.values(state.research.nodes).filter(node => node.completed).length }) }}</small>
+            <small v-else>{{ tr('research.count', { completed: Object.values(state.research.nodes).filter(node => node.completed).length, total: RESEARCH_DEFINITIONS.length }) }}</small>
           </button>
           <button class="room garage" :class="{ selected: basePanel === 'teams' }" @click="basePanel = 'teams'">
             <span>{{ tr('ГАРАЖ И АРСЕНАЛ') }}</span>
-            <small>{{ tr('base.garage_summary', { squads: state.squads.filter(squad => squad.phase === 'base').length, items: Object.values(state.inventory).reduce((sum, count) => sum + count, 0) }) }}</small>
+            <small>{{ tr('base.garage_summary', { squads: state.squads.filter(squad => squad.phase === 'base').length, total: state.squads.length, items: Object.values(state.inventory).reduce((sum, count) => sum + count, 0) }) }}</small>
           </button>
           <svg
             v-for="(cat, index) in state.cats"
@@ -642,7 +644,7 @@ function formatLog(entry: LogEntry) {
               <option v-for="squad in state.squads" :key="squad.id" :value="squad.id" :disabled="squad.phase !== 'base'">{{ tr(squad.name) }}</option>
             </select>
           </summary>
-          <div class="cat-trait"><span>{{ tr(catTrait(cat.id)) }}</span><small>{{ tr('cat.stats', { combat: cat.combat, tech: cat.tech, perception: cat.perception, scouting: cat.scouting }) }}</small></div>
+          <div class="cat-trait"><span>{{ catTraitText(cat) }}</span><small>{{ tr('cat.stats', { combat: cat.combat, tech: cat.tech, perception: cat.perception, scouting: cat.scouting }) }}</small></div>
           <div class="equipment-grid">
             <label v-for="slot in EQUIPMENT_SLOTS" :key="slot.id">
               <span>{{ tr(slot.name) }}</span>
@@ -674,7 +676,7 @@ function formatLog(entry: LogEntry) {
           <span>{{ tr('ИСПОЛНИТЕЛЬ') }}</span>
           <b>{{ researchWorker ? tr(researchWorker.name) : tr(state.research.activeId ? 'Нет доступного кота' : 'Не назначен') }}</b>
           <small v-if="researchWorker">{{ tr('worker.stats', { tech: researchWorker.tech, energy: Math.round(researchWorker.energy) }) }}</small>
-          <small v-else>{{ tr('Нужен свободный здоровый кот с бодростью от 50%') }}</small>
+          <small v-else>{{ tr('research.worker_requirement', { energy: GAME_RULES.minimumResearchEnergy }) }}</small>
         </div>
         <p class="roster-hint">{{ tr('research.rules', { seconds: RESEARCH_RULES.duration, scrap: RESEARCH_RULES.scrapCost }) }}</p>
         <article v-for="research in RESEARCH_DEFINITIONS" :key="research.id" class="research-card" :class="{ active: state.research.activeId === research.id, complete: state.research.nodes[research.id].completed }">
@@ -754,12 +756,12 @@ function formatLog(entry: LogEntry) {
           <p>{{ tr('raid.description', { squad: primarySquad?.name ?? '' }) }}</p>
           <div class="incident-facts">
             <span>{{ tr('ОТРЯД') }} <b>{{ tr('cats.count', { count: primarySquad?.members.length ?? 0 }) }}</b></span>
-            <span>{{ tr('ПРОГРЕСС') }} <b>50%</b></span>
-            <span>{{ tr('НАГРАДА ПОД УГРОЗОЙ') }} <b>{{ tr('scrap.count', { count: 10 }) }}</b></span>
+            <span>{{ tr('ПРОГРЕСС') }} <b>{{ Math.round(GAME_RULES.raidTriggerProgress / GAME_RULES.cleanupDuration * 100) }}%</b></span>
+            <span>{{ tr('НАГРАДА ПОД УГРОЗОЙ') }} <b>{{ tr('scrap.count', { count: GAME_RULES.cleanupRewardScrap }) }}</b></span>
           </div>
           <div class="incident-actions">
             <button class="choice safe" @click="resolveRaidDecision(state, 'escape')">
-              <span><b>{{ tr('Сбежать') }}</b><small>{{ tr('Миссия отменится без добычи и ранений.') }}</small></span><strong>100%</strong>
+              <span><b>{{ tr('Сбежать') }}</b><small>{{ tr('Миссия отменится без добычи и ранений.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong>
             </button>
             <button class="choice" :disabled="!raidOptions?.attack.available" @click="resolveRaidDecision(state, 'attack')">
               <span><b>{{ tr('Напасть') }}</b><small>{{ tr(raidOptions?.attack.available ? 'Использовать нелетальное оружие и вытеснить рейдеров.' : raidOptions?.attack.reason ?? '') }}</small></span><strong>{{ raidOptions?.attack.chance ? `${raidOptions.attack.chance}%` : tr('ЗАКРЫТО') }}</strong>
@@ -775,10 +777,10 @@ function formatLog(entry: LogEntry) {
           <p>{{ tr('raid.support_arrived_description', { squad: supportSquad?.name ?? '' }) }}</p>
           <div class="incident-actions followup">
             <button class="choice safe" @click="resolveRaidFollowup(state, 'retreat')">
-              <span><b>{{ tr('Отступить вместе') }}</b><small>{{ tr('Безопасно уйти без добычи.') }}</small></span><strong>100%</strong>
+              <span><b>{{ tr('Отступить вместе') }}</b><small>{{ tr('Безопасно уйти без добычи.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong>
             </button>
             <button class="choice support" @click="resolveRaidFollowup(state, 'continue')">
-              <span><b>{{ tr('Продолжить разбор ситуации') }}</b><small>{{ tr('Вытеснить рейдеров и закончить уборку.') }}</small></span><strong>100%</strong>
+              <span><b>{{ tr('Продолжить разбор ситуации') }}</b><small>{{ tr('Вытеснить рейдеров и закончить уборку.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong>
             </button>
           </div>
         </template>
@@ -818,8 +820,8 @@ function formatLog(entry: LogEntry) {
         <h1 id="final-title">{{ tr('Девятая жизнь') }}</h1>
         <p class="final-lead">{{ tr(state.storyResolution.outcome) }}</p>
         <div class="final-metrics">
-          <div><small>{{ tr('ИЗВЕСТНОСТЬ') }}</small><b>{{ state.fame }}</b><span>{{ tr('/ 50 · ЦЕЛЬ ВЫПОЛНЕНА') }}</span></div>
-          <div><small>{{ tr('ЛОКАЛЬНАЯ УГРОЗА') }}</small><b>{{ state.threat }}</b><span>{{ tr(state.threat >= 50 ? 'ВЫСОКАЯ' : state.threat >= 35 ? 'ПОВЫШЕННАЯ' : 'СТАБИЛЬНАЯ') }}</span></div>
+          <div><small>{{ tr('ИЗВЕСТНОСТЬ') }}</small><b>{{ state.fame }}</b><span>{{ tr('final.goal_complete', { fame: GAME_RULES.fameGoal }) }}</span></div>
+          <div><small>{{ tr('ЛОКАЛЬНАЯ УГРОЗА') }}</small><b>{{ state.threat }}</b><span>{{ tr(state.threat >= GAME_RULES.severeThreat ? 'ВЫСОКАЯ' : state.threat >= GAME_RULES.elevatedThreat ? 'ПОВЫШЕННАЯ' : 'СТАБИЛЬНАЯ') }}</span></div>
           <div><small>{{ tr('УСПЕШНЫЕ УБОРКИ') }}</small><b>{{ totalRuns }}</b><span>{{ tr('АВТОНОМНЫЙ ЦИКЛ РАБОТАЕТ') }}</span></div>
         </div>
         <div class="final-result">

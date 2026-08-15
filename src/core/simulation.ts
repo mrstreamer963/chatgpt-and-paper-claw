@@ -141,13 +141,19 @@ export const RESEARCH_RULES = {
   supportTravelTime: CONFIG.raid.supportTravelTime,
   researchedSupportTravelTime: CONFIG.raid.researchedSupportTravelTime,
 }
+export const GAME_RULES = {
+  fameGoal: CONFIG.goal.fame,
+  cleanupDuration: CONFIG.mission.cleanupDuration,
+  raidTriggerProgress: CONFIG.mission.raidTriggerProgress,
+  cleanupRewardScrap: CONFIG.mission.rewardScrap,
+  guaranteedChance: CONFIG.chance.maximum,
+  minimumResearchEnergy: CONFIG.research.minimumStartEnergy,
+  elevatedThreat: CONFIG.threat.elevated,
+  severeThreat: CONFIG.threat.severe,
+}
+export const STORY_DECISION_BALANCE = CONFIG.story.decisions
 
-const templates: Mission[] = [
-  { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1, status: 'available' },
-  { id: 'b', title: 'Складской квартал', x: 75, y: 24, priority: 1, status: 'available' },
-  { id: 'c', title: 'Ржавый терминал', x: 76, y: 70, priority: 1, status: 'available' },
-  { id: 'd', title: 'Старый коллектор', x: 22, y: 72, priority: 1, status: 'available' },
-]
+const templates: Mission[] = CONFIG.mission.templates.map(template => ({ ...template, status: 'available' }))
 
 export function createState(): State {
   const emptyEquipment = (): Equipment => ({ armor: undefined, suit: undefined, belt: undefined, hands: undefined })
@@ -159,7 +165,7 @@ export function createState(): State {
     time: 0,
     activeView: 'map',
     cats: CONFIG.cats.map(cat => ({ ...cat, injuredRemaining: 0, equipment: emptyEquipment() })),
-    missions: structuredClone(templates.slice(0, 2)),
+    missions: structuredClone(templates.slice(0, CONFIG.mission.initialAvailableCount)),
     missionSerial: 0,
     rngSeed: CONFIG.initial.rngSeed,
     raidTriggered: false,
@@ -184,7 +190,7 @@ export function createState(): State {
 }
 
 function note(state: State, key: string, params?: Record<string, string | number>) {
-  state.log = [{ time: state.time, key, params }, ...state.log].slice(0, 20)
+  state.log = [{ time: state.time, key, params }, ...state.log].slice(0, CONFIG.mission.eventLogLimit)
 }
 
 function achievementCondition(state: State, id: AchievementId) {
@@ -533,7 +539,7 @@ function startMission(state: State, squad: Squad) {
 function rewardMission(state: State, squad: Squad) {
   squad.completed++
   state.scrap += CONFIG.mission.rewardScrap
-  state.fame = Math.min(100, state.fame + CONFIG.mission.rewardFame)
+  state.fame = Math.min(CONFIG.limits.fame, state.fame + CONFIG.mission.rewardFame)
   squad.members.forEach(id => {
     const cat = state.cats.find(candidate => candidate.id === id)
     if (cat) cat.energy = Math.max(0, cat.energy - CONFIG.mission.energyCost)
@@ -545,7 +551,7 @@ function rewardMission(state: State, squad: Squad) {
 }
 
 function maybeShowFinalSummary(state: State) {
-  if (!state.storyResolution || state.fame < 50 || state.finalSummarySeen || state.finalSummaryVisible) return
+  if (!state.storyResolution || state.fame < CONFIG.goal.fame || state.finalSummarySeen || state.finalSummaryVisible) return
   state.speed = 0
   state.finalSummaryVisible = true
   note(state, 'log.goal_reached')
@@ -601,8 +607,8 @@ export function resolveNinthLife(state: State, decision: NinthLifeDecision) {
   if (!state.storyIncident || state.storyResolution) return false
   const balance = CONFIG.story.decisions[decision]
   const outcome = STORY_OUTCOMES[decision]
-  state.fame = Math.min(100, state.fame + balance.fame)
-  state.threat = Math.min(100, state.threat + balance.threat)
+  state.fame = Math.min(CONFIG.limits.fame, state.fame + balance.fame)
+  state.threat = Math.min(CONFIG.limits.threat, state.threat + balance.threat)
   state.storyResolution = {
     decision,
     title: outcome.title,
@@ -614,7 +620,7 @@ export function resolveNinthLife(state: State, decision: NinthLifeDecision) {
   }
   state.storyIncident = undefined
   note(state, balance.threat ? 'log.story_closed_threat' : 'log.story_closed', { decision: outcome.title, fame: balance.fame, threat: balance.threat })
-  if (state.fame < 50) note(state, 'log.fame_needed', { fame: 50 - state.fame })
+  if (state.fame < CONFIG.goal.fame) note(state, 'log.fame_needed', { fame: CONFIG.goal.fame - state.fame })
   maybeShowFinalSummary(state)
   syncAchievements(state)
   return true
@@ -630,16 +636,19 @@ export function continueAfterFinale(state: State) {
 
 function spawnMission(state: State): Mission {
   const label = templates[state.missionSerial % templates.length].title
-  const priority = state.missionSerial % 3 === 2 ? 2 : 1
-  for (let attempt = 0; attempt < 20; attempt++) {
+  const generation = CONFIG.mission.generation
+  const priority = state.missionSerial % generation.highPriorityEvery === generation.highPriorityOffset
+    ? generation.highPriority
+    : generation.normalPriority
+  for (let attempt = 0; attempt < generation.maxPlacementAttempts; attempt++) {
     const serial = ++state.missionSerial
-    const x = 14 + (serial * 37) % 72
-    const y = 16 + (serial * 53) % 65
-    const clear = state.missions.every(mission => Math.hypot(mission.x - x, mission.y - y) > 18)
+    const x = generation.x.minimum + (serial * generation.x.multiplier) % generation.x.range
+    const y = generation.y.minimum + (serial * generation.y.multiplier) % generation.y.range
+    const clear = state.missions.every(mission => Math.hypot(mission.x - x, mission.y - y) > generation.minimumSeparation)
     if (clear) return { id: `cleanup-${serial}`, title: label, x, y, priority, status: 'available' }
   }
   const serial = ++state.missionSerial
-  return { id: `cleanup-${serial}`, title: label, x: 50, y: 20, priority, status: 'available' }
+  return { id: `cleanup-${serial}`, title: label, ...generation.fallback, priority, status: 'available' }
 }
 
 function desiredMissionCount(time: number) {
@@ -663,7 +672,7 @@ function randomPercent(state: State) {
   value ^= value >>> 17
   value ^= value << 5
   state.rngSeed = value >>> 0
-  return (state.rngSeed % 100) + 1
+  return (state.rngSeed % CONFIG.chance.maximum) + 1
 }
 
 function membersOf(state: State, squad: Squad) {
@@ -671,10 +680,16 @@ function membersOf(state: State, squad: Squad) {
 }
 
 function baseTeamChance(members: Cat[], baseChance: number, skillSum: number, styleBonus = 0, traitBonus = 0, equipmentBonus = 0) {
-  const teamSkillBonus = Math.min(45, Math.floor(skillSum * 1.5))
+  const teamSkillBonus = Math.min(CONFIG.chance.teamSkillBonusCap, Math.floor(skillSum * CONFIG.chance.teamSkillMultiplier))
   const averageEnergy = members.reduce((sum, cat) => sum + cat.energy, 0) / Math.max(1, members.length)
-  const fatiguePenalty = Math.min(10, Math.floor(Math.max(0, 70 - averageEnergy) / 5))
-  return Math.max(5, Math.min(100, baseChance + teamSkillBonus + styleBonus + traitBonus + equipmentBonus - fatiguePenalty))
+  const fatiguePenalty = Math.min(
+    CONFIG.chance.fatiguePenaltyCap,
+    Math.floor(Math.max(0, CONFIG.chance.fatigueStartsBelowEnergy - averageEnergy) / CONFIG.chance.fatiguePenaltyEnergyStep),
+  )
+  return Math.max(
+    CONFIG.chance.minimum,
+    Math.min(CONFIG.chance.maximum, baseChance + teamSkillBonus + styleBonus + traitBonus + equipmentBonus - fatiguePenalty),
+  )
 }
 
 export function getSquadCleanupChance(state: State, squad: Squad) {
@@ -685,15 +700,15 @@ export function getSquadCleanupChance(state: State, squad: Squad) {
   const equipmentBonus = members.reduce((sum, cat) => sum
     + (hasEquipped(cat, 'toolkit') ? itemBonus('toolkit', 'cleanupBonus') : 0)
     + (hasEquipped(cat, 'scanner') ? itemBonus('scanner', 'cleanupBonus') : 0), 0)
-  return baseTeamChance(members, 35, skillSum, 0, traitBonus, equipmentBonus)
+  return baseTeamChance(members, CONFIG.chance.cleanupBase, skillSum, 0, traitBonus, equipmentBonus)
 }
 
 function actionChance(state: State, squad: Squad, action: 'support' | 'attack') {
   const members = membersOf(state, squad)
   const skillSum = members.reduce((sum, cat) => sum + (action === 'support' ? cat.scouting + cat.perception : cat.combat + cat.reaction), 0)
   const styleBonus = action === 'support'
-    ? squad.style === 'careful' ? 10 : squad.style === 'risky' ? -10 : 0
-    : squad.style === 'careful' ? -10 : squad.style === 'risky' ? 10 : 0
+    ? squad.style === 'careful' ? CONFIG.chance.styleBonus : squad.style === 'risky' ? -CONFIG.chance.styleBonus : 0
+    : squad.style === 'careful' ? -CONFIG.chance.styleBonus : squad.style === 'risky' ? CONFIG.chance.styleBonus : 0
   const traitBonus = members.reduce((sum, cat) => sum + (action === 'support' ? cat.supportTrait : cat.attackTrait), 0)
   const equipmentBonus = members.reduce((sum, cat) => sum
     + (action === 'support' && hasEquipped(cat, 'headset') ? itemBonus('headset', 'supportBonus') : 0)
@@ -735,7 +750,7 @@ export function getRaidOptions(state: State) {
   const hasWeapon = Boolean(primarySquad && membersOf(state, primarySquad).some(cat => hasEquipped(cat, 'nonlethal_weapon')))
   const defenseReady = state.research.nodes.improvised_defense.completed
   return {
-    escape: { available: true, chance: 100 } satisfies RaidOption,
+    escape: { available: true, chance: CONFIG.chance.maximum } satisfies RaidOption,
     attack: defenseReady && hasWeapon
       ? { available: true, chance: state.incident.attackChance } satisfies RaidOption
       : { available: false, reason: defenseReady ? 'raid.reason.equip_weapon' : 'raid.reason.research_defense' } satisfies RaidOption,
@@ -937,7 +952,7 @@ function updateRestAndRecovery(state: State, elapsed: number, workingCatId?: str
     const squad = state.squads.find(candidate => candidate.id === cat.assignedTo)
     const isAtBase = !squad || squad.phase === 'base'
     if (!isAtBase) return
-    if (cat.id !== workingCatId) cat.energy = Math.min(100, cat.energy + elapsed * CONFIG.mission.restPerSecond)
+    if (cat.id !== workingCatId) cat.energy = Math.min(CONFIG.limits.energy, cat.energy + elapsed * CONFIG.mission.restPerSecond)
     if (cat.injuredRemaining > 0) {
       cat.injuredRemaining = Math.max(0, cat.injuredRemaining - elapsed)
       if (cat.injuredRemaining === 0) note(state, 'log.cat_recovered', { cat: cat.name })
