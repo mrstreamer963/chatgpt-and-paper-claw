@@ -99,6 +99,7 @@ const hintsVisible = ref(loadHintsPreference())
 const locale = ref<Locale>(loadLocale())
 const achievementToast = ref<string>()
 const saveInput = ref<HTMLInputElement>()
+const newGameConfirmOpen = ref(false)
 const soundPreferences = reactive(loadSoundPreferences())
 const soundSettingsOpen = ref(false)
 const audioStarted = ref(false)
@@ -202,6 +203,28 @@ async function importSave(event: Event) {
   } finally {
     input.value = ''
   }
+}
+
+function requestNewGame() {
+  state.speed = 0
+  newGameConfirmOpen.value = true
+}
+
+async function resetProgress() {
+  suppressAchievementToast = true
+  if (autosaveTimer) clearTimeout(autosaveTimer)
+  autosaveTimer = undefined
+  achievementToast.value = undefined
+  state.incident = undefined
+  state.storyIncident = undefined
+  state.storyResolution = undefined
+  Object.assign(state, createState())
+  basePanel.value = 'teams'
+  newGameConfirmOpen.value = false
+  await nextTick()
+  suppressAchievementToast = false
+  persistAutosave()
+  saveStatus.value = { key: 'save.new_game' }
 }
 
 watch(state, scheduleAutosave, { deep: true })
@@ -704,10 +727,24 @@ function formatLog(entry: LogEntry) {
             <button @click="exportSave">{{ tr('Выгрузить JSON') }}</button>
             <button @click="saveInput?.click()">{{ tr('Загрузить JSON') }}</button>
           </div>
+          <button class="new-game-button" @click="requestNewGame">{{ tr('reset.open') }}</button>
           <input ref="saveInput" type="file" accept=".json,application/json" @change="importSave">
         </section>
       </aside>
     </section>
+
+    <div v-if="newGameConfirmOpen" class="reset-overlay">
+      <section class="reset-card" role="dialog" aria-modal="true" aria-labelledby="reset-title">
+        <div class="reset-kicker">NINE LIVES CORP · {{ tr('ДАННЫЕ СЕССИИ') }}</div>
+        <h1 id="reset-title">{{ tr('reset.title') }}</h1>
+        <p>{{ tr('reset.description') }}</p>
+        <small>{{ tr('reset.warning') }}</small>
+        <div>
+          <button @click="newGameConfirmOpen = false">{{ tr('reset.cancel') }}</button>
+          <button class="reset-confirm" @click="resetProgress">{{ tr('reset.confirm') }}</button>
+        </div>
+      </section>
+    </div>
 
     <div v-if="state.incident && state.incident.stage !== 'support_en_route'" class="incident-overlay">
       <section class="incident-card" role="dialog" aria-modal="true" aria-labelledby="incident-title">

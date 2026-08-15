@@ -419,7 +419,36 @@
 .save-controls > div { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .save-controls button { padding: 8px 5px; color: #b49a71; font-size: 8px; letter-spacing: .5px; text-transform: uppercase; }
 .save-controls button:hover { border-color: #a47a48; color: #edc688; }
+.save-controls .new-game-button { width: 100%; margin-top: 8px; border-color: #5d3c36; color: #b77c6e; }
+.save-controls .new-game-button:hover { border-color: #b75d49; background: #2b1d1b; color: #ef947d; }
 .save-controls input { display: none; }
+
+.reset-overlay {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #06090be8;
+  backdrop-filter: blur(7px);
+}
+.reset-card {
+  width: min(560px, 92vw);
+  padding: 30px;
+  border: 1px solid #77463c;
+  border-top: 3px solid #d46149;
+  background: linear-gradient(145deg, #d461490a, transparent 42%), #171d1f;
+  box-shadow: 0 28px 90px #000e;
+}
+.reset-kicker { color: #c56a55; font-size: 9px; letter-spacing: 2px; }
+.reset-card h1 { margin: 12px 0 9px; color: #f0d9b9; font: 700 30px Oswald, sans-serif; letter-spacing: .4px; text-transform: uppercase; }
+.reset-card p { margin: 0; color: #aab5ae; font-size: 11px; line-height: 1.65; }
+.reset-card > small { display: block; margin-top: 14px; padding: 10px 12px; border-left: 2px solid #a64e3d; background: #281b19; color: #bb887c; font-size: 9px; line-height: 1.5; }
+.reset-card > div:last-child { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 22px; }
+.reset-card button { padding: 11px 12px; color: #9ca8a2; font-size: 9px; letter-spacing: .7px; text-transform: uppercase; }
+.reset-card .reset-confirm { border-color: #c75b45; background: #b84e3a; color: #fff0dc; }
+.reset-card .reset-confirm:hover { background: #d96850; }
 
 .threat-zone {
   position: absolute;
