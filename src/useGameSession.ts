@@ -25,6 +25,7 @@ import {
   type SquadStyle,
 } from './core/simulation'
 import { createSoundSystem, normalizeSoundPreferences, type SoundPreferences } from './audio'
+import { replaceObjectState } from './core/replaceState'
 import { translate, type Locale } from './i18n'
 
 const AUTOSAVE_KEY = 'nine-lives-corp-autosave-v1'
@@ -202,7 +203,7 @@ export function useGameSession() {
     try {
       const restored = deserializeState(await file.text())
       drainEvents(state)
-      Object.assign(state, restored)
+      replaceObjectState(state, restored)
       await nextTick()
       persistAutosave()
       saveStatus.value = { key: 'save.imported', params: { file: file.name } }
@@ -223,7 +224,7 @@ export function useGameSession() {
     autosaveTimer = undefined
     achievementToast.value = undefined
     drainEvents(state)
-    Object.assign(state, createState())
+    replaceObjectState(state, createState())
     activeView.value = 'map'
     newGameConfirmOpen.value = false
     await nextTick()
@@ -274,7 +275,6 @@ export function useGameSession() {
   onMounted(() => {
     timer = window.setInterval(() => runCommand(() => tick(state, 0.25)), 250)
     window.addEventListener('keydown', handleSpeedShortcut)
-    window.addEventListener('beforeunload', persistAutosave)
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('click', unlockAudio, { capture: true })
     window.addEventListener('keydown', unlockAudio, { capture: true })
@@ -285,7 +285,6 @@ export function useGameSession() {
     if (achievementToastTimer) clearTimeout(achievementToastTimer)
     if (autosaveTimer) clearTimeout(autosaveTimer)
     window.removeEventListener('keydown', handleSpeedShortcut)
-    window.removeEventListener('beforeunload', persistAutosave)
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('click', unlockAudio, { capture: true })
     window.removeEventListener('keydown', unlockAudio, { capture: true })

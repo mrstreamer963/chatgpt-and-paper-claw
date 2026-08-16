@@ -131,7 +131,7 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 3
+export const SAVE_VERSION = 4
 export type SaveErrorKey =
   | 'save.error.invalid_json'
   | 'save.error.unknown_format'
@@ -511,7 +511,7 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
@@ -520,6 +520,9 @@ export function deserializeState(payload: string): State {
   if (!isValidState(candidate)) throw new SaveError('save.error.corrupted')
 
   const restored = structuredClone(candidate)
+  if (envelope.version !== SAVE_VERSION && restored.incident?.stage === 'support_en_route' && restored.speed === 0) {
+    restored.speed = 1
+  }
   restored.cats.forEach(cat => {
     cat.equipment = {
       armor: cat.equipment.armor,
@@ -1014,6 +1017,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
     ? CONFIG.raid.researchedSupportTravelTime
     : CONFIG.raid.supportTravelTime
   support.progress = 0
+  state.speed = 1
   note(state, 'log.support_dispatched', { squad: support.name, seconds: support.travelDuration })
   emitEvent(state, { type: 'support_requested', squadId: support.id, primarySquadId: primary.id, seconds: support.travelDuration })
   return true

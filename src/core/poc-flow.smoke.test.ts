@@ -45,8 +45,8 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
 
   assert.equal(resolveRaidDecision(state, 'support'), true)
   assert.equal(state.incident.stage, 'support_en_route')
+  assert.equal(state.speed, 1)
 
-  state.speed = 10
   advanceUntil(
     state,
     () => state.incident?.stage === 'support_decision',

@@ -130,6 +130,7 @@ async function resetProgress() {
       :new-game-confirm-open="newGameConfirmOpen"
       :total-runs="totalRuns"
       @cancel-new-game="newGameConfirmOpen = false"
+      @new-game="requestNewGame"
       @reset="resetProgress"
       @raid-decision="resolveRaidDecision"
       @raid-followup="resolveRaidFollowup"

@@ -220,6 +220,21 @@ test('version two saves migrate presentation text and discard the saved view', (
   assert.deepEqual(restored.log[0].params, { cat: 'cat.marlowe.name', squad: 'squad.alpha' })
 })
 
+test('version three saves resume support that was left paused by the old flow', () => {
+  const state = openRaid()
+  if (!state.incident) assert.fail('raid was not opened')
+  state.incident.supportRoll = 1
+  assert.equal(resolveRaidDecision(state, 'support'), true)
+  state.speed = 0
+
+  const envelope = JSON.parse(serializeState(state))
+  envelope.version = 3
+  const restored = deserializeState(JSON.stringify(envelope))
+
+  assert.equal(restored.incident?.stage, 'support_en_route')
+  assert.equal(restored.speed, 1)
+})
+
 test('domain log events render in either language with localized parameters', () => {
   const params = { cat: 'cat.pixel.name', squad: 'squad.alpha' }
   assert.equal(translate('ru', 'log.cat_assigned', params), 'Пиксель назначен в Отряд «Альфа»')
@@ -282,8 +297,8 @@ test('successful support arrives after eight seconds and can complete the cleanu
   assert.equal(state.incident.stage, 'support_en_route')
   const support = state.squads.find(squad => squad.id === state.incident?.supportSquadId)
   assert.equal(support?.phase, 'support')
+  assert.equal(state.speed, 1)
 
-  state.speed = 1
   tick(state, 8)
   assert.equal(state.incident.stage, 'support_decision')
   assert.equal(state.speed, 0)

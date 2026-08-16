@@ -13,6 +13,7 @@ import { translate, type Locale } from '../i18n'
 const props = defineProps<{ state: State; locale: Locale; newGameConfirmOpen: boolean; totalRuns: number }>()
 const emit = defineEmits<{
   cancelNewGame: []
+  newGame: []
   reset: []
   raidDecision: [action: 'escape' | 'attack' | 'support']
   raidFollowup: [action: 'retreat' | 'continue']
@@ -44,7 +45,7 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
     </section>
   </div>
 
-  <div v-if="state.incident && state.incident.stage !== 'support_en_route'" class="incident-overlay">
+  <div v-if="!newGameConfirmOpen && state.incident && state.incident.stage !== 'support_en_route'" class="incident-overlay">
     <section class="incident-card" role="dialog" aria-modal="true" aria-labelledby="incident-title">
       <div class="incident-kicker"><span></span> {{ tr('НЕШТАТНАЯ СИТУАЦИЯ · ВРЕМЯ ОСТАНОВЛЕНО') }}</div>
       <template v-if="state.incident.stage === 'decision'">
@@ -63,16 +64,16 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
     </section>
   </div>
 
-  <div v-if="state.storyIncident && !state.incident" class="story-overlay">
+  <div v-if="!newGameConfirmOpen && state.storyIncident && !state.incident" class="story-overlay">
     <section class="story-card" role="dialog" aria-modal="true" aria-labelledby="story-title">
       <div class="case-number"><span>{{ tr('РАССЛЕДОВАНИЕ') }}</span><strong>09</strong></div>
       <div class="story-heading"><div class="story-kicker">{{ tr('ВХОДЯЩЕЕ ДЕЛО · ВРЕМЯ ОСТАНОВЛЕНО') }}</div><h1 id="story-title">{{ tr('Девятая жизнь') }}</h1><p>{{ tr('story.description', { squad: storySquad?.name ?? '' }) }}</p><div class="witness-line"><span>{{ tr('СВИДЕТЕЛЬ') }}</span><b>{{ tr('Позывной «Игла»') }}</b><i>{{ tr('показания не подтверждены') }}</i></div></div>
       <div class="story-choices"><button v-for="(choice, index) in storyChoices" :key="choice.id" class="story-choice" :class="choice.tone" @click="emit('storyDecision', choice.id)"><span class="choice-index">0{{ index + 1 }}</span><span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(choice.description) }}</em></span><span class="choice-impact"><b>+{{ choice.fame }}</b><small>{{ tr('известность') }}</small><strong :class="{ quiet: !choice.threat }">{{ choice.threat ? `+${choice.threat}` : '±0' }}</strong><small>{{ tr('угроза') }}</small></span></button></div>
-      <footer><span>{{ tr('Решение нельзя отменить') }}</span><span>{{ tr('Каждый вариант открывает отдельную будущую ветку') }}</span></footer>
+      <footer><span>{{ tr('Решение нельзя отменить') }}</span><span>{{ tr('Каждый вариант открывает отдельную будущую ветку') }}</span><button class="story-reset" @click="emit('newGame')">{{ tr('reset.open') }}</button></footer>
     </section>
   </div>
 
-  <div v-if="state.finalSummaryVisible && state.storyResolution" class="final-overlay">
+  <div v-if="!newGameConfirmOpen && state.finalSummaryVisible && state.storyResolution" class="final-overlay">
     <section class="final-card" role="dialog" aria-modal="true" aria-labelledby="final-title">
       <div class="final-stamp">{{ tr('ДЕЛО ЗАКРЫТО') }}</div><div class="final-kicker">NINE LIVES CORP · {{ tr('ОПЕРАТИВНАЯ СВОДКА 09') }}</div><h1 id="final-title">{{ tr('Девятая жизнь') }}</h1><p class="final-lead">{{ tr(state.storyResolution.outcome) }}</p>
       <div class="final-metrics"><div><small>{{ tr('ИЗВЕСТНОСТЬ') }}</small><b>{{ state.fame }}</b><span>{{ tr('final.goal_complete', { fame: GAME_RULES.fameGoal }) }}</span></div><div><small>{{ tr('ЛОКАЛЬНАЯ УГРОЗА') }}</small><b>{{ state.threat }}</b><span>{{ tr(state.threat >= GAME_RULES.severeThreat ? 'ВЫСОКАЯ' : state.threat >= GAME_RULES.elevatedThreat ? 'ПОВЫШЕННАЯ' : 'СТАБИЛЬНАЯ') }}</span></div><div><small>{{ tr('УСПЕШНЫЕ УБОРКИ') }}</small><b>{{ totalRuns }}</b><span>{{ tr('АВТОНОМНЫЙ ЦИКЛ РАБОТАЕТ') }}</span></div></div>

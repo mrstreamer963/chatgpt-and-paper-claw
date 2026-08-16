@@ -68,7 +68,7 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(overlayHtml, /Укрыться и запросить поддержку/)
 
   assert.equal(resolveRaidDecision(state, 'support'), true)
-  state.speed = 1
+  assert.equal(state.speed, 1)
   tick(state, 8)
   overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 2 })
   assert.match(overlayHtml, /Поддержка прибыла/)
@@ -80,6 +80,10 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 3 })
   assert.match(overlayHtml, /Девятая жизнь/)
   assert.match(overlayHtml, /Укрыть дезертира/)
+  assert.match(overlayHtml, /Новая игра \/ сброс прогресса/)
+  const resetOverlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: true, totalRuns: 3 })
+  assert.match(resetOverlayHtml, /Начать новую операцию/)
+  assert.doesNotMatch(resetOverlayHtml, /Укрыть дезертира/)
 
   assert.equal(resolveNinthLife(state, 'shelter'), true)
   overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 3 })
