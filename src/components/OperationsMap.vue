@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { GAME_RULES, getCleanupSecondsRemaining, type LogEntry, type Squad, type State } from '../core/simulation'
+import { GAME_RULES, getCleanupSecondsRemaining, type LogEntry, type Mission, type Squad, type State } from '../core/simulation'
 import { translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
 
 const props = defineProps<{ state: State; locale: Locale }>()
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
+const base = { x: 46, y: 51 }
 
-function squadStyle(squad: Squad) {
+function squadPosition(squad: Squad) {
   const target = squad.target
-  const base = { x: 46, y: 51 }
   const duration = squad.travelDuration || 1
-  if (!target || squad.phase === 'base') return { left: `${base.x}%`, top: `${base.y}%`, opacity: 0 }
+  if (!target || squad.phase === 'base') return base
   const ratio = squad.phase === 'outbound' || squad.phase === 'support'
     ? Math.min(1, squad.travel / duration)
     : squad.phase === 'returning'
@@ -19,7 +19,24 @@ function squadStyle(squad: Squad) {
       : 1
   const x = base.x + (target.x - base.x) * ratio
   const y = base.y + (target.y - base.y) * ratio
-  return { left: `${Math.max(5, Math.min(95, x))}%`, top: `${Math.max(7, Math.min(93, y))}%` }
+  return { x: Math.max(5, Math.min(95, x)), y: Math.max(7, Math.min(93, y)) }
+}
+
+function squadStyle(squad: Squad) {
+  const position = squadPosition(squad)
+  if (!squad.target || squad.phase === 'base') return { left: `${base.x}%`, top: `${base.y}%`, opacity: 0 }
+  return { left: `${position.x}%`, top: `${position.y}%` }
+}
+
+function route(squad: Squad) {
+  const position = squadPosition(squad)
+  if (squad.phase === 'returning') return { x1: position.x, y1: position.y, x2: base.x, y2: base.y }
+  return { x1: position.x, y1: position.y, x2: squad.target?.x ?? position.x, y2: squad.target?.y ?? position.y }
+}
+
+function isActiveAssignedMission(mission: Mission) {
+  if (mission.status !== 'assigned') return false
+  return props.state.squads.find(squad => squad.id === mission.squadId)?.phase !== 'returning'
 }
 
 function squadLabel(squad: Squad) {
@@ -46,7 +63,7 @@ function formatLog(entry: LogEntry) {
   <section class="map-view">
     <div class="map-grid" :class="{ 'incident-active': state.incident }">
       <svg class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <line v-for="squad in state.squads.filter(candidate => candidate.target && candidate.phase !== 'base')" :key="`route-${squad.id}`" x1="46" y1="51" :x2="squad.target?.x" :y2="squad.target?.y" :class="squad.id" />
+        <line v-for="squad in state.squads.filter(candidate => candidate.target && ['outbound', 'support', 'returning'].includes(candidate.phase))" :key="`route-${squad.id}`" v-bind="route(squad)" :class="squad.id" />
       </svg>
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <div class="district d1">{{ tr('Старый сектор') }}</div><div class="district d2">{{ tr('Промзона') }}</div><div class="district d3">{{ tr('Терминал') }}</div>
@@ -54,7 +71,7 @@ function formatLog(entry: LogEntry) {
       <div v-if="state.storyIncident" class="story-pin" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }"><span>!</span><b>{{ tr('ДЕЛО 09') }}</b><small>{{ tr('Дезертир ждёт решения') }}</small></div>
       <div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span><b>{{ tr('БАЗА ЕЖЕЙ') }}</b><small>{{ tr('координаты подтверждены') }}</small></div>
       <div v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" class="cleanup-pin" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr('УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
-      <div v-for="mission in state.missions.filter(mission => mission.status === 'assigned')" :key="`assigned-${mission.id}`" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(state.incident?.missionId === mission.id ? 'ТРЕВОГА' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
+      <div v-for="mission in state.missions.filter(isActiveAssignedMission)" :key="`assigned-${mission.id}`" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(state.incident?.missionId === mission.id ? 'ТРЕВОГА' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
       <div v-for="squad in state.squads" :key="squad.id" class="squad-marker" :class="[squad.phase, squad.id]" :style="squadStyle(squad)">
         <div class="map-squad-tokens"><svg v-for="member in squad.members" :key="member" class="cat-silhouette" viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${member}`" /></svg></div>
         <div class="squad-callout"><b>{{ tr(squad.name) }}</b><small>{{ squadLabel(squad) }}</small></div>

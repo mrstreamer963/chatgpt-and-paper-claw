@@ -25,7 +25,7 @@ export type Cat = {
   injuredRemaining: number
   equipment: Equipment
 }
-export type Mission = { id: string; title: string; x: number; y: number; priority: number; status: 'available' | 'assigned'; squadId?: string }
+export type Mission = { id: string; title: string; x: number; y: number; priority: number; status: 'available' | 'assigned' | 'completed'; squadId?: string }
 export type Phase = 'base' | 'outbound' | 'cleanup' | 'assisting' | 'incident' | 'support' | 'returning'
 export type Squad = {
   id: string
@@ -315,7 +315,7 @@ function isValidSquad(value: unknown) {
 function isValidMission(value: unknown) {
   return isRecord(value) && typeof value.id === 'string' && typeof value.title === 'string'
     && isFiniteNumber(value.x) && isFiniteNumber(value.y) && isFiniteNumber(value.priority)
-    && ['available', 'assigned'].includes(value.status as string)
+    && ['available', 'assigned', 'completed'].includes(value.status as string)
     && (value.squadId === undefined || typeof value.squadId === 'string')
 }
 
@@ -663,6 +663,8 @@ function startMission(state: State, squad: Squad) {
 
 function rewardMission(state: State, squad: Squad) {
   const missionId = squad.missionId
+  const mission = state.missions.find(candidate => candidate.id === missionId)
+  if (mission) mission.status = 'completed'
   squad.completed++
   state.scrap += CONFIG.mission.rewardScrap
   state.fame = Math.min(CONFIG.limits.fame, state.fame + CONFIG.mission.rewardFame)

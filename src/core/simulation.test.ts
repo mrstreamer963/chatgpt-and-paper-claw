@@ -58,6 +58,7 @@ test('five equally productive cats clean five times faster and split fatigue', (
 
   assert.equal(squad.completed, 1)
   assert.equal(squad.phase, 'returning')
+  assert.equal(state.missions[0].status, 'completed')
   for (const catId of catIds) {
     const cat = state.cats.find(candidate => candidate.id === catId)!
     assert.ok(Math.abs(cat.energy - (energyBefore[catId] - 4)) < 1e-9)

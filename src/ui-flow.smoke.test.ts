@@ -90,3 +90,28 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(overlayHtml, /ДЕЛО ЗАКРЫТО/)
   assert.match(overlayHtml, /Продолжить в песочнице/)
 })
+
+test('completed mission disappears while its squad route continues from the squad to base', async () => {
+  const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
+  const state = createState()
+  const mission = state.missions[0]
+  state.missions = [mission]
+  mission.status = 'completed'
+  mission.squadId = 'alpha'
+
+  const squad = state.squads[0]
+  squad.members = ['pixel']
+  squad.phase = 'returning'
+  squad.missionId = mission.id
+  squad.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
+  squad.travel = 0
+  squad.travelDuration = 10
+
+  const html = await render(OperationsMap, { state, locale: 'ru' })
+  assert.doesNotMatch(html, /cleanup-pin/)
+  assert.match(html, new RegExp(`<line[^>]*x1="${mission.x}"[^>]*y1="${mission.y}"[^>]*x2="46"[^>]*y2="51"`))
+
+  mission.status = 'assigned'
+  const legacyHtml = await render(OperationsMap, { state, locale: 'ru' })
+  assert.doesNotMatch(legacyHtml, /cleanup-pin/)
+})
