@@ -57,6 +57,16 @@
 
 .cleanup-pin > span svg { width: 21px; height: 21px; }
 
+button.cleanup-pin { width: 44px; height: 44px; padding: 0; border: 0; background: transparent; overflow: visible; transform: translate(-50%, -50%); }
+button.cleanup-pin > span { left: 50%; top: 50%; }
+button.cleanup-pin > b,
+button.cleanup-pin > small { left: 50%; }
+button.cleanup-pin > b { top: 44px; }
+button.cleanup-pin > small { top: 59px; }
+button.cleanup-pin:hover > span,
+button.cleanup-pin.selected > span { border-style: solid; box-shadow: 0 0 24px #e6a34ccc; }
+button.cleanup-pin:focus-visible > span { outline: 2px solid #f4d195; outline-offset: 4px; }
+
 .cleanup-pin.assigned small { color: #b5e7bd; }
 
 .cleanup-pin.assigned.danger {
@@ -327,6 +337,11 @@
 
 .squad-config { display: grid; grid-template-columns: minmax(0, 1fr) 112px; align-items: center; gap: 9px; }
 .squad-config select { width: 100%; padding: 6px; font-size: 9px; }
+.auto-dispatch-toggle { grid-column: 1 / -1; display: flex; align-items: center; gap: 9px; padding: 7px 8px; border: 1px solid #34413f; background: #17201f; cursor: pointer; }
+.auto-dispatch-toggle input { width: 15px; height: 15px; margin: 0; accent-color: #d56a45; cursor: pointer; }
+.auto-dispatch-toggle > span { min-width: 0; margin: 0; }
+.auto-dispatch-toggle b { display: block; color: #d8c6a2; font-size: 9px; }
+.auto-dispatch-toggle small { display: block; margin-top: 2px; color: #788882; font-size: 8px; line-height: 1.35; }
 .forecast-breakdown { grid-column: 1 / -1; padding-top: 6px; border-top: 1px solid #303b3b; color: #71807a; font-size: 8px; }
 .forecast-breakdown summary { cursor: pointer; color: #9caaa4; line-height: 1.45; }
 .forecast-breakdown[open] summary { margin-bottom: 7px; color: #d6ae71; }
@@ -527,6 +542,20 @@
 .case-progress b { color: #ef7658; }
 .case-progress.done { border-color: #355443; background: #18231e; }
 .case-progress.done b { color: #79c18d; }
+
+.manual-dispatch-card { margin: 14px 0; padding: 12px; border: 1px solid #8a673d; background: #211f1a; box-shadow: 0 8px 24px #0005; }
+.manual-dispatch-card > header { display: flex; align-items: center; justify-content: space-between; color: #d8a85f; font-size: 8px; letter-spacing: 1.2px; }
+.manual-dispatch-card > header button { padding: 0; width: 22px; height: 22px; border: 0; color: #837b6e; font-size: 17px; }
+.manual-dispatch-card h3 { margin: 8px 0 4px; color: #f0dfbd; font: 600 16px Oswald, sans-serif; letter-spacing: .5px; }
+.manual-dispatch-card > p { margin: 0 0 9px; color: #89958f; font-size: 9px; line-height: 1.45; }
+.manual-dispatch-card > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; margin-top: 6px; padding: 8px; text-align: left; }
+.manual-dispatch-card > button span { min-width: 0; }
+.manual-dispatch-card > button b,
+.manual-dispatch-card > button small { display: block; }
+.manual-dispatch-card > button b { color: #d8d7cc; font-size: 9px; }
+.manual-dispatch-card > button small { margin-top: 3px; color: #7d8b85; font-size: 8px; line-height: 1.3; }
+.manual-dispatch-card > button strong { color: #e7b267; font-size: 8px; text-transform: uppercase; }
+.manual-dispatch-card > button:disabled { cursor: not-allowed; opacity: .48; }
 
 .story-overlay, .final-overlay {
   position: fixed;

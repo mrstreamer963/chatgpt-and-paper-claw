@@ -6,6 +6,7 @@ import {
   continueAfterFinale,
   createState,
   deserializeState,
+  dispatchSquadToMission,
   drainEvents,
   equipItem,
   getAchievements,
@@ -16,6 +17,7 @@ import {
   resolveRaidFollowup,
   selectResearch,
   serializeState,
+  setSquadAutoDispatch,
   successfulCleanups,
   tick,
 } from './simulation.ts'
@@ -79,6 +81,52 @@ test('squad size changes cleanup time but not travel time', () => {
   assert.equal(solo.squads[0].target?.id, group.squads[0].target?.id)
   assert.equal(solo.squads[0].travelDuration, group.squads[0].travelDuration)
   assert.ok(getSquadCleanupEstimate(group, group.squads[0]).seconds < getSquadCleanupEstimate(solo, solo.squads[0]).seconds / 4)
+})
+
+test('a squad with auto-deploy disabled waits at base', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  assert.equal(setSquadAutoDispatch(state, 'alpha', false), true)
+  state.speed = 1
+
+  tick(state, 1)
+
+  assert.equal(state.squads[0].phase, 'base')
+  assert.equal(state.squads[0].missionId, undefined)
+  assert.equal(state.missions.every(mission => mission.status === 'available'), true)
+})
+
+test('manual dispatch assigns the selected mission to a ready manual squad', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  setSquadAutoDispatch(state, 'alpha', false)
+  const selectedMission = state.missions[1]
+
+  assert.equal(dispatchSquadToMission(state, 'alpha', selectedMission.id), true)
+  assert.equal(state.squads[0].phase, 'outbound')
+  assert.equal(state.squads[0].missionId, selectedMission.id)
+  assert.equal(selectedMission.status, 'assigned')
+  assert.equal(dispatchSquadToMission(state, 'bravo', state.missions[0].id), false)
+})
+
+test('disabling auto-deploy in the field holds the squad after it returns', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  state.speed = 1
+  tick(state, 0.25)
+  const squad = state.squads[0]
+  assert.equal(squad.phase, 'outbound')
+
+  assert.equal(setSquadAutoDispatch(state, squad.id, false), true)
+  assert.equal(state.speed, 0)
+  squad.phase = 'returning'
+  squad.travel = squad.travelDuration
+  state.speed = 1
+  tick(state, 0.25)
+  tick(state, 0.25)
+
+  assert.equal(squad.phase, 'base')
+  assert.equal(squad.missionId, undefined)
 })
 
 function openRaid() {
@@ -340,6 +388,16 @@ test('version four saves migrate the sleeping state', () => {
   const restored = deserializeState(JSON.stringify(envelope))
   assert.equal(restored.cats[0].sleeping, true)
   assert.equal(restored.cats[1].sleeping, false)
+})
+
+test('version five saves enable auto-deploy while migrating squads', () => {
+  const envelope = JSON.parse(serializeState(createState()))
+  envelope.version = 5
+  for (const squad of envelope.state.squads) delete squad.autoDispatch
+
+  const restored = deserializeState(JSON.stringify(envelope))
+
+  assert.equal(restored.squads.every(squad => squad.autoDispatch), true)
 })
 
 test('domain log events render in either language with localized parameters', () => {

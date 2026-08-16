@@ -33,6 +33,7 @@ export type Squad = {
   name: string
   members: string[]
   style: SquadStyle
+  autoDispatch: boolean
   phase: Phase
   travel: number
   travelDuration: number
@@ -132,7 +133,7 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 5
+export const SAVE_VERSION = 6
 export type SaveErrorKey =
   | 'save.error.invalid_json'
   | 'save.error.unknown_format'
@@ -238,8 +239,8 @@ export function createState(): State {
     },
     achievements: { completedIds: [] },
     squads: [
-      { id: 'alpha', name: 'squad.alpha', members: [], style: 'balanced', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
-      { id: 'bravo', name: 'squad.bravo', members: [], style: 'careful', phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
+      { id: 'alpha', name: 'squad.alpha', members: [], style: 'balanced', autoDispatch: true, phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
+      { id: 'bravo', name: 'squad.bravo', members: [], style: 'careful', autoDispatch: true, phase: 'base', travel: 0, travelDuration: 0, progress: 0, completed: 0 },
     ],
     log: [{ time: 0, key: 'log.base_ready' }],
   }
@@ -311,6 +312,7 @@ function isValidSquad(value: unknown) {
   if (!Array.isArray(value.members) || !value.members.every(member => typeof member === 'string')) return false
   if (!['careful', 'balanced', 'risky'].includes(value.style as string)
     || !['base', 'outbound', 'cleanup', 'assisting', 'incident', 'support', 'returning'].includes(value.phase as string)) return false
+  if (typeof value.autoDispatch !== 'boolean') return false
   if (![value.travel, value.travelDuration, value.progress, value.completed].every(isFiniteNumber)) return false
   return (value.missionId === undefined || typeof value.missionId === 'string')
     && (value.target === undefined || isValidTarget(value.target))
@@ -469,6 +471,11 @@ function migrateLegacyState(value: unknown) {
       }
     }
   }
+  if (Array.isArray(migrated.squads)) {
+    for (const squad of migrated.squads) {
+      if (isRecord(squad) && typeof squad.autoDispatch !== 'boolean') squad.autoDispatch = true
+    }
+  }
   return migrated
 }
 
@@ -522,7 +529,7 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, 4, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, 4, 5, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
@@ -631,6 +638,15 @@ export function setSquadStyle(state: State, squadId: string, style: SquadStyle) 
   return true
 }
 
+export function setSquadAutoDispatch(state: State, squadId: string, enabled: boolean) {
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!squad || squad.autoDispatch === enabled) return false
+  state.speed = 0
+  squad.autoDispatch = enabled
+  note(state, enabled ? 'log.auto_dispatch_enabled' : 'log.auto_dispatch_disabled', { squad: squad.name })
+  return true
+}
+
 function itemDefinition(itemId: ItemId) {
   return CONFIG.equipment.items.find(item => item.id === itemId)
 }
@@ -700,10 +716,11 @@ function travelTime(target: Pick<Mission, 'x' | 'y'>) {
   return Math.max(CONFIG.mission.minimumTravelTime, distanceFromBase(target) / CONFIG.mission.mapSpeed)
 }
 
-function startMission(state: State, squad: Squad) {
-  const mission = state.missions
-    .filter(candidate => candidate.status === 'available')
-    .sort((a, b) => b.priority - a.priority || distanceFromBase(a) - distanceFromBase(b))[0]
+function startMission(state: State, squad: Squad, requestedMissionId?: string) {
+  const availableMissions = state.missions.filter(candidate => candidate.status === 'available')
+  const mission = requestedMissionId
+    ? availableMissions.find(candidate => candidate.id === requestedMissionId)
+    : availableMissions.sort((a, b) => b.priority - a.priority || distanceFromBase(a) - distanceFromBase(b))[0]
   if (!mission) return false
   const members = membersOf(state, squad)
   if (!members.length || !members.every(cat => cat.injuredRemaining <= 0 && canReceiveWorkOrder(cat))) return false
@@ -718,6 +735,25 @@ function startMission(state: State, squad: Squad) {
   note(state, 'log.mission_started', { squad: squad.name, mission: mission.title })
   emitEvent(state, { type: 'mission_started', squadId: squad.id, missionId: mission.id })
   return true
+}
+
+export function getManualDispatchBlockReason(state: State, squadId: string, missionId: string) {
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  const mission = state.missions.find(candidate => candidate.id === missionId)
+  if (!squad || !mission || mission.status !== 'available') return 'dispatch.reason.unavailable'
+  if (squad.autoDispatch) return 'dispatch.reason.auto_enabled'
+  if (squad.phase !== 'base') return 'dispatch.reason.away'
+  const members = membersOf(state, squad)
+  if (!members.length) return 'dispatch.reason.empty'
+  if (members.some(cat => cat.injuredRemaining > 0)) return 'dispatch.reason.injured'
+  if (members.some(cat => !canReceiveWorkOrder(cat))) return 'dispatch.reason.tired'
+  return undefined
+}
+
+export function dispatchSquadToMission(state: State, squadId: string, missionId: string) {
+  if (getManualDispatchBlockReason(state, squadId, missionId)) return false
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  return squad ? startMission(state, squad, missionId) : false
 }
 
 function rewardMission(state: State, squad: Squad) {
@@ -1211,7 +1247,7 @@ export function tick(state: State, seconds: number) {
 
   for (const squad of state.squads) {
     if (squad.phase === 'base') {
-      startMission(state, squad)
+      if (squad.autoDispatch) startMission(state, squad)
       continue
     }
     if (squad.phase === 'incident') continue

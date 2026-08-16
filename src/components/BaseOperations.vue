@@ -48,6 +48,7 @@ const emit = defineEmits<{
   assign: [catId: string, squadId: string]
   equip: [catId: string, slot: EquipmentSlot, itemId?: ItemId]
   style: [squadId: string, style: Squad['style']]
+  autoDispatch: [squadId: string, enabled: boolean]
   research: [researchId?: ResearchId]
   hints: [visible: boolean]
   exportSave: []
@@ -78,6 +79,10 @@ function handleEquipment(catId: string, slot: EquipmentSlot, event: Event) {
 
 function handleSquadStyle(squadId: string, event: Event) {
   emit('style', squadId, (event.target as HTMLSelectElement).value as Squad['style'])
+}
+
+function handleAutoDispatch(squadId: string, event: Event) {
+  emit('autoDispatch', squadId, (event.target as HTMLInputElement).checked)
 }
 
 function equipmentOptions(slot: EquipmentSlot) {
@@ -142,6 +147,10 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
       <div v-for="squad in state.squads" :key="squad.id" class="squad-status squad-config">
         <div><b>{{ tr(squad.name) }}</b><span>{{ tr('squad.cleanup_estimate', { cats: squad.members.length, seconds: Math.ceil(cleanupEstimate(squad).seconds) }) }}</span></div>
         <select :value="squad.style" :disabled="squad.phase !== 'base'" @change="handleSquadStyle(squad.id, $event)"><option value="careful">{{ tr('careful') }}</option><option value="balanced">{{ tr('balanced') }}</option><option value="risky">{{ tr('risky') }}</option></select>
+        <label class="auto-dispatch-toggle">
+          <input type="checkbox" :checked="squad.autoDispatch" @change="handleAutoDispatch(squad.id, $event)">
+          <span><b>{{ tr('dispatch.auto.title') }}</b><small>{{ tr(squad.autoDispatch ? 'dispatch.auto.enabled' : squad.phase === 'base' ? 'dispatch.auto.manual' : 'dispatch.auto.after_return') }}</small></span>
+        </label>
         <details class="forecast-breakdown">
           <summary>{{ tr(squad.members.length ? 'cleanup.details' : 'cleanup.empty') }}</summary>
           <template v-if="squad.members.length">
