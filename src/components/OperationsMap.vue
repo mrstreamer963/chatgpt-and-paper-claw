@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { GAME_RULES, getCleanupSecondsRemaining, getManualDispatchBlockReason, type LogEntry, type Mission, type Squad, type State } from '../core/simulation'
+import { GAME_RULES, getCleanupSecondsRemaining, getManualDispatchBlockReason, getSquadMapPosition, type LogEntry, type Mission, type Squad, type State } from '../core/simulation'
 import { translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
@@ -13,16 +13,7 @@ const selectedMissionId = ref<string>()
 const selectedMission = computed(() => props.state.missions.find(mission => mission.id === selectedMissionId.value && mission.status === 'available'))
 
 function squadPosition(squad: Squad) {
-  const target = squad.target
-  const duration = squad.travelDuration || 1
-  if (!target || squad.phase === 'base') return base
-  const ratio = squad.phase === 'outbound' || squad.phase === 'support'
-    ? Math.min(1, squad.travel / duration)
-    : squad.phase === 'returning'
-      ? 1 - Math.min(1, squad.travel / duration)
-      : 1
-  const x = base.x + (target.x - base.x) * ratio
-  const y = base.y + (target.y - base.y) * ratio
+  const { x, y } = getSquadMapPosition(squad)
   return { x: Math.max(5, Math.min(95, x)), y: Math.max(7, Math.min(93, y)) }
 }
 

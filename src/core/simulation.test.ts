@@ -37,7 +37,7 @@ test('cleanup estimate combines cats, traits and equipment into work rate', () =
   assert.ok(Math.abs(estimate.energyPerCat - 20 / 1.17) < 1e-9)
 })
 
-test('five equally productive cats clean five times faster and split fatigue', () => {
+test('five equally productive cats clean five times faster, split fatigue and continue', () => {
   const state = createState()
   const catIds = ['marlowe', 'pixel', 'rust', 'shorokh', 'bastion']
   for (const catId of catIds) {
@@ -46,6 +46,7 @@ test('five equally productive cats clean five times faster and split fatigue', (
     assignCat(state, catId, 'alpha')
   }
   const squad = state.squads[0]
+  const completedMission = state.missions[0]
   const energyBefore = Object.fromEntries(state.cats.map(cat => [cat.id, cat.energy]))
   squad.phase = 'cleanup'
   squad.missionId = 'a'
@@ -59,8 +60,9 @@ test('five equally productive cats clean five times faster and split fatigue', (
   tick(state, 6)
 
   assert.equal(squad.completed, 1)
-  assert.equal(squad.phase, 'returning')
-  assert.equal(state.missions[0].status, 'completed')
+  assert.equal(squad.phase, 'outbound')
+  assert.equal(completedMission.status, 'completed')
+  assert.equal(state.missions.includes(completedMission), false)
   for (const catId of catIds) {
     const cat = state.cats.find(candidate => candidate.id === catId)!
     assert.ok(Math.abs(cat.energy - (energyBefore[catId] - 4)) < 1e-9)
@@ -81,6 +83,61 @@ test('squad size changes cleanup time but not travel time', () => {
   assert.equal(solo.squads[0].target?.id, group.squads[0].target?.id)
   assert.equal(solo.squads[0].travelDuration, group.squads[0].travelDuration)
   assert.ok(getSquadCleanupEstimate(group, group.squads[0]).seconds < getSquadCleanupEstimate(solo, solo.squads[0]).seconds / 4)
+})
+
+test('an auto squad chains a priority mission nearest to its current position', () => {
+  const state = createState()
+  state.raidTriggered = true
+  assignCat(state, 'pixel', 'alpha')
+  const squad = state.squads[0]
+  const current = { id: 'current', title: 'mission.a', x: 20, y: 20, priority: 1, status: 'assigned' as const, squadId: squad.id }
+  const farther = { id: 'farther', title: 'mission.b', x: 80, y: 80, priority: 2, status: 'available' as const }
+  const nearby = { id: 'nearby', title: 'mission.c', x: 24, y: 20, priority: 2, status: 'available' as const }
+  state.missions = [current, farther, nearby]
+  squad.phase = 'cleanup'
+  squad.missionId = current.id
+  squad.target = { id: current.id, title: current.title, x: current.x, y: current.y, priority: current.priority }
+  squad.progress = 29
+  state.speed = 1
+
+  tick(state, 1)
+
+  assert.equal(squad.completed, 1)
+  assert.equal(squad.phase, 'outbound')
+  assert.equal(squad.missionId, nearby.id)
+  assert.deepEqual(squad.routeFrom, { x: current.x, y: current.y })
+  assert.equal(squad.travelDuration, 2)
+  assert.equal(state.missions.some(mission => mission.id === current.id), false)
+  assert.equal(nearby.status, 'assigned')
+})
+
+test('a tired field squad preserves the trip home and sleeps after returning', () => {
+  const state = createState()
+  state.raidTriggered = true
+  assignCat(state, 'pixel', 'alpha')
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  const squad = state.squads[0]
+  const current = state.missions[0]
+  current.status = 'assigned'
+  current.squadId = squad.id
+  squad.phase = 'cleanup'
+  squad.missionId = current.id
+  squad.target = { id: current.id, title: current.title, x: current.x, y: current.y, priority: current.priority }
+  squad.progress = 29
+  pixel.energy = 23
+  state.speed = 1
+
+  tick(state, 1)
+
+  assert.equal(squad.phase, 'returning')
+  assert.equal(squad.restAfterReturn, true)
+  const energyBeforeReturn = pixel.energy
+  tick(state, squad.travelDuration)
+
+  assert.equal(squad.phase, 'base')
+  assert.equal(squad.restAfterReturn, false)
+  assert.equal(pixel.sleeping, true)
+  assert.ok(pixel.energy < energyBeforeReturn)
 })
 
 test('a squad with auto-deploy disabled waits at base', () => {
@@ -398,6 +455,23 @@ test('version five saves enable auto-deploy while migrating squads', () => {
   const restored = deserializeState(JSON.stringify(envelope))
 
   assert.equal(restored.squads.every(squad => squad.autoDispatch), true)
+})
+
+test('version six saves migrate field route state', () => {
+  const envelope = JSON.parse(serializeState(createState()))
+  envelope.version = 6
+  envelope.state.squads[0].phase = 'returning'
+  envelope.state.squads[0].target = { id: 'a', title: 'mission.a', x: 23, y: 25, priority: 1 }
+  for (const squad of envelope.state.squads) {
+    delete squad.routeFrom
+    delete squad.restAfterReturn
+  }
+
+  const restored = deserializeState(JSON.stringify(envelope))
+
+  assert.deepEqual(restored.squads[0].routeFrom, { x: 23, y: 25 })
+  assert.deepEqual(restored.squads[1].routeFrom, { x: 46, y: 51 })
+  assert.equal(restored.squads[0].restAfterReturn, false)
 })
 
 test('domain log events render in either language with localized parameters', () => {

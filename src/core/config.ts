@@ -25,6 +25,7 @@ export const SIMULATION_CONFIG = {
     rewardScrap: 10,
     rewardFame: 5,
     energyCostPerBaseCleanup: 20,
+    energyCostPerTravelSecond: 1,
     restPerSecond: 1,
     mapSpeed: 4,
     minimumTravelTime: 2,

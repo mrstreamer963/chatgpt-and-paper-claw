@@ -104,6 +104,7 @@ test('completed mission disappears while its squad route continues from the squa
   squad.phase = 'returning'
   squad.missionId = mission.id
   squad.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
+  squad.routeFrom = { x: mission.x, y: mission.y }
   squad.travel = 0
   squad.travelDuration = 10
 
