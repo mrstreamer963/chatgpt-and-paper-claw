@@ -7,6 +7,7 @@ import {
   RESEARCH_DEFINITIONS,
   RESEARCH_RULES,
   canEditCat,
+  canReceiveWorkOrder,
   getResearchWorker,
   getSquadCleanupEstimate,
   type Achievement,
@@ -130,7 +131,7 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
         <button class="room control" :class="{ selected: panel === 'achievements' }" @click="emit('panel', 'achievements')"><span>{{ tr('ДИСПЕТЧЕРСКАЯ') }}</span><small>{{ tr('base.achievement_summary', { completed: completedAchievementCount, total: achievements.length, cleanups: totalRuns }) }}</small></button>
         <button class="room lab" :class="{ selected: panel === 'lab' }" @click="emit('panel', 'lab')"><span>{{ tr('ЛАБОРАТОРИЯ') }}</span><small v-if="state.research.activeId">{{ researchWorker ? tr(researchWorker.name) : tr('Нет исполнителя') }} · {{ researchPercent(state.research.activeId) }}%</small><small v-else>{{ tr('research.count', { completed: Object.values(state.research.nodes).filter(node => node.completed).length, total: RESEARCH_DEFINITIONS.length }) }}</small></button>
         <button class="room garage" :class="{ selected: panel === 'teams' }" @click="emit('panel', 'teams')"><span>{{ tr('ГАРАЖ И АРСЕНАЛ') }}</span><small>{{ tr('base.garage_summary', { squads: state.squads.filter(squad => squad.phase === 'base').length, total: state.squads.length, items: Object.values(state.inventory).reduce((sum, count) => sum + count, 0) }) }}</small></button>
-        <svg v-for="(cat, index) in state.cats" :key="`base-${cat.id}`" class="base-cat-token" :class="{ injured: cat.injuredRemaining > 0, away: cat.assignedTo && state.squads.find(squad => squad.id === cat.assignedTo)?.phase !== 'base' }" :style="baseCatStyle(cat, index)" viewBox="0 0 64 64" :aria-label="tr(cat.name)"><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg>
+        <svg v-for="(cat, index) in state.cats" :key="`base-${cat.id}`" class="base-cat-token" :class="{ injured: cat.injuredRemaining > 0, sleeping: cat.sleeping, away: cat.assignedTo && state.squads.find(squad => squad.id === cat.assignedTo)?.phase !== 'base' }" :style="baseCatStyle(cat, index)" viewBox="0 0 64 64" :aria-label="tr(cat.name)"><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg>
       </div>
     </div>
 
@@ -152,8 +153,8 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
           </template>
         </details>
       </div>
-      <details v-for="cat in state.cats" :key="cat.id" class="cat-card" :class="{ injured: cat.injuredRemaining > 0 }">
-        <summary><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span><select :value="cat.assignedTo || ''" :disabled="!canEditCat(state, cat.id)" :aria-label="tr('Назначение в отряд')" @click.stop @change="handleAssignment(cat.id, $event)"><option value="">{{ tr('не назначен') }}</option><option v-for="squad in state.squads" :key="squad.id" :value="squad.id" :disabled="squad.phase !== 'base'">{{ tr(squad.name) }}</option></select></summary>
+      <details v-for="cat in state.cats" :key="cat.id" class="cat-card" :class="{ injured: cat.injuredRemaining > 0, sleeping: cat.sleeping }">
+        <summary><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else-if="cat.sleeping" class="sleeping-label">{{ tr('cat.sleeping', { energy: Math.round(cat.energy) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span><select :value="cat.assignedTo || ''" :disabled="!canEditCat(state, cat.id)" :aria-label="tr('Назначение в отряд')" @click.stop @change="handleAssignment(cat.id, $event)"><option value="">{{ tr('не назначен') }}</option><option v-for="squad in state.squads" :key="squad.id" :value="squad.id" :disabled="squad.phase !== 'base' || !canReceiveWorkOrder(cat)">{{ tr(squad.name) }}</option></select></summary>
         <div class="cat-trait"><span>{{ catTraitText(cat) }}</span><small>{{ tr('cat.stats', { combat: cat.combat, tech: cat.tech, perception: cat.perception, scouting: cat.scouting }) }}</small></div>
         <div class="equipment-grid"><label v-for="slot in EQUIPMENT_SLOTS" :key="slot.id"><span>{{ tr(slot.name) }}</span><select :value="cat.equipment[slot.id] || ''" :disabled="!canEditCat(state, cat.id) || slot.id === 'suit'" @change="handleEquipment(cat.id, slot.id, $event)"><option value="">{{ tr(slot.id === 'suit' ? 'нет предметов в PoC' : 'пусто') }}</option><option v-for="item in equipmentOptions(slot.id)" :key="item.id" :value="item.id" :disabled="state.inventory[item.id] <= 0 && cat.equipment[slot.id] !== item.id">{{ tr('item.stock', { item: item.name, count: state.inventory[item.id] }) }}</option></select></label></div>
       </details>

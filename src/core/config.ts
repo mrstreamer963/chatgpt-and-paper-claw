@@ -1,6 +1,10 @@
 export const SIMULATION_CONFIG = {
   initial: { fame: 20, scrap: 0, threat: 20, rngSeed: 0x9e3779b9 },
   limits: { fame: 100, threat: 100, energy: 100 },
+  sleep: {
+    sleepAtEnergy: 20,
+    wakeForOrderEnergy: 50,
+  },
   goal: { fame: 50 },
   threat: { elevated: 35, severe: 50 },
   chance: {
@@ -21,7 +25,6 @@ export const SIMULATION_CONFIG = {
     rewardScrap: 10,
     rewardFame: 5,
     energyCostPerBaseCleanup: 20,
-    minimumDepartureEnergy: 50,
     restPerSecond: 1,
     mapSpeed: 4,
     minimumTravelTime: 2,

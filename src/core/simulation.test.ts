@@ -126,6 +126,101 @@ test('a cat can be removed from a squad while it is at base', () => {
   assert.equal(state.speed, 0)
 })
 
+test('an exhausted cat ignores work orders until reaching fifty energy', () => {
+  const state = createState()
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  pixel.energy = 20
+
+  assert.equal(assignCat(state, pixel.id, 'alpha'), false)
+  assert.equal(pixel.sleeping, true)
+  assert.equal(pixel.assignedTo, undefined)
+
+  pixel.energy = 49
+  assert.equal(assignCat(state, pixel.id, 'alpha'), false)
+  assert.equal(pixel.sleeping, true)
+
+  pixel.energy = 50
+  assert.equal(assignCat(state, pixel.id, 'alpha'), true)
+  assert.equal(pixel.sleeping, false)
+  assert.equal(pixel.assignedTo, 'alpha')
+})
+
+test('a sleeping cat without orders sleeps past fifty and wakes at one hundred', () => {
+  const state = createState()
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  pixel.energy = 20
+  pixel.sleeping = true
+  state.speed = 1
+
+  tick(state, 30)
+  assert.equal(pixel.energy, 50)
+  assert.equal(pixel.sleeping, true)
+
+  tick(state, 50)
+  assert.equal(pixel.energy, 100)
+  assert.equal(pixel.sleeping, false)
+})
+
+test('an available squad mission wakes a sleeping member at fifty', () => {
+  const state = createState()
+  assert.equal(assignCat(state, 'pixel', 'alpha'), true)
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  pixel.energy = 20
+  pixel.sleeping = true
+  state.speed = 1
+
+  tick(state, 29)
+  assert.equal(pixel.energy, 49)
+  assert.equal(pixel.sleeping, true)
+  assert.equal(state.squads[0].phase, 'base')
+
+  tick(state, 1)
+  assert.equal(pixel.energy, 50)
+  assert.equal(pixel.sleeping, false)
+  assert.equal(state.squads[0].phase, 'outbound')
+})
+
+test('an awake cat keeps taking missions until exhausted and then sleeps', () => {
+  const state = createState()
+  state.raidTriggered = true
+  assert.equal(assignCat(state, 'marlowe', 'alpha'), true)
+  const marlowe = state.cats.find(cat => cat.id === 'marlowe')!
+  marlowe.energy = 50
+  state.speed = 1
+
+  for (let step = 0; step < 2_000; step++) {
+    tick(state, 0.25)
+    if (state.squads[0].completed >= 2 && state.squads[0].phase === 'base' && marlowe.sleeping) break
+  }
+
+  assert.equal(state.squads[0].completed, 2)
+  assert.ok(marlowe.energy <= 20)
+  assert.equal(marlowe.sleeping, true)
+})
+
+test('an active research order wakes a sleeping specialist at fifty', () => {
+  const state = createState()
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  pixel.energy = 20
+  pixel.sleeping = true
+  for (const cat of state.cats) {
+    if (cat.id !== pixel.id) cat.energy = 40
+  }
+  state.scrap = 20
+  assert.equal(selectResearch(state, 'field_scanners'), true)
+  assert.equal(state.research.workerCatId, undefined)
+  state.speed = 1
+
+  tick(state, 30)
+  assert.equal(pixel.energy, 50)
+  assert.equal(pixel.sleeping, true)
+
+  tick(state, 0.25)
+  assert.equal(pixel.sleeping, false)
+  assert.equal(state.research.workerCatId, pixel.id)
+  assert.ok(state.research.nodes.field_scanners.progress > 0)
+})
+
 test('open achievements unlock once and stay completed', () => {
   const state = createState()
   assert.equal(getAchievements(state).filter(achievement => achievement.completed).length, 0)
@@ -234,6 +329,17 @@ test('version three saves resume support that was left paused by the old flow', 
 
   assert.equal(restored.incident?.stage, 'support_en_route')
   assert.equal(restored.speed, 1)
+})
+
+test('version four saves migrate the sleeping state', () => {
+  const envelope = JSON.parse(serializeState(createState()))
+  envelope.version = 4
+  envelope.state.cats[0].energy = 20
+  for (const cat of envelope.state.cats) delete cat.sleeping
+
+  const restored = deserializeState(JSON.stringify(envelope))
+  assert.equal(restored.cats[0].sleeping, true)
+  assert.equal(restored.cats[1].sleeping, false)
 })
 
 test('domain log events render in either language with localized parameters', () => {

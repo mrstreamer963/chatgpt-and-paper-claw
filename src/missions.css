@@ -256,6 +256,7 @@
 }
 .base-cat-token:nth-of-type(2n) { animation-delay: -1.1s; }
 .base-cat-token.injured { filter: drop-shadow(0 0 8px #bd3d32); }
+.base-cat-token.sleeping { filter: grayscale(.8) brightness(.7); animation: none; }
 .base-cat-token.away { pointer-events: none; }
 @keyframes base-cat-idle { to { transform: translate(-50%, calc(-50% - 4px)); } }
 
@@ -335,6 +336,7 @@
 .cat-card { margin-top: 7px; border: 1px solid #303b3b; background: #1b2224; }
 .cat-card[open] { border-color: #4d5c59; }
 .cat-card.injured { background: #3a211f66; }
+.cat-card.sleeping { background: #172126; }
 .cat-card summary { position: relative; display: grid; grid-template-columns: 42px minmax(0, 1fr) 115px; align-items: center; gap: 9px; padding: 8px; cursor: pointer; list-style: none; }
 .cat-card summary::-webkit-details-marker { display: none; }
 .cat-card summary::after { content: '+'; position: absolute; margin-left: 34px; margin-top: 31px; display: grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; background: #263130; color: #9baaa4; font-size: 10px; }
@@ -343,6 +345,7 @@
 .cat-card b, .cat-card small { display: block; }
 .cat-card small { margin-top: 4px; color: #91a099; font-size: 9px; }
 .cat-card .injury-label { color: #ef765e; }
+.cat-card .sleeping-label { color: #73a9bd; }
 .cat-card summary select { min-width: 0; padding: 6px 4px; font-size: 9px; }
 .cat-card select:disabled { cursor: not-allowed; opacity: .5; }
 .cat-trait { display: flex; justify-content: space-between; gap: 8px; padding: 8px 9px; border-top: 1px solid #303b3b; color: #d6ae71; font-size: 8px; }

@@ -21,6 +21,7 @@ export type Cat = {
   supportTrait: number
   attackTrait: number
   injuryTrait: number
+  sleeping: boolean
   assignedTo?: string
   injuredRemaining: number
   equipment: Equipment
@@ -131,7 +132,7 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 4
+export const SAVE_VERSION = 5
 export type SaveErrorKey =
   | 'save.error.invalid_json'
   | 'save.error.unknown_format'
@@ -189,6 +190,8 @@ export const GAME_RULES = {
   cleanupRewardScrap: CONFIG.mission.rewardScrap,
   guaranteedChance: CONFIG.chance.maximum,
   minimumResearchEnergy: CONFIG.research.minimumStartEnergy,
+  sleepAtEnergy: CONFIG.sleep.sleepAtEnergy,
+  wakeForOrderEnergy: CONFIG.sleep.wakeForOrderEnergy,
   elevatedThreat: CONFIG.threat.elevated,
   severeThreat: CONFIG.threat.severe,
 }
@@ -217,7 +220,7 @@ export function createState(): State {
     threat: CONFIG.initial.threat,
     speed: 0,
     time: 0,
-    cats: CONFIG.cats.map(cat => ({ ...cat, injuredRemaining: 0, equipment: emptyEquipment() })),
+    cats: CONFIG.cats.map(cat => ({ ...cat, sleeping: false, injuredRemaining: 0, equipment: emptyEquipment() })),
     missions: structuredClone(templates.slice(0, CONFIG.mission.initialAvailableCount)),
     missionSerial: 0,
     rngSeed: CONFIG.initial.rngSeed,
@@ -293,6 +296,7 @@ function isValidCat(value: unknown) {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.role !== 'string') return false
   const numericFields = ['energy', 'reaction', 'combat', 'tech', 'perception', 'scouting', 'cleanupTrait', 'supportTrait', 'attackTrait', 'injuryTrait', 'injuredRemaining']
   return numericFields.every(field => isFiniteNumber(value[field]))
+    && typeof value.sleeping === 'boolean'
     && (value.assignedTo === undefined || typeof value.assignedTo === 'string')
     && isValidEquipment(value.equipment)
 }
@@ -458,6 +462,13 @@ function migrateLegacyState(value: unknown) {
   const migrated = replaceLegacyText(value)
   if (!isRecord(migrated)) return undefined
   delete migrated.activeView
+  if (Array.isArray(migrated.cats)) {
+    for (const cat of migrated.cats) {
+      if (isRecord(cat) && typeof cat.sleeping !== 'boolean') {
+        cat.sleeping = isFiniteNumber(cat.energy) && cat.energy <= CONFIG.sleep.sleepAtEnergy
+      }
+    }
+  }
   return migrated
 }
 
@@ -511,7 +522,7 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, 4, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
@@ -538,6 +549,46 @@ export function successfulCleanups(state: State) {
   return state.squads.reduce((total, squad) => total + squad.completed, 0)
 }
 
+function catIsAtBase(state: State, cat: Cat) {
+  if (!cat.assignedTo) return true
+  return state.squads.find(squad => squad.id === cat.assignedTo)?.phase === 'base'
+}
+
+function putCatToSleep(state: State, cat: Cat) {
+  if (cat.sleeping || !catIsAtBase(state, cat)) return false
+  cat.sleeping = true
+  if (state.research.workerCatId === cat.id) state.research.workerCatId = undefined
+  note(state, 'log.cat_sleeping', { cat: cat.name })
+  return true
+}
+
+function wakeCat(state: State, cat: Cat) {
+  if (!cat.sleeping) return false
+  cat.sleeping = false
+  note(state, 'log.cat_woke', { cat: cat.name })
+  return true
+}
+
+export function canReceiveWorkOrder(cat: Cat) {
+  return cat.sleeping
+    ? cat.energy >= CONFIG.sleep.wakeForOrderEnergy
+    : cat.energy > CONFIG.sleep.sleepAtEnergy
+}
+
+function wakeForWorkOrder(state: State, cat: Cat) {
+  if (!canReceiveWorkOrder(cat)) return false
+  wakeCat(state, cat)
+  return true
+}
+
+function syncCatSleep(state: State) {
+  for (const cat of state.cats) {
+    if (!catIsAtBase(state, cat)) continue
+    if (!cat.sleeping && cat.energy <= CONFIG.sleep.sleepAtEnergy) putCatToSleep(state, cat)
+    if (cat.sleeping && cat.energy >= CONFIG.limits.energy) wakeCat(state, cat)
+  }
+}
+
 export function canEditCat(state: State, catId: string) {
   const cat = state.cats.find(candidate => candidate.id === catId)
   if (!cat?.assignedTo) return true
@@ -551,6 +602,10 @@ export function assignCat(state: State, catId: string, squadId: string) {
   const targetSquad = squadId ? state.squads.find(squad => squad.id === squadId) : undefined
   if (squadId && (!targetSquad || targetSquad.phase !== 'base')) return false
   if (currentSquad?.id === targetSquad?.id || (!currentSquad && !targetSquad)) return false
+  if (targetSquad) {
+    if (cat.energy <= CONFIG.sleep.sleepAtEnergy) putCatToSleep(state, cat)
+    if (!wakeForWorkOrder(state, cat)) return false
+  }
 
   state.speed = 0
   if (currentSquad) currentSquad.members = currentSquad.members.filter(id => id !== catId)
@@ -649,7 +704,10 @@ function startMission(state: State, squad: Squad) {
   const mission = state.missions
     .filter(candidate => candidate.status === 'available')
     .sort((a, b) => b.priority - a.priority || distanceFromBase(a) - distanceFromBase(b))[0]
-  if (!mission) return
+  if (!mission) return false
+  const members = membersOf(state, squad)
+  if (!members.length || !members.every(cat => cat.injuredRemaining <= 0 && canReceiveWorkOrder(cat))) return false
+  members.forEach(cat => wakeForWorkOrder(state, cat))
   mission.status = 'assigned'
   mission.squadId = squad.id
   squad.missionId = mission.id
@@ -659,6 +717,7 @@ function startMission(state: State, squad: Squad) {
   squad.travelDuration = travelTime(mission)
   note(state, 'log.mission_started', { squad: squad.name, mission: mission.title })
   emitEvent(state, { type: 'mission_started', squadId: squad.id, missionId: mission.id })
+  return true
 }
 
 function rewardMission(state: State, squad: Squad) {
@@ -874,7 +933,11 @@ function actionChance(state: State, squad: Squad, action: 'support' | 'attack') 
 
 function eligibleSupportSquad(state: State, primarySquadId: string) {
   return state.squads
-    .filter(squad => squad.id !== primarySquadId && membersOf(state, squad).some(cat => cat.injuredRemaining <= 0))
+    .filter(squad => {
+      const members = membersOf(state, squad)
+      return squad.id !== primarySquadId && members.length > 0
+        && members.every(cat => cat.injuredRemaining <= 0 && canReceiveWorkOrder(cat))
+    })
     .sort((a, b) => Number(a.phase !== 'base') - Number(b.phase !== 'base') || a.id.localeCompare(b.id))[0]
 }
 
@@ -1010,6 +1073,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
     note(state, 'log.support_recalled', { squad: support.name })
     emitEvent(state, { type: 'mission_failed', squadId: support.id, missionId: recalledMissionId, reason: 'recalled' })
   }
+  membersOf(state, support).forEach(cat => wakeForWorkOrder(state, cat))
   incident.stage = 'support_en_route'
   incident.supportSquadId = support.id
   support.phase = 'support'
@@ -1060,10 +1124,16 @@ function arriveAtBase(state: State, squad: Squad) {
 
 function chooseResearchWorker(state: State) {
   const current = getResearchWorker(state)
-  if (current && !current.assignedTo && current.injuredRemaining <= 0 && current.energy >= CONFIG.research.minimumContinueEnergy) return current
+  if (current && !current.assignedTo && current.injuredRemaining <= 0
+    && current.energy > CONFIG.research.minimumContinueEnergy && canReceiveWorkOrder(current)) {
+    wakeForWorkOrder(state, current)
+    return current
+  }
   const next = state.cats
-    .filter(cat => !cat.assignedTo && cat.injuredRemaining <= 0 && cat.energy >= CONFIG.research.minimumStartEnergy)
+    .filter(cat => !cat.assignedTo && cat.injuredRemaining <= 0
+      && cat.energy >= CONFIG.research.minimumStartEnergy && canReceiveWorkOrder(cat))
     .sort((a, b) => b.tech - a.tech || a.id.localeCompare(b.id))[0]
+  if (next) wakeForWorkOrder(state, next)
   state.research.workerCatId = next?.id
   return next
 }
@@ -1119,9 +1189,7 @@ function updateResearch(state: State, elapsed: number) {
 
 function updateRestAndRecovery(state: State, elapsed: number, workingCatId?: string) {
   state.cats.forEach(cat => {
-    const squad = state.squads.find(candidate => candidate.id === cat.assignedTo)
-    const isAtBase = !squad || squad.phase === 'base'
-    if (!isAtBase) return
+    if (!catIsAtBase(state, cat)) return
     if (cat.id !== workingCatId) cat.energy = Math.min(CONFIG.limits.energy, cat.energy + elapsed * CONFIG.mission.restPerSecond)
     if (cat.injuredRemaining > 0) {
       cat.injuredRemaining = Math.max(0, cat.injuredRemaining - elapsed)
@@ -1135,13 +1203,15 @@ export function tick(state: State, seconds: number) {
   const elapsed = seconds * state.speed
   state.time += elapsed
   reconcileMissionFlow(state)
+  syncCatSleep(state)
   const workingCatId = updateResearch(state, elapsed)
+  syncCatSleep(state)
   updateRestAndRecovery(state, elapsed, workingCatId)
+  syncCatSleep(state)
 
   for (const squad of state.squads) {
     if (squad.phase === 'base') {
-      const members = membersOf(state, squad)
-      if (members.length && members.every(cat => cat.energy >= CONFIG.mission.minimumDepartureEnergy && cat.injuredRemaining <= 0)) startMission(state, squad)
+      startMission(state, squad)
       continue
     }
     if (squad.phase === 'incident') continue
