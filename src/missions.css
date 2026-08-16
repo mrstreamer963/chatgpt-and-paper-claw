@@ -2,7 +2,37 @@
 .route-layer line { fill: none; stroke: #e5ab64b8; stroke-width: 1.6; stroke-dasharray: 3.5 3; vector-effect: non-scaling-stroke; }
 .route-layer line.bravo { stroke: #77c5c9b8; stroke-dasharray: 6 3; }
 
-.squad-marker { display: grid; place-items: center; width: 56px; height: 56px; padding: 0; pointer-events: none; }
+.base-pin,
+.cleanup-pin {
+  width: 0;
+  height: 0;
+  display: block;
+  transform: none;
+}
+
+.base-pin strong,
+.cleanup-pin > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+}
+
+.base-pin span,
+.cleanup-pin > b,
+.cleanup-pin > small {
+  position: absolute;
+  left: 0;
+  transform: translateX(-50%);
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.base-pin span { top: 38px; }
+.cleanup-pin > b { top: 22px; }
+.cleanup-pin > small { top: 37px; }
+
+.squad-marker { display: grid; place-items: center; width: 56px; min-width: 0; height: 56px; padding: 0; pointer-events: none; }
 .map-squad-tokens { position: relative; display: flex; justify-content: center; width: 56px; height: 48px; filter: drop-shadow(0 3px 5px #000c); }
 .cat-silhouette { width: 30px; height: 30px; margin: 12px -8px 0; overflow: visible; }
 .cat-silhouette:nth-child(2) { margin-top: 3px; }
@@ -476,18 +506,18 @@
 .story-pin, .hedgehog-pin {
   position: absolute;
   z-index: 8;
-  transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  width: 0;
+  height: 0;
   color: #ff7657;
 }
-.story-pin > span { display: grid; place-items: center; width: 54px; height: 54px; border: 2px solid currentColor; background: #321914cc; font: 700 28px Oswald; box-shadow: 0 0 0 9px #ef64421c, 0 0 34px #ef644288; animation: story-pulse 1s ease-in-out infinite alternate; }
-.story-pin b, .hedgehog-pin b { margin-top: 8px; font: 600 11px Oswald; letter-spacing: 2px; }
-.story-pin small, .hedgehog-pin small { margin-top: 2px; color: #d5b6a8; font-size: 9px; white-space: nowrap; }
+.story-pin > span { position: absolute; left: 0; top: 0; display: grid; place-items: center; transform: translate(-50%, -50%); width: 54px; height: 54px; border: 2px solid currentColor; background: #321914cc; font: 700 28px Oswald; box-shadow: 0 0 0 9px #ef64421c, 0 0 34px #ef644288; animation: story-pulse 1s ease-in-out infinite alternate; }
+.story-pin b, .hedgehog-pin b { position: absolute; left: 0; top: 35px; transform: translateX(-50%); font: 600 11px Oswald; letter-spacing: 2px; white-space: nowrap; }
+.story-pin small, .hedgehog-pin small { position: absolute; left: 0; top: 53px; transform: translateX(-50%); color: #d5b6a8; font-size: 9px; white-space: nowrap; }
 @keyframes story-pulse { to { box-shadow: 0 0 0 15px #ef644205, 0 0 16px #ef644255; } }
 .hedgehog-pin { left: 82%; top: 42%; color: #d6a76c; }
-.hedgehog-pin > span { display: grid; place-items: center; width: 42px; height: 42px; transform: rotate(45deg); border: 1px solid currentColor; background: #201a16; font-size: 24px; }
+.hedgehog-pin > span { position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 42px; height: 42px; transform: translate(-50%, -50%) rotate(45deg); border: 1px solid currentColor; background: #201a16; font-size: 24px; }
+.hedgehog-pin b { top: 29px; }
+.hedgehog-pin small { top: 47px; }
 .hedgehog-pin > span::first-letter { transform: rotate(-45deg); }
 
 .case-progress { margin: 15px 0; padding: 11px 12px; border: 1px solid #4d3f37; background: #211d1b; display: flex; justify-content: space-between; gap: 12px; font-size: 9px; letter-spacing: 1px; color: #8e837b; }

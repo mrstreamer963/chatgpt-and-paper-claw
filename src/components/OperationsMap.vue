@@ -17,9 +17,8 @@ function squadStyle(squad: Squad) {
     : squad.phase === 'returning'
       ? 1 - Math.min(1, squad.travel / duration)
       : 1
-  const lane = squad.id === 'alpha' ? -1 : 1
-  const x = base.x + (target.x - base.x) * ratio + lane * 4.2
-  const y = base.y + (target.y - base.y) * ratio + lane * 3.1
+  const x = base.x + (target.x - base.x) * ratio
+  const y = base.y + (target.y - base.y) * ratio
   return { left: `${Math.max(5, Math.min(95, x))}%`, top: `${Math.max(7, Math.min(93, y))}%` }
 }
 
