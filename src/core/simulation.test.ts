@@ -15,6 +15,7 @@ import {
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
+  returnSquadToBase,
   selectResearch,
   serializeState,
   setSquadAutoDispatch,
@@ -164,6 +165,76 @@ test('manual dispatch assigns the selected mission to a ready manual squad', () 
   assert.equal(state.squads[0].missionId, selectedMission.id)
   assert.equal(selectedMission.status, 'assigned')
   assert.equal(dispatchSquadToMission(state, 'bravo', state.missions[0].id), false)
+})
+
+test('a manual squad waits in the field and accepts its next mission there', () => {
+  const state = createState()
+  state.raidTriggered = true
+  assignCat(state, 'pixel', 'alpha')
+  setSquadAutoDispatch(state, 'alpha', false)
+  const squad = state.squads[0]
+  const completedMission = state.missions[0]
+  completedMission.status = 'assigned'
+  completedMission.squadId = squad.id
+  squad.phase = 'cleanup'
+  squad.missionId = completedMission.id
+  squad.target = { ...completedMission }
+  squad.progress = 29
+  state.speed = 1
+
+  tick(state, 1)
+
+  assert.equal(squad.phase, 'field')
+  assert.equal(squad.missionId, undefined)
+  assert.equal(squad.target, undefined)
+  assert.deepEqual(squad.routeFrom, { x: completedMission.x, y: completedMission.y })
+  assert.equal(state.missions.includes(completedMission), false)
+
+  const nextMission = state.missions.find(mission => mission.status === 'available')!
+  assert.equal(dispatchSquadToMission(state, squad.id, nextMission.id), true)
+  assert.equal(squad.phase, 'outbound')
+  assert.equal(squad.missionId, nextMission.id)
+  assert.deepEqual(squad.routeFrom, { x: completedMission.x, y: completedMission.y })
+})
+
+test('the player can order an idle field squad back to base', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  setSquadAutoDispatch(state, 'alpha', false)
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  const squad = state.squads[0]
+  squad.phase = 'field'
+  squad.routeFrom = { x: 30, y: 30 }
+
+  assert.equal(returnSquadToBase(state, squad.id), true)
+  assert.equal(squad.phase, 'returning')
+  assert.equal(squad.restAfterReturn, false)
+  state.speed = 1
+  tick(state, squad.travelDuration)
+
+  assert.equal(squad.phase, 'base')
+  assert.equal(pixel.sleeping, false)
+  assert.equal(returnSquadToBase(state, squad.id), false)
+})
+
+test('a manual field squad returns automatically when no available mission is safe', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  setSquadAutoDispatch(state, 'alpha', false)
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  const squad = state.squads[0]
+  squad.phase = 'field'
+  squad.routeFrom = { x: 50, y: 51 }
+  pixel.energy = 23
+  state.speed = 1
+
+  tick(state, 0.25)
+
+  assert.equal(squad.phase, 'returning')
+  assert.equal(squad.restAfterReturn, true)
+  tick(state, squad.travelDuration)
+  assert.equal(squad.phase, 'base')
+  assert.equal(pixel.sleeping, true)
 })
 
 test('disabling auto-deploy in the field holds the squad after it returns', () => {

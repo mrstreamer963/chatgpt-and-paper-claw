@@ -6,7 +6,7 @@ import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
 
 const props = defineProps<{ state: State; locale: Locale }>()
-const emit = defineEmits<{ dispatch: [squadId: string, missionId: string] }>()
+const emit = defineEmits<{ dispatch: [squadId: string, missionId: string]; returnHome: [squadId: string] }>()
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
 const base = { x: 46, y: 51 }
 const selectedMissionId = ref<string>()
@@ -19,7 +19,7 @@ function squadPosition(squad: Squad) {
 
 function squadStyle(squad: Squad) {
   const position = squadPosition(squad)
-  if (!squad.target || squad.phase === 'base') return { left: `${base.x}%`, top: `${base.y}%`, opacity: 0 }
+  if (squad.phase === 'base') return { left: `${base.x}%`, top: `${base.y}%`, opacity: 0 }
   return { left: `${position.x}%`, top: `${position.y}%` }
 }
 
@@ -36,6 +36,7 @@ function isActiveAssignedMission(mission: Mission) {
 
 function squadLabel(squad: Squad) {
   if (squad.phase === 'base') return tr(squad.members.length ? squad.autoDispatch ? 'status.base_ready' : 'status.awaiting_order' : 'status.no_squad')
+  if (squad.phase === 'field') return tr('status.field')
   if (squad.phase === 'outbound') return tr('status.outbound', { mission: squad.target?.title ?? '', seconds: Math.ceil(squad.travelDuration - squad.travel) })
   if (squad.phase === 'returning') return tr('status.returning')
   if (squad.phase === 'support') return tr('status.support', { seconds: Math.max(0, Math.ceil(squad.travelDuration - squad.travel)) })
@@ -78,7 +79,7 @@ function formatLog(entry: LogEntry) {
       <div v-for="mission in state.missions.filter(isActiveAssignedMission)" :key="`assigned-${mission.id}`" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(state.incident?.missionId === mission.id ? 'ТРЕВОГА' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
       <div v-for="squad in state.squads" :key="squad.id" class="squad-marker" :class="[squad.phase, squad.id]" :style="squadStyle(squad)">
         <div class="map-squad-tokens"><svg v-for="member in squad.members" :key="member" class="cat-silhouette" viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${member}`" /></svg></div>
-        <div class="squad-callout"><b>{{ tr(squad.name) }}</b><small>{{ squadLabel(squad) }}</small></div>
+        <div class="squad-callout"><b>{{ tr(squad.name) }}</b><small>{{ squadLabel(squad) }}</small><button v-if="squad.phase === 'field'" type="button" @click.stop="emit('returnHome', squad.id)">{{ tr('dispatch.return_home') }}</button></div>
       </div>
     </div>
     <aside>

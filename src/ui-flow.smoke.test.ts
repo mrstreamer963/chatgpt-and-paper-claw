@@ -116,3 +116,19 @@ test('completed mission disappears while its squad route continues from the squa
   const legacyHtml = await render(OperationsMap, { state, locale: 'ru' })
   assert.doesNotMatch(legacyHtml, /cleanup-pin/)
 })
+
+test('a manual field squad exposes its waiting state and return command', async () => {
+  const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
+  const state = createState()
+  const squad = state.squads[0]
+  squad.members = ['pixel']
+  squad.autoDispatch = false
+  squad.phase = 'field'
+  squad.routeFrom = { x: 30, y: 35 }
+
+  const html = await render(OperationsMap, { state, locale: 'ru' })
+
+  assert.match(html, /В поле \/ ожидает приказа/)
+  assert.match(html, /Вернуть на базу/)
+  assert.match(html, /left:30%;top:35%/)
+})

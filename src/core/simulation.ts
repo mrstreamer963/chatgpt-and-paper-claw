@@ -28,7 +28,7 @@ export type Cat = {
 }
 export type Mission = { id: string; title: string; x: number; y: number; priority: number; status: 'available' | 'assigned' | 'completed'; squadId?: string }
 export type MapPoint = { x: number; y: number }
-export type Phase = 'base' | 'outbound' | 'cleanup' | 'assisting' | 'incident' | 'support' | 'returning'
+export type Phase = 'base' | 'field' | 'outbound' | 'cleanup' | 'assisting' | 'incident' | 'support' | 'returning'
 export type Squad = {
   id: string
   name: string
@@ -136,7 +136,7 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 7
+export const SAVE_VERSION = 8
 export type SaveErrorKey =
   | 'save.error.invalid_json'
   | 'save.error.unknown_format'
@@ -318,7 +318,7 @@ function isValidSquad(value: unknown) {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string') return false
   if (!Array.isArray(value.members) || !value.members.every(member => typeof member === 'string')) return false
   if (!['careful', 'balanced', 'risky'].includes(value.style as string)
-    || !['base', 'outbound', 'cleanup', 'assisting', 'incident', 'support', 'returning'].includes(value.phase as string)) return false
+    || !['base', 'field', 'outbound', 'cleanup', 'assisting', 'incident', 'support', 'returning'].includes(value.phase as string)) return false
   if (typeof value.autoDispatch !== 'boolean') return false
   if (!isValidMapPoint(value.routeFrom) || typeof value.restAfterReturn !== 'boolean') return false
   if (![value.travel, value.travelDuration, value.progress, value.completed].every(isFiniteNumber)) return false
@@ -545,7 +545,7 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, 4, 5, 6, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
@@ -773,19 +773,21 @@ export function getManualDispatchBlockReason(state: State, squadId: string, miss
   const mission = state.missions.find(candidate => candidate.id === missionId)
   if (!squad || !mission || mission.status !== 'available') return 'dispatch.reason.unavailable'
   if (squad.autoDispatch) return 'dispatch.reason.auto_enabled'
-  if (squad.phase !== 'base') return 'dispatch.reason.away'
+  if (!['base', 'field'].includes(squad.phase)) return 'dispatch.reason.away'
   const members = membersOf(state, squad)
   if (!members.length) return 'dispatch.reason.empty'
   if (members.some(cat => cat.injuredRemaining > 0)) return 'dispatch.reason.injured'
   if (members.some(cat => !canReceiveWorkOrder(cat))) return 'dispatch.reason.tired'
-  if (!hasEnergyForMissionFrom(state, squad, CONFIG.map.base, mission)) return 'dispatch.reason.tired'
+  const origin = squad.phase === 'field' ? getSquadMapPosition(squad) : CONFIG.map.base
+  if (!hasEnergyForMissionFrom(state, squad, origin, mission)) return 'dispatch.reason.tired'
   return undefined
 }
 
 export function dispatchSquadToMission(state: State, squadId: string, missionId: string) {
   if (getManualDispatchBlockReason(state, squadId, missionId)) return false
   const squad = state.squads.find(candidate => candidate.id === squadId)
-  return squad ? startMission(state, squad, missionId) : false
+  const origin = squad?.phase === 'field' ? getSquadMapPosition(squad) : CONFIG.map.base
+  return squad ? startMission(state, squad, missionId, origin) : false
 }
 
 function rewardMission(state: State, squad: Squad) {
@@ -807,13 +809,31 @@ function dispatchNextMissionOrReturn(state: State, squad: Squad) {
   const fatigueBlocked = squad.autoDispatch && availableMissions.length > 0
     && !availableMissions.some(mission => hasEnergyForMissionFrom(state, squad, origin, mission))
 
-  if (squad.autoDispatch && startMission(state, squad, undefined, origin)) {
-    removeMission(state, previousMissionId)
+  if (squad.autoDispatch) {
+    if (startMission(state, squad, undefined, origin)) {
+      removeMission(state, previousMissionId)
+      return
+    }
+    sendHome(squad, fatigueBlocked)
+    if (fatigueBlocked) note(state, 'log.squad_returning_to_rest', { squad: squad.name })
     return
   }
 
-  sendHome(squad, fatigueBlocked)
-  if (fatigueBlocked) note(state, 'log.squad_returning_to_rest', { squad: squad.name })
+  if (fatigueBlocked) {
+    sendHome(squad, true)
+    note(state, 'log.squad_returning_to_rest', { squad: squad.name })
+    return
+  }
+
+  removeMission(state, previousMissionId)
+  squad.phase = 'field'
+  squad.routeFrom = origin
+  squad.missionId = undefined
+  squad.target = undefined
+  squad.travel = 0
+  squad.travelDuration = 0
+  squad.restAfterReturn = false
+  note(state, 'log.squad_waiting_in_field', { squad: squad.name })
 }
 
 function maybeShowFinalSummary(state: State) {
@@ -1089,6 +1109,14 @@ function sendHome(squad: Squad, restAfterReturn = false) {
   squad.travelDuration = travelTimeBetween(origin, CONFIG.map.base)
 }
 
+export function returnSquadToBase(state: State, squadId: string) {
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!squad || squad.phase !== 'field') return false
+  sendHome(squad)
+  note(state, 'log.squad_ordered_home', { squad: squad.name })
+  return true
+}
+
 function injuryChance(state: State, squad: Squad) {
   const members = membersOf(state, squad)
   const traitReduction = members.reduce((sum, cat) => sum + cat.injuryTrait, 0)
@@ -1165,7 +1193,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
   }
 
   const supportOrigin = getSquadMapPosition(support)
-  if (support.phase !== 'base') {
+  if (support.phase !== 'base' && support.phase !== 'field') {
     const recalledMissionId = support.missionId
     cancelSquadMission(state, support)
     note(state, 'log.support_recalled', { squad: support.name })
@@ -1322,6 +1350,17 @@ export function tick(state: State, seconds: number) {
   for (const squad of state.squads) {
     if (squad.phase === 'base') {
       if (squad.autoDispatch) startMission(state, squad)
+      continue
+    }
+    if (squad.phase === 'field') {
+      const origin = getSquadMapPosition(squad)
+      const availableMissions = state.missions.filter(mission => mission.status === 'available')
+      if (squad.autoDispatch && startMission(state, squad, undefined, origin)) continue
+      if (availableMissions.length > 0
+        && !availableMissions.some(mission => hasEnergyForMissionFrom(state, squad, origin, mission))) {
+        sendHome(squad, true)
+        note(state, 'log.squad_returning_to_rest', { squad: squad.name })
+      }
       continue
     }
     if (squad.phase === 'incident') continue

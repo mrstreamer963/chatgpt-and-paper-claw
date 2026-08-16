@@ -149,7 +149,7 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
         <select :value="squad.style" :disabled="squad.phase !== 'base'" @change="handleSquadStyle(squad.id, $event)"><option value="careful">{{ tr('careful') }}</option><option value="balanced">{{ tr('balanced') }}</option><option value="risky">{{ tr('risky') }}</option></select>
         <label class="auto-dispatch-toggle">
           <input type="checkbox" :checked="squad.autoDispatch" @change="handleAutoDispatch(squad.id, $event)">
-          <span><b>{{ tr('dispatch.auto.title') }}</b><small>{{ tr(squad.autoDispatch ? 'dispatch.auto.enabled' : squad.phase === 'base' ? 'dispatch.auto.manual' : 'dispatch.auto.after_return') }}</small></span>
+          <span><b>{{ tr('dispatch.auto.title') }}</b><small>{{ tr(squad.autoDispatch ? 'dispatch.auto.enabled' : squad.phase === 'base' ? 'dispatch.auto.manual' : squad.phase === 'field' ? 'dispatch.auto.field_manual' : 'dispatch.auto.after_return') }}</small></span>
         </label>
         <details class="forecast-breakdown">
           <summary>{{ tr(squad.members.length ? 'cleanup.details' : 'cleanup.empty') }}</summary>
