@@ -8,7 +8,7 @@ import {
   RESEARCH_RULES,
   canEditCat,
   getResearchWorker,
-  getSquadCleanupForecast,
+  getSquadCleanupEstimate,
   type Achievement,
   type EquipmentSlot,
   type ItemId,
@@ -87,10 +87,18 @@ function researchPercent(researchId: ResearchId) {
   return Math.min(100, Math.round(props.state.research.nodes[researchId].progress / RESEARCH_RULES.duration * 100))
 }
 
+function cleanupEstimate(squad: Squad) {
+  return getSquadCleanupEstimate(props.state, squad)
+}
+
+function formatRate(value: number) {
+  return value.toFixed(2).replace(/\.00$/, '')
+}
+
 function catTraitText(cat: State['cats'][number]) {
   if (cat.id === 'marlowe') return tr('cat.trait.bonus', { trait: 'Деэскалация', bonus: cat.supportTrait, action: 'поддержке' })
-  if (cat.id === 'pixel') return tr('cat.trait.bonus', { trait: 'Самодиагностика', bonus: cat.cleanupTrait, action: 'уборке' })
-  if (cat.id === 'rust') return tr('cat.trait.bonus', { trait: 'Тяжёлая работа', bonus: cat.cleanupTrait, action: 'уборке' })
+  if (cat.id === 'pixel') return tr('cat.trait.bonus', { trait: 'Самодиагностика', bonus: `${cat.cleanupTrait}%`, action: 'скорости уборки' })
+  if (cat.id === 'rust') return tr('cat.trait.bonus', { trait: 'Тяжёлая работа', bonus: `${cat.cleanupTrait}%`, action: 'скорости уборки' })
   if (cat.id === 'shorokh') return tr('cat.trait.bonus', { trait: 'Паранойя', bonus: cat.supportTrait, action: 'поддержке' })
   if (cat.id === 'bastion') return tr('cat.trait.bonus', { trait: 'Силовой ответ', bonus: cat.attackTrait, action: 'нападению' })
   if (cat.id === 'myata') return tr('cat.trait.reduction', { trait: 'Бережёт команду', bonus: cat.injuryTrait, action: 'ранению' })
@@ -131,16 +139,16 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
       <h2>{{ tr('СОСТАВ И ЭКИПИРОВКА') }}</h2>
       <p class="roster-hint">{{ tr('Любое изменение ставит время на паузу. Состав и снаряжение отряда в поле заблокированы.') }}</p>
       <div v-for="squad in state.squads" :key="squad.id" class="squad-status squad-config">
-        <div><b>{{ tr(squad.name) }}</b><span>{{ tr('squad.cleanup_forecast', { cats: squad.members.length, chance: getSquadCleanupForecast(state, squad).total }) }}</span></div>
+        <div><b>{{ tr(squad.name) }}</b><span>{{ tr('squad.cleanup_estimate', { cats: squad.members.length, seconds: Math.ceil(cleanupEstimate(squad).seconds) }) }}</span></div>
         <select :value="squad.style" :disabled="squad.phase !== 'base'" @change="handleSquadStyle(squad.id, $event)"><option value="careful">{{ tr('careful') }}</option><option value="balanced">{{ tr('balanced') }}</option><option value="risky">{{ tr('risky') }}</option></select>
         <details class="forecast-breakdown">
-          <summary>{{ tr(squad.members.length ? 'forecast.details' : 'forecast.empty') }}</summary>
+          <summary>{{ tr(squad.members.length ? 'cleanup.details' : 'cleanup.empty') }}</summary>
           <template v-if="squad.members.length">
-            <span>{{ tr('forecast.base') }} <b>+{{ getSquadCleanupForecast(state, squad).base }}</b></span>
-            <span>{{ tr('forecast.skills') }} <b>+{{ getSquadCleanupForecast(state, squad).skill }}</b></span>
-            <span>{{ tr('forecast.traits') }} <b>+{{ getSquadCleanupForecast(state, squad).traits }}</b></span>
-            <span>{{ tr('forecast.equipment') }} <b>+{{ getSquadCleanupForecast(state, squad).equipment }}</b></span>
-            <span v-if="getSquadCleanupForecast(state, squad).fatigue">{{ tr('forecast.fatigue') }} <b>−{{ getSquadCleanupForecast(state, squad).fatigue }}</b></span>
+            <span>{{ tr('cleanup.cats_rate') }} <b>×{{ formatRate(cleanupEstimate(squad).baseRate) }}</b></span>
+            <span v-if="cleanupEstimate(squad).traitRate">{{ tr('cleanup.traits_rate') }} <b>+{{ formatRate(cleanupEstimate(squad).traitRate) }}</b></span>
+            <span v-if="cleanupEstimate(squad).equipmentRate">{{ tr('cleanup.equipment_rate') }} <b>+{{ formatRate(cleanupEstimate(squad).equipmentRate) }}</b></span>
+            <span>{{ tr('cleanup.total_rate') }} <b>×{{ formatRate(cleanupEstimate(squad).totalRate) }}</b></span>
+            <span>{{ tr('cleanup.energy_per_cat') }} <b>−{{ formatRate(cleanupEstimate(squad).energyPerCat) }}</b></span>
           </template>
         </details>
       </div>

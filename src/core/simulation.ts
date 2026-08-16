@@ -26,7 +26,7 @@ export type Cat = {
   equipment: Equipment
 }
 export type Mission = { id: string; title: string; x: number; y: number; priority: number; status: 'available' | 'assigned'; squadId?: string }
-export type Phase = 'base' | 'outbound' | 'cleanup' | 'incident' | 'support' | 'returning'
+export type Phase = 'base' | 'outbound' | 'cleanup' | 'assisting' | 'incident' | 'support' | 'returning'
 export type Squad = {
   id: string
   name: string
@@ -113,13 +113,14 @@ export type State = {
   log: LogEntry[]
 }
 export type RaidOption = { available: boolean; chance?: number; reason?: string; supportSquadName?: string }
-export type CleanupForecast = {
-  total: number
-  base: number
-  skill: number
-  traits: number
-  equipment: number
-  fatigue: number
+export type CleanupEstimate = {
+  members: number
+  baseRate: number
+  traitRate: number
+  equipmentRate: number
+  totalRate: number
+  seconds: number
+  energyPerCat: number
 }
 export type Achievement = {
   id: AchievementId
@@ -183,8 +184,8 @@ export const RESEARCH_RULES = {
 }
 export const GAME_RULES = {
   fameGoal: CONFIG.goal.fame,
-  cleanupDuration: CONFIG.mission.cleanupDuration,
-  raidTriggerProgress: CONFIG.mission.raidTriggerProgress,
+  cleanupWork: CONFIG.mission.cleanupWork,
+  raidTriggerWork: CONFIG.mission.raidTriggerWork,
   cleanupRewardScrap: CONFIG.mission.rewardScrap,
   guaranteedChance: CONFIG.chance.maximum,
   minimumResearchEnergy: CONFIG.research.minimumStartEnergy,
@@ -305,7 +306,7 @@ function isValidSquad(value: unknown) {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string') return false
   if (!Array.isArray(value.members) || !value.members.every(member => typeof member === 'string')) return false
   if (!['careful', 'balanced', 'risky'].includes(value.style as string)
-    || !['base', 'outbound', 'cleanup', 'incident', 'support', 'returning'].includes(value.phase as string)) return false
+    || !['base', 'outbound', 'cleanup', 'assisting', 'incident', 'support', 'returning'].includes(value.phase as string)) return false
   if (![value.travel, value.travelDuration, value.progress, value.completed].every(isFiniteNumber)) return false
   return (value.missionId === undefined || typeof value.missionId === 'string')
     && (value.target === undefined || isValidTarget(value.target))
@@ -662,10 +663,6 @@ function rewardMission(state: State, squad: Squad) {
   squad.completed++
   state.scrap += CONFIG.mission.rewardScrap
   state.fame = Math.min(CONFIG.limits.fame, state.fame + CONFIG.mission.rewardFame)
-  squad.members.forEach(id => {
-    const cat = state.cats.find(candidate => candidate.id === id)
-    if (cat) cat.energy = Math.max(0, cat.energy - CONFIG.mission.energyCost)
-  })
   squad.phase = 'returning'
   squad.travel = 0
   squad.progress = 0
@@ -817,32 +814,43 @@ function baseTeamChance(members: Cat[], baseChance: number, skillSum: number, st
   )
 }
 
-export function getSquadCleanupChance(state: State, squad: Squad) {
-  return getSquadCleanupForecast(state, squad).total
+export function getSquadCleanupEstimate(state: State, squad: Squad): CleanupEstimate {
+  const members = membersOf(state, squad)
+  if (!members.length) return { members: 0, baseRate: 0, traitRate: 0, equipmentRate: 0, totalRate: 0, seconds: 0, energyPerCat: 0 }
+  const traitRate = members.reduce((sum, cat) => sum + cat.cleanupTrait / 100, 0)
+  const equipmentRate = members.reduce((sum, cat) => sum
+    + (hasEquipped(cat, 'toolkit') ? itemBonus('toolkit', 'cleanupBonus') : 0)
+    + (hasEquipped(cat, 'scanner') ? itemBonus('scanner', 'cleanupBonus') : 0), 0) / 100
+  const baseRate = members.length
+  const totalRate = baseRate + traitRate + equipmentRate
+  const seconds = CONFIG.mission.cleanupWork / totalRate
+  return {
+    members: members.length,
+    baseRate,
+    traitRate,
+    equipmentRate,
+    totalRate,
+    seconds,
+    energyPerCat: seconds * CONFIG.mission.energyCostPerBaseCleanup / CONFIG.mission.cleanupWork,
+  }
 }
 
-export function getSquadCleanupForecast(state: State, squad: Squad): CleanupForecast {
-  const members = membersOf(state, squad)
-  if (!members.length) return { total: 0, base: CONFIG.chance.cleanupBase, skill: 0, traits: 0, equipment: 0, fatigue: 0 }
-  const skillSum = members.reduce((sum, cat) => sum + cat.tech + cat.perception, 0)
-  const skill = Math.min(CONFIG.chance.teamSkillBonusCap, Math.floor(skillSum * CONFIG.chance.teamSkillMultiplier))
-  const traitBonus = members.reduce((sum, cat) => sum + cat.cleanupTrait, 0)
-  const equipmentBonus = members.reduce((sum, cat) => sum
-    + (hasEquipped(cat, 'toolkit') ? itemBonus('toolkit', 'cleanupBonus') : 0)
-    + (hasEquipped(cat, 'scanner') ? itemBonus('scanner', 'cleanupBonus') : 0), 0)
-  const averageEnergy = members.reduce((sum, cat) => sum + cat.energy, 0) / members.length
-  const fatigue = Math.min(
-    CONFIG.chance.fatiguePenaltyCap,
-    Math.floor(Math.max(0, CONFIG.chance.fatigueStartsBelowEnergy - averageEnergy) / CONFIG.chance.fatiguePenaltyEnergyStep),
-  )
-  return {
-    total: baseTeamChance(members, CONFIG.chance.cleanupBase, skillSum, 0, traitBonus, equipmentBonus),
-    base: CONFIG.chance.cleanupBase,
-    skill,
-    traits: traitBonus,
-    equipment: equipmentBonus,
-    fatigue,
-  }
+function assistingSquads(state: State, primary: Squad) {
+  return state.squads.filter(squad => squad.phase === 'assisting' && squad.target?.id === primary.target?.id)
+}
+
+function cleanupParticipants(state: State, primary: Squad) {
+  return [primary, ...assistingSquads(state, primary)]
+}
+
+function cleanupRate(state: State, primary: Squad) {
+  return cleanupParticipants(state, primary)
+    .reduce((total, squad) => total + getSquadCleanupEstimate(state, squad).totalRate, 0)
+}
+
+export function getCleanupSecondsRemaining(state: State, squad: Squad) {
+  const rate = cleanupRate(state, squad)
+  return rate > 0 ? Math.max(0, CONFIG.mission.cleanupWork - squad.progress) / rate : 0
 }
 
 function actionChance(state: State, squad: Squad, action: 'support' | 'attack') {
@@ -976,10 +984,9 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
       syncAchievements(state)
       return true
     }
-    rewardMission(state, primary)
+    primary.phase = 'cleanup'
     state.incident = undefined
     note(state, 'log.raid_attack_won', { squad: primary.name })
-    afterSuccessfulCleanup(state, primary)
     syncAchievements(state)
     return true
   }
@@ -1020,16 +1027,17 @@ export function resolveRaidFollowup(state: State, action: 'retreat' | 'continue'
   if (!primary || !support) return false
 
   if (action === 'continue') {
-    rewardMission(state, primary)
+    primary.phase = 'cleanup'
+    support.phase = 'assisting'
+    support.target = primary.target ? { ...primary.target } : undefined
     note(state, 'log.raid_support_won')
   } else {
     sendHome(primary)
+    sendHome(support)
     note(state, 'log.raid_retreat')
     emitEvent(state, { type: 'mission_failed', squadId: primary.id, missionId: incident.missionId, reason: 'retreat' })
   }
-  sendHome(support)
   state.incident = undefined
-  if (action === 'continue') afterSuccessfulCleanup(state, primary)
   syncAchievements(state)
   return true
 }
@@ -1131,6 +1139,7 @@ export function tick(state: State, seconds: number) {
       continue
     }
     if (squad.phase === 'incident') continue
+    if (squad.phase === 'assisting') continue
     if (squad.phase === 'support') {
       squad.travel += elapsed
       if (squad.travel >= squad.travelDuration && state.incident?.stage === 'support_en_route') {
@@ -1158,16 +1167,26 @@ export function tick(state: State, seconds: number) {
       continue
     }
 
-    squad.progress += elapsed
-    const raidIsDue = !state.raidTriggered
+    const raidIsPending = !state.raidTriggered
       && successfulCleanups(state) >= CONFIG.raid.successfulCleanupsBeforeTrigger
-      && squad.progress >= CONFIG.mission.raidTriggerProgress
-    if (raidIsDue) {
-      squad.progress = CONFIG.mission.raidTriggerProgress
+    const workLimit = raidIsPending ? CONFIG.mission.raidTriggerWork : CONFIG.mission.cleanupWork
+    const rate = cleanupRate(state, squad)
+    const workDone = Math.min(Math.max(0, workLimit - squad.progress), elapsed * rate)
+    const workSeconds = rate > 0 ? workDone / rate : 0
+    for (const participant of cleanupParticipants(state, squad)) {
+      for (const cat of membersOf(state, participant)) {
+        cat.energy = Math.max(0, cat.energy - workSeconds * CONFIG.mission.energyCostPerBaseCleanup / CONFIG.mission.cleanupWork)
+      }
+    }
+    squad.progress += workDone
+
+    if (raidIsPending && squad.progress >= CONFIG.mission.raidTriggerWork) {
+      squad.progress = CONFIG.mission.raidTriggerWork
       startRaidIncident(state, squad)
       break
     }
-    if (squad.progress >= CONFIG.mission.cleanupDuration) {
+    if (squad.progress >= CONFIG.mission.cleanupWork) {
+      for (const assistant of assistingSquads(state, squad)) sendHome(assistant)
       rewardMission(state, squad)
       afterSuccessfulCleanup(state, squad)
     }

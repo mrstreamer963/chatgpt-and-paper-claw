@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { GAME_RULES, type LogEntry, type Squad, type State } from '../core/simulation'
+import { GAME_RULES, getCleanupSecondsRemaining, type LogEntry, type Squad, type State } from '../core/simulation'
 import { translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
@@ -28,8 +28,12 @@ function squadLabel(squad: Squad) {
   if (squad.phase === 'outbound') return tr('status.outbound', { mission: squad.target?.title ?? '', seconds: Math.ceil(squad.travelDuration - squad.travel) })
   if (squad.phase === 'returning') return tr('status.returning')
   if (squad.phase === 'support') return tr('status.support', { seconds: Math.max(0, Math.ceil(squad.travelDuration - squad.travel)) })
+  if (squad.phase === 'assisting') return tr('status.assisting')
   if (squad.phase === 'incident') return tr('status.incident')
-  return tr('status.cleanup', { progress: Math.round(squad.progress / GAME_RULES.cleanupDuration * 100) })
+  return tr('status.cleanup', {
+    progress: Math.round(squad.progress / GAME_RULES.cleanupWork * 100),
+    seconds: Math.ceil(getCleanupSecondsRemaining(props.state, squad)),
+  })
 }
 
 function formatLog(entry: LogEntry) {

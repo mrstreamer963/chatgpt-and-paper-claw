@@ -10,7 +10,7 @@ import {
   equipItem,
   getAchievements,
   getRaidOptions,
-  getSquadCleanupForecast,
+  getSquadCleanupEstimate,
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
@@ -20,24 +20,64 @@ import {
   tick,
 } from './simulation.ts'
 
-test('cleanup forecast exposes the same deterministic modifier breakdown as its total', () => {
+test('cleanup estimate combines cats, traits and equipment into work rate', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
   equipItem(state, 'pixel', 'hands', 'toolkit')
-  const forecast = getSquadCleanupForecast(state, state.squads[0])
+  const estimate = getSquadCleanupEstimate(state, state.squads[0])
 
-  assert.deepEqual(forecast, {
-    total: 73,
-    base: 35,
-    skill: 21,
-    traits: 5,
-    equipment: 12,
-    fatigue: 0,
-  })
+  assert.equal(estimate.members, 1)
+  assert.equal(estimate.baseRate, 1)
+  assert.equal(estimate.traitRate, 0.05)
+  assert.equal(estimate.equipmentRate, 0.12)
+  assert.ok(Math.abs(estimate.totalRate - 1.17) < 1e-9)
+  assert.ok(Math.abs(estimate.seconds - 30 / 1.17) < 1e-9)
+  assert.ok(Math.abs(estimate.energyPerCat - 20 / 1.17) < 1e-9)
+})
 
-  state.cats.find(cat => cat.id === 'pixel')!.energy = 40
-  assert.equal(getSquadCleanupForecast(state, state.squads[0]).fatigue, 6)
-  assert.equal(getSquadCleanupForecast(state, state.squads[0]).total, 67)
+test('five equally productive cats clean five times faster and split fatigue', () => {
+  const state = createState()
+  const catIds = ['marlowe', 'pixel', 'rust', 'shorokh', 'bastion']
+  for (const catId of catIds) {
+    const cat = state.cats.find(candidate => candidate.id === catId)!
+    cat.cleanupTrait = 0
+    assignCat(state, catId, 'alpha')
+  }
+  const squad = state.squads[0]
+  const energyBefore = Object.fromEntries(state.cats.map(cat => [cat.id, cat.energy]))
+  squad.phase = 'cleanup'
+  squad.missionId = 'a'
+  squad.target = { id: 'a', title: 'mission.a', x: 23, y: 25, priority: 1 }
+  state.missions[0].status = 'assigned'
+  state.missions[0].squadId = squad.id
+  state.raidTriggered = true
+  state.speed = 1
+
+  assert.equal(getSquadCleanupEstimate(state, squad).seconds, 6)
+  tick(state, 6)
+
+  assert.equal(squad.completed, 1)
+  assert.equal(squad.phase, 'returning')
+  for (const catId of catIds) {
+    const cat = state.cats.find(candidate => candidate.id === catId)!
+    assert.ok(Math.abs(cat.energy - (energyBefore[catId] - 4)) < 1e-9)
+  }
+})
+
+test('squad size changes cleanup time but not travel time', () => {
+  const solo = createState()
+  assignCat(solo, 'marlowe', 'alpha')
+  solo.speed = 1
+  tick(solo, 0.25)
+
+  const group = createState()
+  for (const catId of ['marlowe', 'pixel', 'rust', 'shorokh', 'bastion']) assignCat(group, catId, 'alpha')
+  group.speed = 1
+  tick(group, 0.25)
+
+  assert.equal(solo.squads[0].target?.id, group.squads[0].target?.id)
+  assert.equal(solo.squads[0].travelDuration, group.squads[0].travelDuration)
+  assert.ok(getSquadCleanupEstimate(group, group.squads[0]).seconds < getSquadCleanupEstimate(solo, solo.squads[0]).seconds / 4)
 })
 
 function openRaid() {
@@ -248,6 +288,11 @@ test('successful support arrives after eight seconds and can complete the cleanu
   assert.equal(state.incident.stage, 'support_decision')
   assert.equal(state.speed, 0)
   assert.equal(resolveRaidFollowup(state, 'continue'), true)
+  assert.equal(state.fame, fame)
+  assert.equal(state.scrap, scrap)
+  assert.equal(support?.phase, 'assisting')
+  state.speed = 1
+  tick(state, 3)
   assert.equal(state.fame, fame + 5)
   assert.equal(state.scrap, scrap + 10)
   assert.equal(state.incident, undefined)
@@ -371,6 +416,10 @@ test('completed defense research and an equipped weapon unlock a successful atta
   const scrap = state.scrap
   assert.equal(resolveRaidDecision(state, 'attack'), true)
   assert.equal(state.incident, undefined)
+  assert.equal(state.fame, fame)
+  assert.equal(state.scrap, scrap)
+  state.speed = 1
+  tick(state, 15)
   assert.equal(state.fame, fame + 5)
   assert.equal(state.scrap, scrap + 10)
 })

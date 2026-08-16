@@ -52,8 +52,8 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
     totalRuns: 0,
     saveStatus: { key: 'save.ready' },
   })
-  assert.match(baseHtml, /прогноз уборки/)
-  assert.match(baseHtml, /техника \+ восприятие/)
+  assert.match(baseHtml, /уборка за/)
+  assert.match(baseHtml, /Расчёт производительности/)
   assert.match(baseHtml, /Пиксель/)
 
   state.squads[0].completed = 2
@@ -74,6 +74,8 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(overlayHtml, /Поддержка прибыла/)
 
   assert.equal(resolveRaidFollowup(state, 'continue'), true)
+  state.speed = 1
+  tick(state, 3)
   assert.ok(state.storyIncident)
   overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 3 })
   assert.match(overlayHtml, /Девятая жизнь/)

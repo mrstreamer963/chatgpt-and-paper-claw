@@ -55,6 +55,9 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
 
   assert.equal(state.speed, 0)
   assert.equal(resolveRaidFollowup(state, 'continue'), true)
+  assert.equal(successfulCleanups(state), 2)
+  state.speed = 10
+  advanceUntil(state, () => Boolean(state.storyIncident), 'The supported cleanup did not finish')
   assert.equal(successfulCleanups(state), 3)
   assert.equal(state.storyIncident?.kind, 'ninth_life')
 
