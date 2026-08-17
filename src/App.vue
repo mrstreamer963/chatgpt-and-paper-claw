@@ -42,11 +42,11 @@ const {
 
 const basePanel = ref<'teams' | 'lab' | 'achievements'>('teams')
 const tr = (key: string, params?: Record<string, string | number>) => translate(locale.value, key, params)
-const totalRuns = computed(() => state.squads.reduce((total, squad) => total + squad.completed, 0))
-const formattedTime = computed(() => `${String(9 + Math.floor(state.time / 3600)).padStart(2, '0')}:${String(Math.floor(state.time / 60) % 60).padStart(2, '0')}`)
-const supportSquad = computed(() => state.squads.find(squad => squad.id === state.incident?.supportSquadId))
+const totalRuns = computed(() => state.value.squads.reduce((total, squad) => total + squad.completed, 0))
+const formattedTime = computed(() => `${String(9 + Math.floor(state.value.time / 3600)).padStart(2, '0')}:${String(Math.floor(state.value.time / 60) % 60).padStart(2, '0')}`)
+const supportSquad = computed(() => state.value.squads.find(squad => squad.id === state.value.incident?.supportSquadId))
 const supportSeconds = computed(() => Math.max(0, Math.ceil((supportSquad.value?.travelDuration ?? 0) - (supportSquad.value?.travel ?? 0))))
-const achievements = computed(() => getAchievements(state))
+const achievements = computed(() => getAchievements(state.value))
 const completedAchievementCount = computed(() => achievements.value.filter(achievement => achievement.completed).length)
 const nextAchievement = computed(() => achievements.value.find(achievement => !achievement.completed))
 

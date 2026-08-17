@@ -10,8 +10,11 @@ import {
   drainEvents,
   equipItem,
   getAchievements,
+  getEquipmentSelection,
   getRaidOptions,
   getSquadCleanupEstimate,
+  GameCore,
+  hasPendingEquipment,
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
@@ -19,9 +22,31 @@ import {
   selectResearch,
   serializeState,
   setSquadAutoDispatch,
+  setSquadStyle,
   successfulCleanups,
   tick,
 } from './simulation.ts'
+
+test('GameCore owns the live state and exposes isolated snapshots', () => {
+  const core = new GameCore()
+  const snapshot = core.snapshot()
+  snapshot.fame = 999
+  snapshot.cats[0].name = 'mutated outside core'
+
+  const unchanged = core.snapshot()
+  assert.notEqual(unchanged.fame, 999)
+  assert.notEqual(unchanged.cats[0].name, 'mutated outside core')
+  assert.equal(core.dispatch({ type: 'set_speed', speed: 5 }), true)
+  assert.equal(core.snapshot().speed, 5)
+})
+
+test('GameCore accepts a fresh-game cat assignment command', () => {
+  const core = new GameCore()
+  assert.equal(core.dispatch({ type: 'assign_cat', catId: 'pixel', squadId: 'alpha' }), true)
+  const snapshot = core.snapshot()
+  assert.equal(snapshot.cats.find(cat => cat.id === 'pixel')?.assignedTo, 'alpha')
+  assert.deepEqual(snapshot.squads.find(squad => squad.id === 'alpha')?.members, ['pixel'])
+})
 
 test('cleanup estimate combines cats, traits and equipment into work rate', () => {
   const state = createState()
@@ -246,10 +271,9 @@ test('disabling auto-deploy in the field holds the squad after it returns', () =
   assert.equal(squad.phase, 'outbound')
 
   assert.equal(setSquadAutoDispatch(state, squad.id, false), true)
-  assert.equal(state.speed, 0)
+  assert.equal(state.speed, 1)
   squad.phase = 'returning'
   squad.travel = squad.travelDuration
-  state.speed = 1
   tick(state, 0.25)
   tick(state, 0.25)
 
@@ -416,6 +440,124 @@ test('open achievements unlock once and stay completed', () => {
   assert.equal(new Set(state.achievements.completedIds).size, state.achievements.completedIds.length)
 })
 
+test('field equipment is reserved and applied after the squad returns', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  const squad = state.squads[0]
+  const mission = state.missions[0]
+  mission.status = 'assigned'
+  mission.squadId = squad.id
+  squad.phase = 'cleanup'
+  squad.missionId = mission.id
+  squad.target = { ...mission }
+  squad.progress = 29
+  state.raidTriggered = true
+  state.speed = 5
+
+  assert.equal(equipItem(state, pixel.id, 'hands', 'toolkit'), true)
+  assert.equal(state.speed, 5)
+  assert.equal(pixel.equipment.hands, undefined)
+  assert.equal(getEquipmentSelection(pixel, 'hands'), 'toolkit')
+  assert.equal(hasPendingEquipment(pixel, 'hands'), true)
+  assert.equal(state.inventory.toolkit, 0)
+  assert.equal(getSquadCleanupEstimate(state, squad).equipmentRate, 0)
+
+  tick(state, 1)
+  assert.equal(squad.phase, 'returning')
+  tick(state, squad.travelDuration)
+
+  assert.equal(squad.phase, 'base')
+  assert.equal(pixel.equipment.hands, 'toolkit')
+  assert.equal(hasPendingEquipment(pixel), false)
+  assert.equal(state.inventory.toolkit, 0)
+  assert.ok(getSquadCleanupEstimate(state, squad).equipmentRate > 0)
+})
+
+test('equipment queued during outbound travel is shown immediately and waits for mission completion', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  const squad = state.squads[0]
+  const mission = state.missions[0]
+  mission.status = 'assigned'
+  mission.squadId = squad.id
+  squad.phase = 'outbound'
+  squad.missionId = mission.id
+  squad.target = { ...mission }
+  squad.travelDuration = 10
+  squad.travel = 0
+  state.speed = 1
+
+  assert.equal(equipItem(state, pixel.id, 'hands', 'toolkit'), true)
+  assert.equal(getEquipmentSelection(pixel, 'hands'), 'toolkit')
+  assert.equal(pixel.equipment.hands, undefined)
+  assert.equal(squad.phase, 'outbound')
+
+  tick(state, 10)
+  assert.equal(squad.phase, 'cleanup')
+  tick(state, 30)
+  tick(state, squad.travelDuration)
+  assert.equal(squad.phase, 'base')
+  assert.equal(pixel.equipment.hands, 'toolkit')
+  assert.equal(hasPendingEquipment(pixel), false)
+})
+
+test('roster and equipment changes never alter the selected game speed', () => {
+  const state = createState()
+  state.speed = 10
+
+  assert.equal(assignCat(state, 'pixel', 'alpha'), true)
+  assert.equal(setSquadStyle(state, 'alpha', 'risky'), true)
+  assert.equal(setSquadAutoDispatch(state, 'alpha', false), true)
+  assert.equal(equipItem(state, 'pixel', 'hands', 'toolkit'), true)
+
+  assert.equal(state.speed, 10)
+})
+
+test('replacing and canceling deferred equipment releases its reservation', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  const squad = state.squads[0]
+  squad.phase = 'field'
+  squad.routeFrom = { x: 30, y: 30 }
+
+  assert.equal(equipItem(state, pixel.id, 'belt', 'headset'), true)
+  assert.equal(squad.phase, 'returning')
+  assert.equal(state.inventory.headset, 0)
+  const restoredQueuedState = deserializeState(serializeState(state))
+  const restoredPixel = restoredQueuedState.cats.find(cat => cat.id === pixel.id)!
+  assert.equal(getEquipmentSelection(restoredPixel, 'belt'), 'headset')
+  assert.equal(restoredQueuedState.inventory.headset, 0)
+  assert.equal(equipItem(state, pixel.id, 'belt', 'medkit'), true)
+  assert.equal(state.inventory.headset, 1)
+  assert.equal(state.inventory.medkit, 0)
+  assert.equal(getEquipmentSelection(pixel, 'belt'), 'medkit')
+
+  assert.equal(equipItem(state, pixel.id, 'belt'), true)
+  assert.equal(state.inventory.medkit, 1)
+  assert.equal(getEquipmentSelection(pixel, 'belt'), undefined)
+  assert.equal(hasPendingEquipment(pixel), false)
+})
+
+test('an HMR-preserved pre-queue state can use and save deferred equipment', () => {
+  const state = createState()
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  delete (pixel as unknown as Record<string, unknown>).pendingEquipment
+  assert.equal(hasPendingEquipment(pixel), false)
+
+  assignCat(state, pixel.id, 'alpha')
+  state.squads[0].phase = 'field'
+  assert.equal(equipItem(state, pixel.id, 'hands', 'toolkit'), true)
+  assert.equal(getEquipmentSelection(pixel, 'hands'), 'toolkit')
+
+  delete (state.cats[0] as unknown as Record<string, unknown>).pendingEquipment
+  const restored = deserializeState(serializeState(state))
+  assert.equal(getEquipmentSelection(restored.cats.find(cat => cat.id === pixel.id)!, 'hands'), 'toolkit')
+  assert.equal(restored.cats.every(cat => Boolean(cat.pendingEquipment)), true)
+})
+
 test('a versioned save restores the complete simulation state', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
@@ -543,6 +685,25 @@ test('version six saves migrate field route state', () => {
   assert.deepEqual(restored.squads[0].routeFrom, { x: 23, y: 25 })
   assert.deepEqual(restored.squads[1].routeFrom, { x: 46, y: 51 })
   assert.equal(restored.squads[0].restAfterReturn, false)
+})
+
+test('version eight saves migrate an empty deferred equipment queue', () => {
+  const envelope = JSON.parse(serializeState(createState()))
+  envelope.version = 8
+  for (const cat of envelope.state.cats) delete cat.pendingEquipment
+
+  const restored = deserializeState(JSON.stringify(envelope))
+
+  assert.equal(restored.cats.every(cat => !hasPendingEquipment(cat)), true)
+})
+
+test('an incomplete current-version save is normalized like an open HMR tab', () => {
+  const envelope = JSON.parse(serializeState(createState()))
+  delete envelope.state.cats[0].pendingEquipment
+
+  const restored = deserializeState(JSON.stringify(envelope))
+
+  assert.deepEqual(restored.cats[0].pendingEquipment, {})
 })
 
 test('domain log events render in either language with localized parameters', () => {

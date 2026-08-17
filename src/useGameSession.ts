@@ -1,9 +1,9 @@
-import { nextTick, onMounted, onUnmounted, reactive, ref, toRaw, watch } from 'vue'
+import { nextTick, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
 import {
   assignCat as assignCatCommand,
   continueAfterFinale as continueAfterFinaleCommand,
   createState,
-  deserializeState,
+  deserializeCurrentSave,
   dispatchSquadToMission as dispatchSquadToMissionCommand,
   drainEvents,
   equipItem as equipItemCommand,
@@ -24,14 +24,16 @@ import {
   type NinthLifeDecision,
   type ResearchId,
   type Speed,
+  GameCore,
+  GAME_VERSION,
   type State,
   type SquadStyle,
 } from './core/simulation'
 import { createSoundSystem, normalizeSoundPreferences, type SoundPreferences } from './audio'
-import { replaceObjectState } from './core/replaceState'
 import { translate, type Locale } from './i18n'
 
 const AUTOSAVE_KEY = 'nine-lives-corp-autosave-v1'
+const APP_VERSION_KEY = 'nine-lives-corp-app-version'
 const HINTS_KEY = 'nine-lives-corp-hints-v1'
 const LOCALE_KEY = 'nine-lives-corp-locale-v1'
 const SOUND_KEY = 'nine-lives-corp-sound-v1'
@@ -78,18 +80,31 @@ export function useGameSession() {
 
   function loadInitialState() {
     try {
+      const knownVersion = window.localStorage.getItem(APP_VERSION_KEY)
+      if (knownVersion !== GAME_VERSION) {
+        window.localStorage.removeItem(AUTOSAVE_KEY)
+        window.localStorage.setItem(APP_VERSION_KEY, GAME_VERSION)
+        initialSaveError = knownVersion ? 'save.error.legacy_discarded' : ''
+        return createState()
+      }
       const payload = window.localStorage.getItem(AUTOSAVE_KEY)
       if (!payload) return createState()
-      const restored = deserializeState(payload)
+      const restored = deserializeCurrentSave(payload)
       restoredAutosave = true
       return restored
     } catch (error) {
-      initialSaveError = errorMessage(error, loadLocale(), 'Не удалось прочитать автосохранение.')
+      if (error instanceof SaveError && error.key === 'save.error.unsupported_version') {
+        window.localStorage.removeItem(AUTOSAVE_KEY)
+        initialSaveError = 'save.error.legacy_discarded'
+      } else {
+        initialSaveError = errorMessage(error, loadLocale(), 'Не удалось прочитать автосохранение.')
+      }
       return createState()
     }
   }
 
-  const state = reactive(loadInitialState()) as State
+  const core = new GameCore(loadInitialState())
+  const state = shallowRef<State>(core.snapshot())
   const activeView = ref<'map' | 'base'>('map')
   const hintsVisible = ref(loadHintsPreference())
   const locale = ref<Locale>(loadLocale())
@@ -104,11 +119,19 @@ export function useGameSession() {
     key: initialSaveError || (restoredAutosave ? 'save.restored' : 'save.ready'),
   })
 
+  function publishSnapshot() {
+    // Firefox keeps the native select popup outside the page DOM. Replacing
+    // the focused select with every simulation snapshot destroys that popup
+    // before it can dispatch `change`.
+    if (document.activeElement instanceof HTMLSelectElement) return
+    state.value = core.snapshot()
+  }
+
   function persistAutosave() {
     if (autosaveTimer) clearTimeout(autosaveTimer)
     autosaveTimer = undefined
     try {
-      window.localStorage.setItem(AUTOSAVE_KEY, serializeState(toRaw(state) as State))
+      window.localStorage.setItem(AUTOSAVE_KEY, core.serialize())
       lastAutosaveAt = Date.now()
       saveStatus.value = {
         key: 'save.autosaved',
@@ -127,7 +150,7 @@ export function useGameSession() {
   }
 
   function showAchievement(achievementId: string) {
-    const achievement = getAchievements(state).find(candidate => candidate.id === achievementId)
+    const achievement = getAchievements(state.value).find(candidate => candidate.id === achievementId)
     if (!achievement) return
     achievementToast.value = achievement.title
     soundSystem.play('achievement')
@@ -149,14 +172,18 @@ export function useGameSession() {
 
   function runCommand<T>(command: () => T) {
     const result = command()
-    handleEvents(drainEvents(state))
+    handleEvents(core.drainEvents())
+    publishSnapshot()
+    scheduleAutosave()
     return result
   }
 
   function setSpeed(speed: Speed) {
-    const blockingIncident = state.incident && state.incident.stage !== 'support_en_route'
+    const blockingIncident = state.value.incident && state.value.incident.stage !== 'support_en_route'
     if (blockingIncident && speed !== 0) return false
-    state.speed = speed
+    core.dispatch({ type: 'set_speed', speed })
+    publishSnapshot()
+    scheduleAutosave()
     return true
   }
 
@@ -186,7 +213,7 @@ export function useGameSession() {
 
   function exportSave() {
     persistAutosave()
-    const blob = new Blob([serializeState(toRaw(state) as State)], { type: 'application/json' })
+    const blob = new Blob([core.serialize()], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     const stamp = new Date().toISOString().slice(0, 19).replaceAll(':', '-')
@@ -204,9 +231,10 @@ export function useGameSession() {
     const file = input.files?.[0]
     if (!file) return
     try {
-      const restored = deserializeState(await file.text())
-      drainEvents(state)
-      replaceObjectState(state, restored)
+      const restored = deserializeCurrentSave(await file.text())
+      core.replaceState(restored)
+      core.drainEvents()
+      publishSnapshot()
       await nextTick()
       persistAutosave()
       saveStatus.value = { key: 'save.imported', params: { file: file.name } }
@@ -218,7 +246,8 @@ export function useGameSession() {
   }
 
   function requestNewGame() {
-    state.speed = 0
+    core.dispatch({ type: 'set_speed', speed: 0 })
+    publishSnapshot()
     newGameConfirmOpen.value = true
   }
 
@@ -226,8 +255,9 @@ export function useGameSession() {
     if (autosaveTimer) clearTimeout(autosaveTimer)
     autosaveTimer = undefined
     achievementToast.value = undefined
-    drainEvents(state)
-    replaceObjectState(state, createState())
+    core.replaceState(createState())
+    core.drainEvents()
+    publishSnapshot()
     activeView.value = 'map'
     newGameConfirmOpen.value = false
     await nextTick()
@@ -250,7 +280,6 @@ export function useGameSession() {
     void unlockAudio().then(() => soundSystem.play('support'))
   }
 
-  watch(state, scheduleAutosave, { deep: true })
   watch(hintsVisible, visible => {
     try {
       window.localStorage.setItem(HINTS_KEY, visible ? 'visible' : 'hidden')
@@ -276,7 +305,12 @@ export function useGameSession() {
   }, { deep: true })
 
   onMounted(() => {
-    timer = window.setInterval(() => runCommand(() => tick(state, 0.25)), 250)
+    timer = window.setInterval(() => {
+      core.tick(0.25)
+      handleEvents(core.drainEvents())
+      publishSnapshot()
+      scheduleAutosave()
+    }, 250)
     window.addEventListener('keydown', handleSpeedShortcut)
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('click', unlockAudio, { capture: true })
@@ -307,17 +341,17 @@ export function useGameSession() {
     audioUnavailable,
     saveStatus,
     setSpeed,
-    assignCat: (catId: string, squadId: string) => runCommand(() => assignCatCommand(state, catId, squadId)),
-    equipItem: (catId: string, slot: EquipmentSlot, itemId?: ItemId) => runCommand(() => equipItemCommand(state, catId, slot, itemId)),
-    setSquadStyle: (squadId: string, style: SquadStyle) => runCommand(() => setSquadStyleCommand(state, squadId, style)),
-    setSquadAutoDispatch: (squadId: string, enabled: boolean) => runCommand(() => setSquadAutoDispatchCommand(state, squadId, enabled)),
-    dispatchSquadToMission: (squadId: string, missionId: string) => runCommand(() => dispatchSquadToMissionCommand(state, squadId, missionId)),
-    returnSquadToBase: (squadId: string) => runCommand(() => returnSquadToBaseCommand(state, squadId)),
-    selectResearch: (researchId?: ResearchId) => runCommand(() => selectResearchCommand(state, researchId)),
-    resolveRaidDecision: (action: 'escape' | 'attack' | 'support') => runCommand(() => resolveRaidDecisionCommand(state, action)),
-    resolveRaidFollowup: (action: 'retreat' | 'continue') => runCommand(() => resolveRaidFollowupCommand(state, action)),
-    resolveNinthLife: (decision: NinthLifeDecision) => runCommand(() => resolveNinthLifeCommand(state, decision)),
-    continueAfterFinale: () => runCommand(() => continueAfterFinaleCommand(state)),
+    assignCat: (catId: string, squadId: string) => runCommand(() => core.dispatch({ type: 'assign_cat', catId, squadId })),
+    equipItem: (catId: string, slot: EquipmentSlot, itemId?: ItemId) => runCommand(() => core.dispatch({ type: 'equip_item', catId, slot, itemId })),
+    setSquadStyle: (squadId: string, style: SquadStyle) => runCommand(() => core.dispatch({ type: 'set_squad_style', squadId, style })),
+    setSquadAutoDispatch: (squadId: string, enabled: boolean) => runCommand(() => core.dispatch({ type: 'set_auto_dispatch', squadId, enabled })),
+    dispatchSquadToMission: (squadId: string, missionId: string) => runCommand(() => core.dispatch({ type: 'dispatch_squad', squadId, missionId })),
+    returnSquadToBase: (squadId: string) => runCommand(() => core.dispatch({ type: 'return_squad', squadId })),
+    selectResearch: (researchId?: ResearchId) => runCommand(() => core.dispatch({ type: 'select_research', researchId })),
+    resolveRaidDecision: (action: 'escape' | 'attack' | 'support') => runCommand(() => core.dispatch({ type: 'resolve_raid', action })),
+    resolveRaidFollowup: (action: 'retreat' | 'continue') => runCommand(() => core.dispatch({ type: 'resolve_raid_followup', action })),
+    resolveNinthLife: (decision: NinthLifeDecision) => runCommand(() => core.dispatch({ type: 'resolve_ninth_life', decision })),
+    continueAfterFinale: () => runCommand(() => core.dispatch({ type: 'continue_after_finale' })),
     exportSave,
     importSave,
     requestNewGame,

@@ -7,6 +7,7 @@ import {
   assignCat,
   createState,
   drainEvents,
+  equipItem,
   getAchievements,
   resolveNinthLife,
   resolveRaidDecision,
@@ -115,6 +116,36 @@ test('completed mission disappears while its squad route continues from the squa
   mission.status = 'assigned'
   const legacyHtml = await render(OperationsMap, { state, locale: 'ru' })
   assert.doesNotMatch(legacyHtml, /cleanup-pin/)
+})
+
+test('queued equipment remains visible in its orange slot without extra status text', async () => {
+  const BaseOperations = await loadComponent('/src/components/BaseOperations.vue')
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  assert.equal(equipItem(state, 'pixel', 'hands', 'toolkit'), true)
+  state.squads[0].phase = 'cleanup'
+  state.speed = 10
+  assert.equal(equipItem(state, 'pixel', 'belt', 'medkit'), true)
+
+  const achievements = getAchievements(state)
+  const html = await render(BaseOperations, {
+    state,
+    locale: 'ru',
+    panel: 'teams',
+    achievements,
+    completedAchievementCount: achievements.filter(item => item.completed).length,
+    nextAchievement: achievements.find(item => !item.completed),
+    hintsVisible: true,
+    totalRuns: 0,
+    saveStatus: { key: 'save.ready' },
+  })
+
+  assert.equal(html.match(/<label class="pending">/g)?.length, 1)
+  assert.match(html, /<label class="pending"><span>Пояс<\/span><select>/)
+  assert.match(html, /<option value="medkit" selected>Аптечка/)
+  assert.match(html, /<label class=""><span>Руки<\/span><select>.*?<option value="toolkit" selected>Инструментальный набор/s)
+  assert.doesNotMatch(html, /Оснащение запланировано|после возвращения/)
+  assert.equal(state.speed, 10)
 })
 
 test('a manual field squad exposes its waiting state and return command', async () => {
