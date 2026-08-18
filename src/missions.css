@@ -68,6 +68,9 @@ button.cleanup-pin > small { top: 59px; }
 button.cleanup-pin:hover > span,
 button.cleanup-pin.selected > span { border-style: solid; box-shadow: 0 0 24px #e6a34ccc; }
 button.cleanup-pin:focus-visible > span { outline: 2px solid #f4d195; outline-offset: 4px; }
+button.cleanup-pin.enhanced-alert { color: #ff8b5c; }
+button.cleanup-pin.enhanced-alert > span { border-style: solid; border-width: 2px; border-color: #ff8b5c; box-shadow: 0 0 0 7px #ff754522, 0 0 26px #ff7545aa; animation-duration: .7s; }
+button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 
 .cleanup-pin.assigned small { color: #b5e7bd; }
 

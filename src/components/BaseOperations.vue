@@ -14,7 +14,7 @@ import {
   type ResearchId,
   type Squad,
   type State,
-} from '../core/simulation'
+} from '@nine-lives/game-core'
 import { translate, type Locale } from '../i18n'
 import CatAssignmentSelect from './CatAssignmentSelect.vue'
 import EquipmentSlotSelect from './EquipmentSlotSelect.vue'
@@ -42,13 +42,13 @@ const props = defineProps<{
   hintsVisible: boolean
   totalRuns: number
   saveStatus: SaveStatus
+  assignCat: (catId: string, squadId: string) => Promise<boolean>
+  equipItem: (catId: string, slot: EquipmentSlot, itemId?: ItemId) => Promise<boolean>
+  setSquadStyle: (squadId: string, style: Squad['style']) => Promise<boolean>
 }>()
 
 const emit = defineEmits<{
   panel: [panel: BasePanel]
-  assign: [catId: string, squadId: string]
-  equip: [catId: string, slot: EquipmentSlot, itemId?: ItemId]
-  style: [squadId: string, style: Squad['style']]
   autoDispatch: [squadId: string, enabled: boolean]
   research: [researchId?: ResearchId]
   hints: [visible: boolean]
@@ -71,18 +71,6 @@ const tr = (key: string, params?: Record<string, string | number>) => translate(
 
 function handleAutoDispatch(squadId: string, event: Event) {
   emit('autoDispatch', squadId, (event.target as HTMLInputElement).checked)
-}
-
-function forwardAssignment(catId: string, squadId: string) {
-  emit('assign', catId, squadId)
-}
-
-function forwardEquipment(catId: string, slot: EquipmentSlot, itemId?: ItemId) {
-  emit('equip', catId, slot, itemId)
-}
-
-function forwardSquadStyle(squadId: string, style: Squad['style']) {
-  emit('style', squadId, style)
 }
 
 function researchPercent(researchId: ResearchId) {
@@ -142,7 +130,7 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
       <p class="roster-hint">{{ tr('equipment.edit_hint') }}</p>
       <div v-for="squad in state.squads" :key="squad.id" class="squad-status squad-config">
         <div><b>{{ tr(squad.name) }}</b><span>{{ tr('squad.cleanup_estimate', { cats: squad.members.length, seconds: Math.ceil(cleanupEstimate(squad).seconds) }) }}</span></div>
-        <SquadStyleSelect :squad="squad" :locale="locale" @style="forwardSquadStyle" />
+        <SquadStyleSelect :squad="squad" :locale="locale" :set-style="setSquadStyle" />
         <label class="auto-dispatch-toggle">
           <input type="checkbox" :checked="squad.autoDispatch" @change="handleAutoDispatch(squad.id, $event)">
           <span><b>{{ tr('dispatch.auto.title') }}</b><small>{{ tr(squad.autoDispatch ? 'dispatch.auto.enabled' : squad.phase === 'base' ? 'dispatch.auto.manual' : squad.phase === 'field' ? 'dispatch.auto.field_manual' : 'dispatch.auto.after_return') }}</small></span>
@@ -159,11 +147,11 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
         </details>
       </div>
       <div v-for="cat in state.cats" :key="cat.id" class="cat-card" :class="{ injured: cat.injuredRemaining > 0, sleeping: cat.sleeping }">
-        <div class="cat-header"><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else-if="cat.sleeping" class="sleeping-label">{{ tr('cat.sleeping', { energy: Math.round(cat.energy) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span><CatAssignmentSelect :state="state" :cat="cat" :locale="locale" @assign="forwardAssignment" /></div>
+        <div class="cat-header"><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else-if="cat.sleeping" class="sleeping-label">{{ tr('cat.sleeping', { energy: Math.round(cat.energy) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span><CatAssignmentSelect :state="state" :cat="cat" :locale="locale" :assign="assignCat" /></div>
         <details>
           <summary>{{ tr('Досье и экипировка') }}</summary>
           <div class="cat-trait"><span>{{ catTraitText(cat) }}</span><small>{{ tr('cat.stats', { combat: cat.combat, tech: cat.tech, perception: cat.perception, scouting: cat.scouting }) }}</small></div>
-          <div class="equipment-grid"><EquipmentSlotSelect v-for="slot in EQUIPMENT_SLOTS" :key="slot.id" :state="state" :cat="cat" :slot="slot.id" :locale="locale" @equip="forwardEquipment" /></div>
+          <div class="equipment-grid"><EquipmentSlotSelect v-for="slot in EQUIPMENT_SLOTS" :key="slot.id" :state="state" :cat="cat" :slot="slot.id" :locale="locale" :equip="equipItem" /></div>
         </details>
       </div>
       <section class="warehouse"><h3>{{ tr('СКЛАД') }}</h3><div v-for="item in ITEM_DEFINITIONS" :key="item.id" :class="{ empty: state.inventory[item.id] === 0 }"><svg class="item-icon" viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-${item.id}`" /></svg><span><b>{{ tr(item.name) }}</b><small>{{ tr(item.effect) }}</small></span><strong>×{{ state.inventory[item.id] }}</strong></div></section>

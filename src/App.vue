@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { getAchievements } from './core/simulation'
+import { getAchievements } from '@nine-lives/game-core'
 import { translate } from './i18n'
 import { useGameSession } from './useGameSession'
 import OpsTopBar from './components/OpsTopBar.vue'
@@ -13,7 +13,7 @@ const {
   activeView,
   hintsVisible,
   locale,
-  achievementToast,
+  eventToast,
   newGameConfirmOpen,
   soundPreferences,
   soundSettingsOpen,
@@ -93,7 +93,7 @@ async function resetProgress() {
       @speed="setSpeed"
     />
 
-    <div v-if="achievementToast" class="achievement-toast" role="status" aria-live="polite"><span>✓</span><div><small>{{ tr('ОПЕРАТИВНОЕ ДОСТИЖЕНИЕ') }}</small><b>{{ tr(achievementToast) }}</b></div></div>
+    <div v-if="eventToast" class="achievement-toast" :class="`toast-${eventToast.tone}`" role="status" aria-live="assertive"><span>{{ eventToast.tone === 'achievement' ? '✓' : '!' }}</span><div><small>{{ tr(eventToast.label) }}</small><b>{{ tr(eventToast.title) }}</b></div></div>
 
     <section v-if="hintsVisible && nextAchievement" class="guidance-card" :aria-label="tr('Следующая цель')">
       <header><span>{{ tr('СЛЕДУЮЩИЙ ШАГ') }}</span><b>{{ completedAchievementCount }} / {{ achievements.length }}</b></header>
@@ -116,10 +116,10 @@ async function resetProgress() {
       :hints-visible="hintsVisible"
       :total-runs="totalRuns"
       :save-status="saveStatus"
+      :assign-cat="assignCat"
+      :equip-item="equipItem"
+      :set-squad-style="setSquadStyle"
       @panel="basePanel = $event"
-      @assign="assignCat"
-      @equip="equipItem"
-      @style="setSquadStyle"
       @auto-dispatch="setSquadAutoDispatch"
       @research="selectResearch"
       @hints="hintsVisible = $event"

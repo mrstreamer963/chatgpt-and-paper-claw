@@ -13,7 +13,7 @@ import {
   resolveRaidDecision,
   resolveRaidFollowup,
   tick,
-} from './core/simulation.ts'
+} from '@nine-lives/game-core'
 
 let vite: ViteDevServer
 
@@ -32,6 +32,8 @@ async function loadComponent(path: string) {
 async function render(component: Component, props: Record<string, unknown>) {
   return renderToString(createSSRApp({ render: () => h(component, props) }))
 }
+
+const acceptedAction = async () => true
 
 test('UI smoke: a prepared operation renders every blocking stage through the final report', async () => {
   const BaseOperations = await loadComponent('/src/components/BaseOperations.vue')
@@ -52,6 +54,9 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
     hintsVisible: true,
     totalRuns: 0,
     saveStatus: { key: 'save.ready' },
+    assignCat: acceptedAction,
+    equipItem: acceptedAction,
+    setSquadStyle: acceptedAction,
   })
   assert.match(baseHtml, /уборка за/)
   assert.match(baseHtml, /Расчёт производительности/)
@@ -138,12 +143,14 @@ test('queued equipment remains visible in its orange slot without extra status t
     hintsVisible: true,
     totalRuns: 0,
     saveStatus: { key: 'save.ready' },
+    assignCat: acceptedAction,
+    equipItem: acceptedAction,
+    setSquadStyle: acceptedAction,
   })
 
   assert.equal(html.match(/<label class="pending">/g)?.length, 1)
-  assert.match(html, /<label class="pending"><span>Пояс<\/span><select>/)
-  assert.match(html, /<option value="medkit" selected>Аптечка/)
-  assert.match(html, /<label class=""><span>Руки<\/span><select>.*?<option value="toolkit" selected>Инструментальный набор/s)
+  assert.match(html, /<label class="pending"><span>Пояс<\/span><select value="medkit">.*?<option value="medkit">Аптечка/s)
+  assert.match(html, /<label class=""><span>Руки<\/span><select value="toolkit">.*?<option value="toolkit">Инструментальный набор/s)
   assert.doesNotMatch(html, /Оснащение запланировано|после возвращения/)
   assert.equal(state.speed, 10)
 })

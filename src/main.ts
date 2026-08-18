@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import App from './App.vue'
+import { createGameSession, gameSessionKey } from './useGameSession'
 import './style.css'
 import './missions.css'
 import './layout-fix.css'
@@ -11,4 +12,15 @@ if (import.meta.hot) {
   import.meta.hot.accept(() => window.location.reload())
 }
 
-createApp(App).mount('#app')
+async function bootstrap() {
+  const session = await createGameSession()
+  const app = createApp(App)
+  app.provide(gameSessionKey, session)
+  app.mount('#app')
+  window.addEventListener('beforeunload', session.dispose, { once: true })
+}
+
+void bootstrap().catch(error => {
+  const root = document.querySelector('#app')
+  if (root) root.textContent = error instanceof Error ? error.message : 'Не удалось запустить игровой мир.'
+})

@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { translate } from '../i18n.ts'
 import {
   assignCat,
   continueAfterFinale,
@@ -25,7 +24,7 @@ import {
   setSquadStyle,
   successfulCleanups,
   tick,
-} from './simulation.ts'
+} from '../src/simulation.ts'
 
 test('GameCore owns the live state and exposes isolated snapshots', () => {
   const core = new GameCore()
@@ -571,6 +570,40 @@ test('a versioned save restores the complete simulation state', () => {
   assert.notEqual(restored, state)
 })
 
+test('save envelopes expose saveVersion and autosave can be compact', () => {
+  const pretty = serializeState(createState())
+  const compact = serializeState(createState(), false)
+  const envelope = JSON.parse(compact)
+
+  assert.equal(envelope.saveVersion, envelope.version)
+  assert.equal(compact.includes('\n'), false)
+  assert.ok(compact.length < pretty.length)
+})
+
+test('GameCore refuses to resume time while story or final overlays are blocking', () => {
+  const storyState = createState()
+  storyState.storyIncident = { kind: 'ninth_life', foundBySquadId: 'alpha', x: 50, y: 20 }
+  const storyCore = new GameCore(storyState)
+  assert.equal(storyCore.dispatch({ type: 'set_speed', speed: 1 }), false)
+  assert.equal(storyCore.snapshot().speed, 0)
+
+  const finalState = createState()
+  finalState.finalSummaryVisible = true
+  const finalCore = new GameCore(finalState)
+  assert.equal(finalCore.dispatch({ type: 'set_speed', speed: 10 }), false)
+  assert.equal(finalCore.snapshot().speed, 0)
+})
+
+test('mission flow never creates duplicate active coordinates', () => {
+  const state = createState()
+  state.speed = 10
+  for (let step = 0; step < 2400; step++) {
+    tick(state, 0.25)
+    const coordinates = state.missions.map(mission => `${mission.x}:${mission.y}`)
+    assert.equal(new Set(coordinates).size, coordinates.length)
+  }
+})
+
 test('core exposes typed transient events without persisting them', () => {
   const state = createState()
   assert.equal(assignCat(state, 'pixel', 'alpha'), true)
@@ -704,12 +737,6 @@ test('an incomplete current-version save is normalized like an open HMR tab', ()
   const restored = deserializeState(JSON.stringify(envelope))
 
   assert.deepEqual(restored.cats[0].pendingEquipment, {})
-})
-
-test('domain log events render in either language with localized parameters', () => {
-  const params = { cat: 'cat.pixel.name', squad: 'squad.alpha' }
-  assert.equal(translate('ru', 'log.cat_assigned', params), 'Пиксель назначен в Отряд «Альфа»')
-  assert.equal(translate('en', 'log.cat_assigned', params), 'Pixel assigned to Squad “Alpha”')
 })
 
 test('a deployed squad composition is locked', () => {

@@ -162,6 +162,7 @@ export class SaveError extends Error {
 export type SaveEnvelope = {
   format: typeof SAVE_FORMAT
   version: typeof SAVE_VERSION
+  saveVersion: typeof SAVE_VERSION
   gameVersion: typeof GAME_VERSION
   savedAt: string
   state: State
@@ -540,18 +541,19 @@ function isValidState(value: unknown): value is State {
   return true
 }
 
-export function serializeState(state: State) {
+export function serializeState(state: State, pretty = true) {
   // Vite HMR can preserve a pre-migration in-memory state while replacing this module.
   // Normalize it before autosaving so an already open tab does not write an invalid v9 save.
   state.cats.forEach(cat => { cat.pendingEquipment ??= {} })
   const envelope: SaveEnvelope = {
     format: SAVE_FORMAT,
     version: SAVE_VERSION,
+    saveVersion: SAVE_VERSION,
     gameVersion: GAME_VERSION,
     savedAt: new Date().toISOString(),
     state,
   }
-  return JSON.stringify(envelope, null, 2)
+  return JSON.stringify(envelope, null, pretty ? 2 : undefined)
 }
 
 export function deserializeState(payload: string): State {
@@ -716,7 +718,7 @@ export function canEditEquipment(state: State, catId: string) {
 }
 
 function hasPendingSlot(cat: Cat, slot: EquipmentSlot) {
-  return Boolean(cat.pendingEquipment && Object.prototype.hasOwnProperty.call(cat.pendingEquipment, slot))
+  return Boolean(cat.pendingEquipment && slot in cat.pendingEquipment)
 }
 
 export function getEquipmentSelection(cat: Cat, slot: EquipmentSlot) {
@@ -1045,7 +1047,18 @@ function spawnMission(state: State): Mission {
     if (clear) return { id: `cleanup-${serial}`, title: label, x, y, priority, status: 'available' }
   }
   const serial = ++state.missionSerial
-  return { id: `cleanup-${serial}`, title: label, ...generation.fallback, priority, status: 'available' }
+  const fallbackCandidates: MapPoint[] = [{ ...generation.fallback }]
+  for (let y = generation.y.minimum; y <= generation.y.minimum + generation.y.range; y += generation.minimumSeparation) {
+    for (let x = generation.x.minimum; x <= generation.x.minimum + generation.x.range; x += generation.minimumSeparation) {
+      fallbackCandidates.push({ x, y })
+    }
+  }
+  const fallback = fallbackCandidates.reduce((best, candidate) => {
+    const separation = Math.min(...state.missions.map(mission => Math.hypot(mission.x - candidate.x, mission.y - candidate.y)), Number.POSITIVE_INFINITY)
+    const bestSeparation = Math.min(...state.missions.map(mission => Math.hypot(mission.x - best.x, mission.y - best.y)), Number.POSITIVE_INFINITY)
+    return separation > bestSeparation ? candidate : best
+  })
+  return { id: `cleanup-${serial}`, title: label, ...fallback, priority, status: 'available' }
 }
 
 function desiredMissionCount(time: number) {
@@ -1565,7 +1578,11 @@ export class GameCore {
   dispatch(command: GameCommand): boolean {
     switch (command.type) {
       case 'set_speed':
-        if (this.world.incident && this.world.incident.stage !== 'support_en_route' && command.speed !== 0) return false
+        if (command.speed !== 0 && (
+          this.world.storyIncident
+          || this.world.finalSummaryVisible
+          || (this.world.incident && this.world.incident.stage !== 'support_en_route')
+        )) return false
         this.world.speed = command.speed
         return true
       case 'assign_cat': return assignCat(this.world, command.catId, command.squadId)
@@ -1598,7 +1615,7 @@ export class GameCore {
     this.world = structuredClone(nextState)
   }
 
-  serialize() {
-    return serializeState(this.world)
+  serialize(pretty = true) {
+    return serializeState(this.world, pretty)
   }
 }

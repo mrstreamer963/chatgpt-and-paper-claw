@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { GAME_RULES, type Speed, type State } from '../core/simulation'
+import { GAME_RULES, type Speed, type State } from '@nine-lives/game-core'
 import { translate, type Locale } from '../i18n'
 import type { SoundPreferences } from '../audio'
 
