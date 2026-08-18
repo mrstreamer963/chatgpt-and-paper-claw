@@ -36,8 +36,21 @@ function isActiveAssignedMission(mission: Mission) {
   return props.state.squads.find(squad => squad.id === mission.squadId)?.phase !== 'returning'
 }
 
+function squadIsResting(squad: Squad) {
+  return squad.members
+    .map(id => props.state.cats.find(cat => cat.id === id))
+    .filter(Boolean)
+    .some(cat => cat!.sleeping
+      ? cat!.energy < GAME_RULES.wakeForOrderEnergy
+      : cat!.energy <= GAME_RULES.sleepAtEnergy)
+}
+
 function squadLabel(squad: Squad) {
-  if (squad.phase === 'base') return tr(squad.members.length ? squad.autoDispatch ? 'status.base_ready' : 'status.awaiting_order' : 'status.no_squad')
+  if (squad.phase === 'base') {
+    if (!squad.members.length) return tr('status.no_squad')
+    if (squadIsResting(squad)) return tr('status.resting')
+    return tr(squad.autoDispatch ? 'status.base_ready' : 'status.awaiting_order')
+  }
   if (squad.phase === 'field') return tr('status.field')
   if (squad.phase === 'outbound') return tr('status.outbound', { mission: squad.target?.title ?? '', seconds: Math.ceil(squad.travelDuration - squad.travel) })
   if (squad.phase === 'moving') return tr('status.moving', { seconds: Math.max(0, Math.ceil(squad.travelDuration - squad.travel)) })
@@ -169,7 +182,7 @@ function formatLog(entry: LogEntry) {
         <h2>{{ tr('dispatch.command.squads') }}</h2>
         <button v-for="squad in state.squads" :key="`command-${squad.id}`" type="button" :class="{ selected: selectedSquadId === squad.id, available: squadIsAvailable(squad) }" @click="selectSquad(squad)">
           <span><b>{{ tr(squad.name) }} <em v-if="squadIsAvailable(squad)">{{ tr('dispatch.command.available') }}</em></b><small>{{ squadLabel(squad) }}</small></span>
-          <span><strong>{{ tr('dispatch.command.energy', { energy: squadEnergy(squad) }) }}</strong><small v-if="squadCommandReason(squad)">{{ tr(squadCommandReason(squad)!) }}</small></span>
+          <span><strong class="squad-energy" :class="{ tired: squadCommandReason(squad) === 'dispatch.reason.tired' }">{{ tr('dispatch.command.energy', { energy: squadEnergy(squad) }) }}</strong><small v-if="squadCommandReason(squad) && squadCommandReason(squad) !== 'dispatch.reason.tired'">{{ tr(squadCommandReason(squad)!) }}</small></span>
         </button>
       </section>
       <h2>{{ tr('ОПЕРАТИВНАЯ ЛЕНТА') }}</h2>

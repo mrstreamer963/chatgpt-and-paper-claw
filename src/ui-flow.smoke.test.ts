@@ -206,3 +206,18 @@ test('an arbitrary march renders its route and destination status', async () => 
   assert.match(html, /<line[^>]*x1="45"[^>]*y1="40"[^>]*x2="70"[^>]*y2="60"/)
   assert.match(html, /Следует к точке · 5 с/)
 })
+
+test('a tired squad highlights energy instead of repeating a text reason', async () => {
+  const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
+  const state = createState()
+  const squad = state.squads[0]
+  squad.autoDispatch = false
+  squad.members = ['pixel']
+  state.cats.find(cat => cat.id === 'pixel')!.energy = 13
+
+  const html = await render(OperationsMap, { state, locale: 'ru' })
+  assert.match(html, /class="[^"]*tired[^"]*squad-energy[^"]*">бодрость 13%/)
+  assert.match(html, /На базе \/ отдыхает/)
+  assert.doesNotMatch(html, /На базе \/ ожидает назначения/)
+  assert.doesNotMatch(html, /Не все коты готовы принять приказ/)
+})
