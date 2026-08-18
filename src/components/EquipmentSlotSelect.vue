@@ -36,8 +36,8 @@ watch(selectedItemId, value => {
   submittedItemId = value ?? ''
   if (!interacting.value) draftItemId.value = value ?? ''
 })
-watch(() => props.state.inventory, value => {
-  if (!interacting.value) visibleInventory.value = { ...value }
+watch(() => items.map(item => props.state.inventory[item.id]), () => {
+  if (!interacting.value) visibleInventory.value = { ...props.state.inventory }
 })
 
 function beginInteraction() {

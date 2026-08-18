@@ -50,6 +50,37 @@ test('field equipment order is reserved and applied only after the squad returns
   await expect(medkitStock).toHaveText('×0')
 })
 
+test('two field cats can queue equipment independently and see current reservations', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'База', exact: true }).click()
+
+  const pixelCard = page.locator('.cat-card').filter({ hasText: 'Пиксель' })
+  const marloweCard = page.locator('.cat-card').filter({ hasText: 'Марлоу' })
+  await pixelCard.getByLabel('Назначение в отряд').selectOption('alpha')
+  await marloweCard.getByLabel('Назначение в отряд').selectOption('bravo')
+
+  await page.getByRole('button', { name: /×10/ }).click()
+  await page.getByRole('button', { name: 'Карта', exact: true }).click()
+  await expect(page.locator('.squad-marker.alpha small')).toContainText(/Выезд|Уборка/)
+  await expect(page.locator('.squad-marker.bravo small')).toContainText(/Выезд|Уборка/)
+  await page.getByRole('button', { name: /^Ⅱ/ }).click()
+
+  await page.getByRole('button', { name: 'База', exact: true }).click()
+  await pixelCard.getByText('Досье и экипировка', { exact: true }).click()
+  await marloweCard.getByText('Досье и экипировка', { exact: true }).click()
+  const pixelBelt = pixelCard.locator('label').filter({ hasText: 'Пояс' })
+  const marloweBelt = marloweCard.locator('label').filter({ hasText: 'Пояс' })
+
+  await pixelBelt.locator('select').selectOption('medkit')
+  await expect(marloweBelt.locator('option[value="medkit"]')).toHaveAttribute('disabled', '')
+  await marloweBelt.locator('select').selectOption('headset')
+
+  await expect(pixelBelt).toHaveClass(/pending/)
+  await expect(marloweBelt).toHaveClass(/pending/)
+  await expect(pixelBelt.locator('select')).toHaveValue('medkit')
+  await expect(marloweBelt.locator('select')).toHaveValue('headset')
+})
+
 test('a sleeping cat can change equipment in Firefox', async ({ page }) => {
   const equipmentMessages: string[] = []
   page.on('console', message => {
