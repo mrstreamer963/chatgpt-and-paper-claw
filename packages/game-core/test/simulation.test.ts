@@ -4,6 +4,7 @@ import {
   assignCat,
   continueAfterFinale,
   createState,
+  deserializeCurrentSave,
   deserializeState,
   dispatchSquadToMission,
   drainEvents,
@@ -14,6 +15,7 @@ import {
   getRaidOptions,
   getSquadCleanupEstimate,
   getSquadMapPosition,
+  getMoveSquadBlockReason,
   GameCore,
   hasPendingEquipment,
   hasPendingAssignment,
@@ -21,6 +23,7 @@ import {
   resolveRaidDecision,
   resolveRaidFollowup,
   returnSquadToBase,
+  moveSquadToPoint,
   selectResearch,
   serializeState,
   setSquadAutoDispatch,
@@ -259,6 +262,67 @@ test('an idle field squad moves toward base without retaining a mission target',
 
   assert.deepEqual(getSquadMapPosition(squad), { x: 38, y: 40.5 })
   assert.equal(squad.phase, 'returning')
+})
+
+test('a manual squad marches to an arbitrary point and waits there', () => {
+  const state = createState()
+  const squad = state.squads[0]
+  squad.autoDispatch = false
+  squad.members = ['pixel']
+  state.speed = 1
+
+  assert.equal(getMoveSquadBlockReason(state, squad.id, { x: 30, y: 30 }), undefined)
+  assert.equal(moveSquadToPoint(state, squad.id, { x: 30, y: 30 }), true)
+  assert.equal(squad.phase, 'moving')
+  assert.deepEqual(squad.destination, { x: 30, y: 30 })
+
+  tick(state, squad.travelDuration / 2)
+  assert.equal(squad.phase, 'moving')
+  assert.deepEqual(getSquadMapPosition(squad), { x: 38, y: 40.5 })
+
+  tick(state, squad.travelDuration)
+  assert.equal(squad.phase, 'field')
+  assert.deepEqual(squad.routeFrom, { x: 30, y: 30 })
+  assert.equal(squad.destination, undefined)
+})
+
+test('an arbitrary march requires manual control, a ready crew, and return energy', () => {
+  const state = createState()
+  const squad = state.squads[0]
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  squad.members = [pixel.id]
+  const destination = { x: 5, y: 7 }
+
+  assert.equal(getMoveSquadBlockReason(state, squad.id, destination), 'dispatch.reason.auto_enabled')
+  squad.autoDispatch = false
+  pixel.energy = 1
+  assert.equal(getMoveSquadBlockReason(state, squad.id, destination), 'dispatch.reason.tired')
+  assert.equal(moveSquadToPoint(state, squad.id, destination), false)
+  pixel.energy = 100
+  assert.equal(moveSquadToPoint(state, squad.id, { x: -1, y: 50 }), false)
+})
+
+test('an arbitrary march survives save and load', () => {
+  const state = createState()
+  state.squads[0].autoDispatch = false
+  state.squads[0].members = ['pixel']
+  assert.equal(moveSquadToPoint(state, 'alpha', { x: 70, y: 70 }), true)
+  state.squads[0].travel = state.squads[0].travelDuration / 3
+
+  const restored = deserializeState(serializeState(state))
+  assert.equal(restored.squads[0].phase, 'moving')
+  assert.deepEqual(restored.squads[0].destination, { x: 70, y: 70 })
+  assert.equal(restored.squads[0].travel, state.squads[0].travel)
+})
+
+test('the application migrates version nine saves after adding march state', () => {
+  const envelope = JSON.parse(serializeState(createState()))
+  envelope.version = 9
+  envelope.saveVersion = 9
+
+  const restored = deserializeCurrentSave(JSON.stringify(envelope))
+  assert.equal(restored.squads[0].phase, 'base')
+  assert.equal(restored.squads[0].destination, undefined)
 })
 
 test('a manual field squad returns automatically when no available mission is safe', () => {

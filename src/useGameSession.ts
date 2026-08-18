@@ -352,6 +352,7 @@ export async function createGameSession() {
     setSquadStyle: (squadId: string, style: SquadStyle) => runCommand({ type: 'set_squad_style', squadId, style }),
     setSquadAutoDispatch: (squadId: string, enabled: boolean) => runCommand({ type: 'set_auto_dispatch', squadId, enabled }),
     dispatchSquadToMission: (squadId: string, missionId: string) => runCommand({ type: 'dispatch_squad', squadId, missionId }),
+    moveSquadToPoint: (squadId: string, x: number, y: number) => runCommand({ type: 'move_squad', squadId, x, y }),
     returnSquadToBase: (squadId: string) => runCommand({ type: 'return_squad', squadId }),
     selectResearch: (researchId?: ResearchId) => runCommand({ type: 'select_research', researchId }),
     resolveRaidDecision: (action: 'escape' | 'attack' | 'support') => runCommand({ type: 'resolve_raid', action }),

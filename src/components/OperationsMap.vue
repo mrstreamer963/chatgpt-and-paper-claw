@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { GAME_RULES, getCleanupSecondsRemaining, getManualDispatchBlockReason, getSquadMapPosition, type LogEntry, type Mission, type Squad, type State } from '@nine-lives/game-core'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { GAME_RULES, getCleanupSecondsRemaining, getManualDispatchBlockReason, getMoveSquadBlockReason, getSquadMapPosition, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
 import { translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
 
 const props = defineProps<{ state: State; locale: Locale }>()
-const emit = defineEmits<{ dispatch: [squadId: string, missionId: string]; returnHome: [squadId: string] }>()
+const emit = defineEmits<{ dispatch: [squadId: string, missionId: string]; move: [squadId: string, x: number, y: number]; returnHome: [squadId: string] }>()
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
 const base = { x: 46, y: 51 }
-const selectedMissionId = ref<string>()
-const selectedMission = computed(() => props.state.missions.find(mission => mission.id === selectedMissionId.value && mission.status === 'available'))
+const selectedSquadId = ref<string>()
+const selectedTarget = ref<{ type: 'mission'; missionId: string } | { type: 'base' }>()
+const commandMessage = ref<string>()
 
 function squadPosition(squad: Squad) {
   const { x, y } = getSquadMapPosition(squad)
@@ -26,6 +27,7 @@ function squadStyle(squad: Squad) {
 function route(squad: Squad) {
   const position = squadPosition(squad)
   if (squad.phase === 'returning') return { x1: position.x, y1: position.y, x2: base.x, y2: base.y }
+  if (squad.phase === 'moving') return { x1: position.x, y1: position.y, x2: squad.destination?.x ?? position.x, y2: squad.destination?.y ?? position.y }
   return { x1: position.x, y1: position.y, x2: squad.target?.x ?? position.x, y2: squad.target?.y ?? position.y }
 }
 
@@ -38,6 +40,7 @@ function squadLabel(squad: Squad) {
   if (squad.phase === 'base') return tr(squad.members.length ? squad.autoDispatch ? 'status.base_ready' : 'status.awaiting_order' : 'status.no_squad')
   if (squad.phase === 'field') return tr('status.field')
   if (squad.phase === 'outbound') return tr('status.outbound', { mission: squad.target?.title ?? '', seconds: Math.ceil(squad.travelDuration - squad.travel) })
+  if (squad.phase === 'moving') return tr('status.moving', { seconds: Math.max(0, Math.ceil(squad.travelDuration - squad.travel)) })
   if (squad.phase === 'returning') return tr('status.returning')
   if (squad.phase === 'support') return tr('status.support', { seconds: Math.max(0, Math.ceil(squad.travelDuration - squad.travel)) })
   if (squad.phase === 'assisting') return tr('status.assisting')
@@ -48,14 +51,92 @@ function squadLabel(squad: Squad) {
   })
 }
 
-function selectMission(missionId: string) {
-  selectedMissionId.value = selectedMissionId.value === missionId ? undefined : missionId
+function clearCommand() {
+  selectedSquadId.value = undefined
+  selectedTarget.value = undefined
+  commandMessage.value = undefined
 }
 
-function dispatch(squadId: string, missionId: string) {
-  emit('dispatch', squadId, missionId)
-  selectedMissionId.value = undefined
+function setFailure(reason: string) {
+  commandMessage.value = reason
 }
+
+function issueMission(squad: Squad, mission: Mission) {
+  const reason = getManualDispatchBlockReason(props.state, squad.id, mission.id)
+  if (reason) return setFailure(reason)
+  emit('dispatch', squad.id, mission.id)
+  clearCommand()
+}
+
+function issueReturn(squad: Squad) {
+  if (squad.phase === 'base') return clearCommand()
+  if (squad.phase !== 'field') return setFailure('dispatch.reason.away')
+  emit('returnHome', squad.id)
+  clearCommand()
+}
+
+function selectSquad(squad: Squad) {
+  commandMessage.value = undefined
+  if (selectedTarget.value?.type === 'mission') {
+    const missionId = selectedTarget.value.missionId
+    const mission = props.state.missions.find(candidate => candidate.id === missionId)
+    if (mission) issueMission(squad, mission)
+    return
+  }
+  if (selectedTarget.value?.type === 'base') return issueReturn(squad)
+  selectedSquadId.value = selectedSquadId.value === squad.id ? undefined : squad.id
+}
+
+function selectMission(mission: Mission) {
+  commandMessage.value = undefined
+  const squad = props.state.squads.find(candidate => candidate.id === selectedSquadId.value)
+  if (squad) return issueMission(squad, mission)
+  selectedTarget.value = selectedTarget.value?.type === 'mission' && selectedTarget.value.missionId === mission.id
+    ? undefined : { type: 'mission', missionId: mission.id }
+}
+
+function selectBase() {
+  commandMessage.value = undefined
+  const squad = props.state.squads.find(candidate => candidate.id === selectedSquadId.value)
+  if (squad) return issueReturn(squad)
+  selectedTarget.value = selectedTarget.value?.type === 'base' ? undefined : { type: 'base' }
+}
+
+function selectMapPoint(event: MouseEvent) {
+  if (!selectedSquadId.value) return
+  const element = event.currentTarget as HTMLElement
+  const bounds = element.getBoundingClientRect()
+  const point: MapPoint = {
+    x: Math.max(5, Math.min(95, (event.clientX - bounds.left) / bounds.width * 100)),
+    y: Math.max(7, Math.min(93, (event.clientY - bounds.top) / bounds.height * 100)),
+  }
+  const reason = getMoveSquadBlockReason(props.state, selectedSquadId.value, point)
+  if (reason) return setFailure(reason)
+  emit('move', selectedSquadId.value, point.x, point.y)
+  clearCommand()
+}
+
+function squadCommandReason(squad: Squad) {
+  if (selectedTarget.value?.type === 'mission') return getManualDispatchBlockReason(props.state, squad.id, selectedTarget.value.missionId)
+  if (selectedTarget.value?.type === 'base') return squad.phase === 'field' ? undefined : 'dispatch.reason.away'
+  return getMoveSquadBlockReason(props.state, squad.id)
+}
+
+function squadEnergy(squad: Squad) {
+  const members = squad.members.map(id => props.state.cats.find(cat => cat.id === id)).filter(Boolean)
+  return members.length ? Math.round(Math.min(...members.map(cat => cat!.energy))) : 0
+}
+
+function squadIsAvailable(squad: Squad) {
+  return !getMoveSquadBlockReason(props.state, squad.id)
+}
+
+function handleEscape(event: KeyboardEvent) {
+  if (event.key === 'Escape' && (selectedSquadId.value || selectedTarget.value)) clearCommand()
+}
+
+onMounted(() => window.addEventListener('keydown', handleEscape))
+onBeforeUnmount(() => window.removeEventListener('keydown', handleEscape))
 
 function formatLog(entry: LogEntry) {
   const minutes = 540 + Math.floor(entry.time / 60)
@@ -66,33 +147,33 @@ function formatLog(entry: LogEntry) {
 
 <template>
   <section class="map-view">
-    <div class="map-grid" :class="{ 'incident-active': state.incident }">
+    <div class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedSquadId || selectedTarget }" @click="selectMapPoint">
       <svg class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <line v-for="squad in state.squads.filter(candidate => candidate.phase === 'returning' || (candidate.target && ['outbound', 'support'].includes(candidate.phase)))" :key="`route-${squad.id}`" v-bind="route(squad)" :class="squad.id" />
+        <line v-for="squad in state.squads.filter(candidate => ['returning', 'moving'].includes(candidate.phase) || (candidate.target && ['outbound', 'support'].includes(candidate.phase)))" :key="`route-${squad.id}`" v-bind="route(squad)" :class="squad.id" />
       </svg>
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <div class="district d1">{{ tr('Старый сектор') }}</div><div class="district d2">{{ tr('Промзона') }}</div><div class="district d3">{{ tr('Терминал') }}</div>
-      <div class="base-pin"><strong>NL</strong><span>{{ tr('БАЗА') }}</span></div>
+      <button type="button" class="base-pin" :class="{ selected: selectedTarget?.type === 'base' }" @click.stop="selectBase"><strong>NL</strong><span>{{ tr('БАЗА') }}</span></button>
       <div v-if="state.storyIncident" class="story-pin" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }"><span>!</span><b>{{ tr('ДЕЛО 09') }}</b><small>{{ tr('Дезертир ждёт решения') }}</small></div>
       <div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span><b>{{ tr('БАЗА ЕЖЕЙ') }}</b><small>{{ tr('координаты подтверждены') }}</small></div>
-      <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedMissionId === mission.id, 'enhanced-alert': mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click="selectMission(mission.id)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(mission.priority > 1 ? 'ПРИОРИТЕТ' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></button>
+      <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id, 'enhanced-alert': mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(mission.priority > 1 ? 'ПРИОРИТЕТ' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></button>
       <div v-for="mission in state.missions.filter(isActiveAssignedMission)" :key="`assigned-${mission.id}`" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(state.incident?.missionId === mission.id ? 'ТРЕВОГА' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
-      <div v-for="squad in state.squads" :key="squad.id" class="squad-marker" :class="[squad.phase, squad.id]" :style="squadStyle(squad)">
+      <button v-for="squad in state.squads.filter(candidate => candidate.phase !== 'base')" :key="squad.id" type="button" class="squad-marker" :class="[squad.phase, squad.id, { selected: selectedSquadId === squad.id, available: squadIsAvailable(squad) }]" :style="squadStyle(squad)" @click.stop="selectSquad(squad)">
         <div class="map-squad-tokens"><svg v-for="member in squad.members" :key="member" class="cat-silhouette" viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${member}`" /></svg></div>
-        <div class="squad-callout"><b>{{ tr(squad.name) }}</b><small>{{ squadLabel(squad) }}</small><button v-if="squad.phase === 'field'" type="button" @click.stop="emit('returnHome', squad.id)">{{ tr('dispatch.return_home') }}</button></div>
-      </div>
+        <span class="squad-callout"><b>{{ tr(squad.name) }}</b><small>{{ squadLabel(squad) }}</small></span>
+      </button>
+      <div v-if="selectedSquadId || selectedTarget" class="command-hint"><span>{{ tr(selectedSquadId ? 'dispatch.command.choose_target' : 'dispatch.command.choose_squad') }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
     </div>
     <aside>
-      <h2>{{ tr('ОПЕРАТИВНАЯ ЛЕНТА') }}</h2>
-      <p class="goal">{{ tr('objective.summary', { fame: GAME_RULES.fameGoal }) }}</p>
-      <section v-if="selectedMission" class="manual-dispatch-card">
-        <header><span>{{ tr('dispatch.manual.kicker') }}</span><button type="button" :aria-label="tr('Закрыть')" @click="selectedMissionId = undefined">×</button></header>
-        <h3>{{ tr(selectedMission.title) }}</h3>
-        <p>{{ tr('dispatch.manual.description') }}</p>
-        <button v-for="squad in state.squads" :key="squad.id" type="button" :disabled="Boolean(getManualDispatchBlockReason(state, squad.id, selectedMission.id))" @click="dispatch(squad.id, selectedMission.id)">
-          <span><b>{{ tr(squad.name) }}</b><small>{{ tr(getManualDispatchBlockReason(state, squad.id, selectedMission.id) ?? 'dispatch.ready') }}</small></span><strong>{{ tr('dispatch.send') }}</strong>
+      <section class="map-squad-list">
+        <h2>{{ tr('dispatch.command.squads') }}</h2>
+        <button v-for="squad in state.squads" :key="`command-${squad.id}`" type="button" :class="{ selected: selectedSquadId === squad.id, available: squadIsAvailable(squad) }" @click="selectSquad(squad)">
+          <span><b>{{ tr(squad.name) }} <em v-if="squadIsAvailable(squad)">{{ tr('dispatch.command.available') }}</em></b><small>{{ squadLabel(squad) }}</small></span>
+          <span><strong>{{ tr('dispatch.command.energy', { energy: squadEnergy(squad) }) }}</strong><small v-if="squadCommandReason(squad)">{{ tr(squadCommandReason(squad)!) }}</small></span>
         </button>
       </section>
+      <h2>{{ tr('ОПЕРАТИВНАЯ ЛЕНТА') }}</h2>
+      <p class="goal">{{ tr('objective.summary', { fame: GAME_RULES.fameGoal }) }}</p>
       <div class="case-progress" :class="{ done: state.storyResolution }"><span>{{ tr('ДЕЛО 09') }}</span><b>{{ tr(state.storyResolution ? 'ЗАКРЫТО' : state.storyIncident ? 'ТРЕБУЕТ РЕШЕНИЯ' : 'ОЖИДАЕТ СИГНАЛА') }}</b></div>
       <article v-for="(item, index) in state.log" :key="`${index}-${item.time}-${item.key}`">{{ formatLog(item) }}</article>
     </aside>

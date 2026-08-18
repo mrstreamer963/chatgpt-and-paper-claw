@@ -26,6 +26,7 @@ const {
   setSquadStyle,
   setSquadAutoDispatch,
   dispatchSquadToMission,
+  moveSquadToPoint,
   returnSquadToBase,
   selectResearch,
   resolveRaidDecision,
@@ -104,7 +105,7 @@ async function resetProgress() {
 
     <div v-if="state.incident?.stage === 'support_en_route'" class="support-strip"><span class="alert-dot"></span><b>{{ tr('support.en_route', { squad: supportSquad?.name ?? '' }) }}</b><span>{{ tr('support.eta', { seconds: supportSeconds }) }}</span><button v-if="state.speed === 0" @click="setSpeed(1)">{{ tr('Продолжить на ×1') }}</button></div>
 
-    <OperationsMap v-if="activeView === 'map'" :state="state" :locale="locale" @dispatch="dispatchSquadToMission" @return-home="returnSquadToBase" />
+    <OperationsMap v-if="activeView === 'map'" :state="state" :locale="locale" @dispatch="dispatchSquadToMission" @move="moveSquadToPoint" @return-home="returnSquadToBase" />
     <BaseOperations
       v-else
       :state="state"

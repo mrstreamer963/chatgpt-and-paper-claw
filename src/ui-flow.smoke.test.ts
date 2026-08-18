@@ -171,7 +171,7 @@ test('queued equipment remains visible in its orange slot without extra status t
   assert.equal(state.speed, 10)
 })
 
-test('a manual field squad exposes its waiting state and return command', async () => {
+test('a manual field squad appears in the command list with its waiting state', async () => {
   const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
   const state = createState()
   const squad = state.squads[0]
@@ -183,6 +183,26 @@ test('a manual field squad exposes its waiting state and return command', async 
   const html = await render(OperationsMap, { state, locale: 'ru' })
 
   assert.match(html, /В поле \/ ожидает приказа/)
-  assert.match(html, /Вернуть на базу/)
+  assert.match(html, /ОТРЯДЫ/)
+  assert.match(html, /СВОБОДЕН/)
+  assert.match(html, /class="available"/)
+  assert.match(html, /бодрость 92%/)
   assert.match(html, /left:30%;top:35%/)
+})
+
+test('an arbitrary march renders its route and destination status', async () => {
+  const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
+  const state = createState()
+  const squad = state.squads[0]
+  squad.autoDispatch = false
+  squad.members = ['pixel']
+  squad.phase = 'moving'
+  squad.routeFrom = { x: 20, y: 20 }
+  squad.destination = { x: 70, y: 60 }
+  squad.travel = 5
+  squad.travelDuration = 10
+
+  const html = await render(OperationsMap, { state, locale: 'ru' })
+  assert.match(html, /<line[^>]*x1="45"[^>]*y1="40"[^>]*x2="70"[^>]*y2="60"/)
+  assert.match(html, /Следует к точке · 5 с/)
 })

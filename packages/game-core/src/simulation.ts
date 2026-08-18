@@ -31,7 +31,7 @@ export type Cat = {
 }
 export type Mission = { id: string; title: string; x: number; y: number; priority: number; status: 'available' | 'assigned' | 'completed'; squadId?: string }
 export type MapPoint = { x: number; y: number }
-export type Phase = 'base' | 'field' | 'outbound' | 'cleanup' | 'assisting' | 'incident' | 'support' | 'returning'
+export type Phase = 'base' | 'field' | 'moving' | 'outbound' | 'cleanup' | 'assisting' | 'incident' | 'support' | 'returning'
 export type Squad = {
   id: string
   name: string
@@ -47,6 +47,7 @@ export type Squad = {
   restAfterReturn: boolean
   missionId?: string
   target?: Pick<Mission, 'id' | 'title' | 'x' | 'y' | 'priority'>
+  destination?: MapPoint
 }
 export type RaidStage = 'decision' | 'support_en_route' | 'support_decision'
 export type RaidIncident = {
@@ -139,7 +140,7 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 9
+export const SAVE_VERSION = 10
 export const GAME_VERSION = '0.1.0'
 export type SaveErrorKey =
   | 'save.error.invalid_json'
@@ -333,12 +334,14 @@ function isValidSquad(value: unknown) {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string') return false
   if (!Array.isArray(value.members) || !value.members.every(member => typeof member === 'string')) return false
   if (!['careful', 'balanced', 'risky'].includes(value.style as string)
-    || !['base', 'field', 'outbound', 'cleanup', 'assisting', 'incident', 'support', 'returning'].includes(value.phase as string)) return false
+    || !['base', 'field', 'moving', 'outbound', 'cleanup', 'assisting', 'incident', 'support', 'returning'].includes(value.phase as string)) return false
   if (typeof value.autoDispatch !== 'boolean') return false
   if (!isValidMapPoint(value.routeFrom) || typeof value.restAfterReturn !== 'boolean') return false
   if (![value.travel, value.travelDuration, value.progress, value.completed].every(isFiniteNumber)) return false
   return (value.missionId === undefined || typeof value.missionId === 'string')
     && (value.target === undefined || isValidTarget(value.target))
+    && (value.destination === undefined || isValidMapPoint(value.destination))
+    && (value.phase !== 'moving' || isValidMapPoint(value.destination))
 }
 
 function isValidMission(value: unknown) {
@@ -545,7 +548,7 @@ function isValidState(value: unknown): value is State {
 
 export function serializeState(state: State, pretty = true) {
   // Vite HMR can preserve a pre-migration in-memory state while replacing this module.
-  // Normalize it before autosaving so an already open tab does not write an invalid v9 save.
+  // Normalize it before autosaving so an already open tab does not write an invalid current save.
   state.cats.forEach(cat => { cat.pendingEquipment ??= {} })
   const envelope: SaveEnvelope = {
     format: SAVE_FORMAT,
@@ -566,7 +569,7 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, 4, 5, 6, 7, 8, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
@@ -590,8 +593,7 @@ export function deserializeState(payload: string): State {
   return restored
 }
 
-/** Current-format saves only. Legacy migrations remain available to old
- * low-level tests/tools, but the application must never load or import them. */
+/** Current-format saves plus the immediately preceding compatible schema. */
 export function deserializeCurrentSave(payload: string): State {
   let envelope: unknown
   try {
@@ -604,7 +606,7 @@ export function deserializeCurrentSave(payload: string): State {
       version: String(isRecord(envelope) ? envelope.gameVersion ?? envelope.version : 'unknown'),
     })
   }
-  if (envelope.version !== SAVE_VERSION) {
+  if (![9, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   return deserializeState(payload)
@@ -940,6 +942,7 @@ function startMission(state: State, squad: Squad, requestedMissionId?: string, o
   mission.squadId = squad.id
   squad.missionId = mission.id
   squad.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
+  delete squad.destination
   squad.phase = 'outbound'
   squad.routeFrom = { ...origin }
   squad.restAfterReturn = false
@@ -972,6 +975,50 @@ export function dispatchSquadToMission(state: State, squadId: string, missionId:
   const squad = state.squads.find(candidate => candidate.id === squadId)
   const origin = squad?.phase === 'field' ? getSquadMapPosition(squad) : CONFIG.map.base
   return squad ? startMission(state, squad, missionId, origin) : false
+}
+
+function isMapCommandPoint(point: MapPoint) {
+  return Number.isFinite(point.x) && Number.isFinite(point.y)
+    && point.x >= 5 && point.x <= 95 && point.y >= 7 && point.y <= 93
+}
+
+export function getMoveSquadBlockReason(state: State, squadId: string, destination?: MapPoint) {
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!squad) return 'dispatch.reason.unavailable'
+  if (squad.autoDispatch) return 'dispatch.reason.auto_enabled'
+  if (!['base', 'field'].includes(squad.phase)) return 'dispatch.reason.away'
+  if (squadHasPendingAssignment(state, squad)) return 'dispatch.reason.pending_assignment'
+  if (squadHasPendingEquipment(state, squad)) return 'dispatch.reason.pending_equipment'
+  const members = membersOf(state, squad)
+  if (!members.length) return 'dispatch.reason.empty'
+  if (members.some(cat => cat.injuredRemaining > 0)) return 'dispatch.reason.injured'
+  if (members.some(cat => !canReceiveWorkOrder(cat))) return 'dispatch.reason.tired'
+  if (!destination) return undefined
+  if (!isMapCommandPoint(destination)) return 'dispatch.reason.invalid_point'
+  const origin = squad.phase === 'field' ? getSquadMapPosition(squad) : CONFIG.map.base
+  const energyCost = (travelTimeBetween(origin, destination) + travelTimeBetween(destination, CONFIG.map.base))
+    * CONFIG.mission.energyCostPerTravelSecond
+  if (members.some(cat => cat.energy + 1e-9 < energyCost)) return 'dispatch.reason.tired'
+  return undefined
+}
+
+export function moveSquadToPoint(state: State, squadId: string, destination: MapPoint) {
+  if (getMoveSquadBlockReason(state, squadId, destination)) return false
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!squad) return false
+  const origin = squad.phase === 'field' ? getSquadMapPosition(squad) : CONFIG.map.base
+  membersOf(state, squad).forEach(cat => wakeForWorkOrder(state, cat))
+  squad.phase = 'moving'
+  squad.routeFrom = { ...origin }
+  squad.destination = { ...destination }
+  squad.target = undefined
+  squad.missionId = undefined
+  squad.restAfterReturn = false
+  squad.travel = 0
+  squad.travelDuration = travelTimeBetween(origin, destination)
+  squad.progress = 0
+  note(state, 'log.squad_moving', { squad: squad.name })
+  return true
 }
 
 function rewardMission(state: State, squad: Squad) {
@@ -1298,6 +1345,13 @@ export function getSquadMapPosition(squad: Squad): MapPoint {
       y: squad.routeFrom.y + (CONFIG.map.base.y - squad.routeFrom.y) * ratio,
     }
   }
+  if (squad.phase === 'moving' && squad.destination) {
+    const ratio = Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9))
+    return {
+      x: squad.routeFrom.x + (squad.destination.x - squad.routeFrom.x) * ratio,
+      y: squad.routeFrom.y + (squad.destination.y - squad.routeFrom.y) * ratio,
+    }
+  }
   if (!squad.target) return { ...squad.routeFrom }
   if (!['outbound', 'support'].includes(squad.phase)) return { x: squad.target.x, y: squad.target.y }
   const destination = squad.target
@@ -1311,6 +1365,7 @@ export function getSquadMapPosition(squad: Squad): MapPoint {
 function sendHome(squad: Squad, restAfterReturn = false) {
   const origin = getSquadMapPosition(squad)
   squad.phase = 'returning'
+  delete squad.destination
   squad.routeFrom = origin
   squad.restAfterReturn = restAfterReturn
   squad.travel = 0
@@ -1456,6 +1511,7 @@ function arriveAtBase(state: State, squad: Squad) {
   squad.phase = 'base'
   squad.missionId = undefined
   squad.target = undefined
+  delete squad.destination
   squad.travel = 0
   squad.travelDuration = 0
   squad.routeFrom = { ...CONFIG.map.base }
@@ -1585,6 +1641,19 @@ export function tick(state: State, seconds: number) {
     }
     if (squad.phase === 'incident') continue
     if (squad.phase === 'assisting') continue
+    if (squad.phase === 'moving') {
+      spendTravelEnergy(state, squad, elapsed)
+      squad.travel += elapsed
+      if (squad.travel >= squad.travelDuration && squad.destination) {
+        squad.travel = 0
+        squad.travelDuration = 0
+        squad.routeFrom = { ...squad.destination }
+        delete squad.destination
+        squad.phase = 'field'
+        note(state, 'log.squad_arrived_at_point', { squad: squad.name })
+      }
+      continue
+    }
     if (squad.phase === 'support') {
       spendTravelEnergy(state, squad, elapsed)
       squad.travel += elapsed
@@ -1649,6 +1718,7 @@ export type GameCommand =
   | { type: 'set_squad_style'; squadId: string; style: SquadStyle }
   | { type: 'set_auto_dispatch'; squadId: string; enabled: boolean }
   | { type: 'dispatch_squad'; squadId: string; missionId: string }
+  | { type: 'move_squad'; squadId: string; x: number; y: number }
   | { type: 'return_squad'; squadId: string }
   | { type: 'select_research'; researchId?: ResearchId }
   | { type: 'resolve_raid'; action: 'escape' | 'attack' | 'support' }
@@ -1682,6 +1752,7 @@ export class GameCore {
       case 'set_squad_style': return setSquadStyle(this.world, command.squadId, command.style)
       case 'set_auto_dispatch': return setSquadAutoDispatch(this.world, command.squadId, command.enabled)
       case 'dispatch_squad': return dispatchSquadToMission(this.world, command.squadId, command.missionId)
+      case 'move_squad': return moveSquadToPoint(this.world, command.squadId, { x: command.x, y: command.y })
       case 'return_squad': return returnSquadToBase(this.world, command.squadId)
       case 'select_research': return selectResearch(this.world, command.researchId)
       case 'resolve_raid': return resolveRaidDecision(this.world, command.action)
