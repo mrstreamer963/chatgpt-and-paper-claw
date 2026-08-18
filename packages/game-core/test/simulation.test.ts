@@ -540,6 +540,25 @@ test('replacing and canceling deferred equipment releases its reservation', () =
   assert.equal(hasPendingEquipment(pixel), false)
 })
 
+test('selecting the currently equipped item cancels its deferred replacement', () => {
+  const state = createState()
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  assert.equal(equipItem(state, pixel.id, 'belt', 'headset'), true)
+  assert.equal(assignCat(state, pixel.id, 'alpha'), true)
+  state.squads[0].phase = 'cleanup'
+
+  assert.equal(equipItem(state, pixel.id, 'belt', 'medkit'), true)
+  assert.equal(pixel.equipment.belt, 'headset')
+  assert.equal(getEquipmentSelection(pixel, 'belt'), 'medkit')
+  assert.equal(state.inventory.medkit, 0)
+
+  assert.equal(equipItem(state, pixel.id, 'belt', 'headset'), true)
+  assert.equal(pixel.equipment.belt, 'headset')
+  assert.equal(getEquipmentSelection(pixel, 'belt'), 'headset')
+  assert.equal(hasPendingEquipment(pixel, 'belt'), false)
+  assert.equal(state.inventory.medkit, 1)
+})
+
 test('an HMR-preserved pre-queue state can use and save deferred equipment', () => {
   const state = createState()
   const pixel = state.cats.find(cat => cat.id === 'pixel')!

@@ -22,6 +22,7 @@ const props = defineProps<{
 
 const items = ITEM_DEFINITIONS.filter(item => item.slot === props.slot)
 const selectedItemId = computed(() => getEquipmentSelection(props.cat, props.slot))
+const equippedItemId = computed(() => props.cat.equipment[props.slot])
 const draftItemId = ref<ItemId | ''>(selectedItemId.value ?? '')
 let submittedItemId: ItemId | '' = draftItemId.value
 let pendingCommit: Promise<void> | undefined
@@ -129,9 +130,9 @@ async function finishInteraction(event: FocusEvent) {
 <template>
   <label :class="{ pending }">
     <span>{{ tr(slotName) }}</span>
-    <select v-memo="[draftItemId, visibleInventoryKey]" :value="draftItemId" :disabled="slot === 'suit'" @pointerdown="beginInteraction" @focus="beginInteraction" @input="handleSelection" @change="handleSelection" @blur="finishInteraction">
+    <select v-memo="[draftItemId, equippedItemId, visibleInventoryKey]" :value="draftItemId" :disabled="slot === 'suit'" @pointerdown="beginInteraction" @focus="beginInteraction" @input="handleSelection" @change="handleSelection" @blur="finishInteraction">
       <option value="">{{ tr(slot === 'suit' ? 'нет предметов в PoC' : 'пусто') }}</option>
-      <option v-for="item in items" :key="item.id" :value="item.id" :disabled="visibleInventory[item.id] <= 0 && draftItemId !== item.id">{{ tr('item.stock', { item: item.name, count: visibleInventory[item.id] }) }}</option>
+      <option v-for="item in items" :key="item.id" :value="item.id" :disabled="visibleInventory[item.id] <= 0 && draftItemId !== item.id && equippedItemId !== item.id">{{ tr('item.stock', { item: item.name, count: visibleInventory[item.id] }) }}</option>
     </select>
   </label>
 </template>

@@ -81,6 +81,35 @@ test('two field cats can queue equipment independently and see current reservati
   await expect(marloweBelt.locator('select')).toHaveValue('headset')
 })
 
+test('a field cat can cancel a deferred replacement by restoring its equipped item', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'База', exact: true }).click()
+
+  const pixelCard = page.locator('.cat-card').filter({ hasText: 'Пиксель' })
+  await pixelCard.getByText('Досье и экипировка', { exact: true }).click()
+  const belt = pixelCard.locator('label').filter({ hasText: 'Пояс' })
+  const beltSelect = belt.locator('select')
+  await beltSelect.selectOption('headset')
+  await pixelCard.getByLabel('Назначение в отряд').selectOption('alpha')
+
+  await page.getByRole('button', { name: /×10/ }).click()
+  await page.getByRole('button', { name: 'Карта', exact: true }).click()
+  await expect(page.locator('.squad-marker.alpha small')).toContainText(/Выезд|Уборка/)
+  await page.getByRole('button', { name: /^Ⅱ/ }).click()
+  await page.getByRole('button', { name: 'База', exact: true }).click()
+  await pixelCard.getByText('Досье и экипировка', { exact: true }).click()
+
+  await beltSelect.selectOption('medkit')
+  await expect(belt).toHaveClass(/pending/)
+  await expect(beltSelect).toHaveValue('medkit')
+  await expect(beltSelect.locator('option[value="headset"]')).not.toHaveAttribute('disabled', '')
+
+  await beltSelect.selectOption('headset')
+  await expect(belt).not.toHaveClass(/pending/)
+  await expect(beltSelect).toHaveValue('headset')
+  await expect(page.locator('.warehouse > div').filter({ hasText: 'Аптечка' }).locator('strong')).toHaveText('×1')
+})
+
 test('a sleeping cat can change equipment in Firefox', async ({ page }) => {
   const equipmentMessages: string[] = []
   page.on('console', message => {
