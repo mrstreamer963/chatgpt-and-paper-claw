@@ -1,21 +1,26 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { replaceObjectState } from './core/replaceState.ts'
-import { createState } from './core/simulation.ts'
+import { createState, serializeState } from '@nine-lives/game-core'
+import { translate } from './i18n.ts'
+import { readSessionPreferences, serializeSessionEnvelope } from './sessionSave.ts'
 
-test('replacing a session removes optional state left by the previous operation', () => {
-  const state = createState()
-  state.storyTriggered = true
-  state.storyIncident = {
-    kind: 'ninth_life',
-    foundBySquadId: 'alpha',
-    x: 62,
-    y: 34,
-  }
+test('session save transfers locale and normalized audio settings', () => {
+  const sound = { muted: true, master: 0.4, ambient: 0.3, signals: 0.9 }
+  const payload = serializeSessionEnvelope(serializeState(createState(), false), 'en', sound, false)
+  const envelope = JSON.parse(payload)
 
-  const freshState = createState()
-  replaceObjectState(state, freshState)
+  assert.equal(payload.includes('\n'), false)
+  assert.equal(envelope.locale, 'en')
+  assert.deepEqual(envelope.audioSettings, sound)
+  assert.deepEqual(readSessionPreferences(payload), { locale: 'en', sound })
+})
 
-  assert.deepEqual(state, freshState)
-  assert.equal('storyIncident' in state, false)
+test('English locale translates the manual mission close label', () => {
+  assert.equal(translate('en', 'Закрыть'), 'Close')
+})
+
+test('domain log events render in either language with localized parameters', () => {
+  const params = { cat: 'cat.pixel.name', squad: 'squad.alpha' }
+  assert.equal(translate('ru', 'log.cat_assigned', params), 'Пиксель назначен в Отряд «Альфа»')
+  assert.equal(translate('en', 'log.cat_assigned', params), 'Pixel assigned to Squad “Alpha”')
 })

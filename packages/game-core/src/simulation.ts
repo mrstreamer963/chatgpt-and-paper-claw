@@ -7,6 +7,7 @@ export type ItemId = 'armor_vest' | 'toolkit' | 'headset' | 'medkit' | 'scanner'
 export type ResearchId = 'field_scanners' | 'emergency_dispatch' | 'improvised_defense'
 export type AchievementId = 'first_squad' | 'field_kit' | 'first_cleanup' | 'research_started' | 'raiders_resolved' | 'ninth_life_closed'
 export type Equipment = Record<EquipmentSlot, ItemId | undefined>
+export type PendingEquipment = Partial<Record<EquipmentSlot, ItemId | null>>
 export type Cat = {
   id: string
   name: string
@@ -25,6 +26,7 @@ export type Cat = {
   assignedTo?: string
   injuredRemaining: number
   equipment: Equipment
+  pendingEquipment: PendingEquipment
 }
 export type Mission = { id: string; title: string; x: number; y: number; priority: number; status: 'available' | 'assigned' | 'completed'; squadId?: string }
 export type MapPoint = { x: number; y: number }
@@ -136,7 +138,8 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 8
+export const SAVE_VERSION = 9
+export const GAME_VERSION = '0.1.0'
 export type SaveErrorKey =
   | 'save.error.invalid_json'
   | 'save.error.unknown_format'
@@ -159,6 +162,8 @@ export class SaveError extends Error {
 export type SaveEnvelope = {
   format: typeof SAVE_FORMAT
   version: typeof SAVE_VERSION
+  saveVersion: typeof SAVE_VERSION
+  gameVersion: typeof GAME_VERSION
   savedAt: string
   state: State
 }
@@ -224,7 +229,7 @@ export function createState(): State {
     threat: CONFIG.initial.threat,
     speed: 0,
     time: 0,
-    cats: CONFIG.cats.map(cat => ({ ...cat, sleeping: false, injuredRemaining: 0, equipment: emptyEquipment() })),
+    cats: CONFIG.cats.map(cat => ({ ...cat, sleeping: false, injuredRemaining: 0, equipment: emptyEquipment(), pendingEquipment: {} })),
     missions: structuredClone(templates.slice(0, CONFIG.mission.initialAvailableCount)),
     missionSerial: 0,
     rngSeed: CONFIG.initial.rngSeed,
@@ -296,6 +301,13 @@ function isValidEquipment(value: unknown) {
     || ITEM_DEFINITIONS.some(item => item.id === value[slot.id] && item.slot === slot.id))
 }
 
+function isValidPendingEquipment(value: unknown) {
+  if (!isRecord(value)) return false
+  return EQUIPMENT_SLOTS.every(slot => value[slot.id] === undefined
+    || value[slot.id] === null
+    || ITEM_DEFINITIONS.some(item => item.id === value[slot.id] && item.slot === slot.id))
+}
+
 function isValidCat(value: unknown) {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string' || typeof value.role !== 'string') return false
   const numericFields = ['energy', 'reaction', 'combat', 'tech', 'perception', 'scouting', 'cleanupTrait', 'supportTrait', 'attackTrait', 'injuryTrait', 'injuredRemaining']
@@ -303,6 +315,7 @@ function isValidCat(value: unknown) {
     && typeof value.sleeping === 'boolean'
     && (value.assignedTo === undefined || typeof value.assignedTo === 'string')
     && isValidEquipment(value.equipment)
+    && isValidPendingEquipment(value.pendingEquipment)
 }
 
 function isValidTarget(value: unknown): value is NonNullable<Squad['target']> {
@@ -474,6 +487,7 @@ function migrateLegacyState(value: unknown) {
   delete migrated.activeView
   if (Array.isArray(migrated.cats)) {
     for (const cat of migrated.cats) {
+      if (isRecord(cat) && !isRecord(cat.pendingEquipment)) cat.pendingEquipment = {}
       if (isRecord(cat) && typeof cat.sleeping !== 'boolean') {
         cat.sleeping = isFiniteNumber(cat.energy) && cat.energy <= CONFIG.sleep.sleepAtEnergy
       }
@@ -527,14 +541,19 @@ function isValidState(value: unknown): value is State {
   return true
 }
 
-export function serializeState(state: State) {
+export function serializeState(state: State, pretty = true) {
+  // Vite HMR can preserve a pre-migration in-memory state while replacing this module.
+  // Normalize it before autosaving so an already open tab does not write an invalid v9 save.
+  state.cats.forEach(cat => { cat.pendingEquipment ??= {} })
   const envelope: SaveEnvelope = {
     format: SAVE_FORMAT,
     version: SAVE_VERSION,
+    saveVersion: SAVE_VERSION,
+    gameVersion: GAME_VERSION,
     savedAt: new Date().toISOString(),
     state,
   }
-  return JSON.stringify(envelope, null, 2)
+  return JSON.stringify(envelope, null, pretty ? 2 : undefined)
 }
 
 export function deserializeState(payload: string): State {
@@ -545,12 +564,12 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, 4, 5, 6, 7, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
   const legacyCandidate = envelope.version === 1 ? migrateV1State(envelope.state) : envelope.state
-  const candidate = envelope.version === SAVE_VERSION ? legacyCandidate : migrateLegacyState(legacyCandidate)
+  const candidate = migrateLegacyState(legacyCandidate)
   if (!isValidState(candidate)) throw new SaveError('save.error.corrupted')
 
   const restored = structuredClone(candidate)
@@ -564,8 +583,29 @@ export function deserializeState(payload: string): State {
       belt: cat.equipment.belt,
       hands: cat.equipment.hands,
     }
+    cat.pendingEquipment = { ...cat.pendingEquipment }
   })
   return restored
+}
+
+/** Current-format saves only. Legacy migrations remain available to old
+ * low-level tests/tools, but the application must never load or import them. */
+export function deserializeCurrentSave(payload: string): State {
+  let envelope: unknown
+  try {
+    envelope = JSON.parse(payload)
+  } catch {
+    throw new SaveError('save.error.invalid_json')
+  }
+  if (!isRecord(envelope) || envelope.gameVersion !== GAME_VERSION) {
+    throw new SaveError('save.error.unsupported_version', {
+      version: String(isRecord(envelope) ? envelope.gameVersion ?? envelope.version : 'unknown'),
+    })
+  }
+  if (envelope.version !== SAVE_VERSION) {
+    throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
+  }
+  return deserializeState(payload)
 }
 
 export function successfulCleanups(state: State) {
@@ -630,7 +670,6 @@ export function assignCat(state: State, catId: string, squadId: string) {
     if (!wakeForWorkOrder(state, cat)) return false
   }
 
-  state.speed = 0
   if (currentSquad) currentSquad.members = currentSquad.members.filter(id => id !== catId)
   if (targetSquad) {
     targetSquad.members.push(catId)
@@ -648,7 +687,6 @@ export function assignCat(state: State, catId: string, squadId: string) {
 export function setSquadStyle(state: State, squadId: string, style: SquadStyle) {
   const squad = state.squads.find(candidate => candidate.id === squadId)
   if (!squad || squad.phase !== 'base' || squad.style === style) return false
-  state.speed = 0
   squad.style = style
   note(state, 'log.squad_style', { squad: squad.name, style })
   return true
@@ -657,7 +695,6 @@ export function setSquadStyle(state: State, squadId: string, style: SquadStyle) 
 export function setSquadAutoDispatch(state: State, squadId: string, enabled: boolean) {
   const squad = state.squads.find(candidate => candidate.id === squadId)
   if (!squad || squad.autoDispatch === enabled) return false
-  state.speed = 0
   squad.autoDispatch = enabled
   note(state, enabled ? 'log.auto_dispatch_enabled' : 'log.auto_dispatch_disabled', { squad: squad.name })
   return true
@@ -677,12 +714,64 @@ function itemBonus(itemId: ItemId, key: 'cleanupBonus' | 'supportBonus' | 'attac
 }
 
 export function canEditEquipment(state: State, catId: string) {
-  return canEditCat(state, catId)
+  return state.cats.some(cat => cat.id === catId)
+}
+
+function hasPendingSlot(cat: Cat, slot: EquipmentSlot) {
+  return Boolean(cat.pendingEquipment && slot in cat.pendingEquipment)
+}
+
+export function getEquipmentSelection(cat: Cat, slot: EquipmentSlot) {
+  return hasPendingSlot(cat, slot) ? cat.pendingEquipment[slot] ?? undefined : cat.equipment[slot]
+}
+
+export function hasPendingEquipment(cat: Cat, slot?: EquipmentSlot) {
+  return slot ? hasPendingSlot(cat, slot) : EQUIPMENT_SLOTS.some(candidate => hasPendingSlot(cat, candidate.id))
+}
+
+function squadHasPendingEquipment(state: State, squad: Squad) {
+  return membersOf(state, squad).some(cat => hasPendingEquipment(cat))
+}
+
+function queueEquipment(state: State, cat: Cat, slot: EquipmentSlot, itemId?: ItemId) {
+  cat.pendingEquipment ??= {}
+  const currentItemId = cat.equipment[slot]
+  const selectedItemId = getEquipmentSelection(cat, slot)
+  if (selectedItemId === itemId) return false
+  if (itemId) {
+    const definition = itemDefinition(itemId)
+    if (!definition || definition.slot !== slot || (itemId !== currentItemId && state.inventory[itemId] <= 0)) return false
+  }
+
+  const previousPendingItem = hasPendingSlot(cat, slot) ? cat.pendingEquipment[slot] : undefined
+  if (previousPendingItem) state.inventory[previousPendingItem]++
+
+  if (itemId === currentItemId) {
+    delete cat.pendingEquipment[slot]
+    note(state, 'log.equipment_queue_canceled', { cat: cat.name, slot: EQUIPMENT_SLOTS.find(candidate => candidate.id === slot)?.name ?? slot })
+  } else {
+    if (itemId) state.inventory[itemId]--
+    cat.pendingEquipment[slot] = itemId ?? null
+    if (itemId) note(state, 'log.item_queued', { cat: cat.name, item: itemDefinition(itemId)?.name ?? itemId })
+    else note(state, 'log.slot_clear_queued', { cat: cat.name, slot: EQUIPMENT_SLOTS.find(candidate => candidate.id === slot)?.name ?? slot })
+  }
+
+  const squad = state.squads.find(candidate => candidate.id === cat.assignedTo)
+  // A field cat may receive a loadout order at any point.  Do not interrupt
+  // travel or the current cleanup: dispatchNextMissionOrReturn() will route
+  // the squad home immediately after that cleanup, while the `field` case
+  // can return it right away because there is no work left to preserve.
+  if (squad?.phase === 'field' && hasPendingEquipment(cat)) {
+    sendHome(squad)
+    note(state, 'log.squad_returning_for_equipment', { squad: squad.name })
+  }
+  return true
 }
 
 export function equipItem(state: State, catId: string, slot: EquipmentSlot, itemId?: ItemId) {
   const cat = state.cats.find(candidate => candidate.id === catId)
   if (!cat || !canEditEquipment(state, catId)) return false
+  if (!catIsAtBase(state, cat)) return queueEquipment(state, cat, slot, itemId)
   const currentItemId = cat.equipment[slot]
   if (currentItemId === itemId) return false
   if (itemId) {
@@ -690,7 +779,6 @@ export function equipItem(state: State, catId: string, slot: EquipmentSlot, item
     if (!definition || definition.slot !== slot || state.inventory[itemId] <= 0) return false
   }
 
-  state.speed = 0
   if (currentItemId) state.inventory[currentItemId]++
   if (itemId) state.inventory[itemId]--
   cat.equipment[slot] = itemId
@@ -700,6 +788,23 @@ export function equipItem(state: State, catId: string, slot: EquipmentSlot, item
   if (itemId) note(state, 'log.item_equipped', { cat: cat.name, item: itemDefinition(itemId)?.name ?? itemId })
   else note(state, 'log.slot_cleared', { cat: cat.name, slot: EQUIPMENT_SLOTS.find(candidate => candidate.id === slot)?.name ?? slot })
   syncAchievements(state)
+  return true
+}
+
+function applyPendingEquipment(state: State, cat: Cat) {
+  if (!hasPendingEquipment(cat)) return false
+  for (const slot of EQUIPMENT_SLOTS) {
+    if (!hasPendingSlot(cat, slot.id)) continue
+    const currentItemId = cat.equipment[slot.id]
+    const plannedItemId = cat.pendingEquipment[slot.id]
+    if (currentItemId) state.inventory[currentItemId]++
+    cat.equipment[slot.id] = plannedItemId ?? undefined
+    if (plannedItemId === 'medkit' && cat.injuredRemaining > CONFIG.raid.medkitRecoveryTime) {
+      cat.injuredRemaining = CONFIG.raid.medkitRecoveryTime
+    }
+  }
+  cat.pendingEquipment = {}
+  note(state, 'log.equipment_plan_applied', { cat: cat.name })
   return true
 }
 
@@ -774,6 +879,7 @@ export function getManualDispatchBlockReason(state: State, squadId: string, miss
   if (!squad || !mission || mission.status !== 'available') return 'dispatch.reason.unavailable'
   if (squad.autoDispatch) return 'dispatch.reason.auto_enabled'
   if (!['base', 'field'].includes(squad.phase)) return 'dispatch.reason.away'
+  if (squadHasPendingEquipment(state, squad)) return 'dispatch.reason.pending_equipment'
   const members = membersOf(state, squad)
   if (!members.length) return 'dispatch.reason.empty'
   if (members.some(cat => cat.injuredRemaining > 0)) return 'dispatch.reason.injured'
@@ -805,6 +911,11 @@ function rewardMission(state: State, squad: Squad) {
 function dispatchNextMissionOrReturn(state: State, squad: Squad) {
   const previousMissionId = squad.missionId
   const origin = squad.target ? { x: squad.target.x, y: squad.target.y } : { ...CONFIG.map.base }
+  if (squadHasPendingEquipment(state, squad)) {
+    sendHome(squad)
+    note(state, 'log.squad_returning_for_equipment', { squad: squad.name })
+    return
+  }
   const availableMissions = state.missions.filter(mission => mission.status === 'available')
   const fatigueBlocked = squad.autoDispatch && availableMissions.length > 0
     && !availableMissions.some(mission => hasEnergyForMissionFrom(state, squad, origin, mission))
@@ -936,7 +1047,18 @@ function spawnMission(state: State): Mission {
     if (clear) return { id: `cleanup-${serial}`, title: label, x, y, priority, status: 'available' }
   }
   const serial = ++state.missionSerial
-  return { id: `cleanup-${serial}`, title: label, ...generation.fallback, priority, status: 'available' }
+  const fallbackCandidates: MapPoint[] = [{ ...generation.fallback }]
+  for (let y = generation.y.minimum; y <= generation.y.minimum + generation.y.range; y += generation.minimumSeparation) {
+    for (let x = generation.x.minimum; x <= generation.x.minimum + generation.x.range; x += generation.minimumSeparation) {
+      fallbackCandidates.push({ x, y })
+    }
+  }
+  const fallback = fallbackCandidates.reduce((best, candidate) => {
+    const separation = Math.min(...state.missions.map(mission => Math.hypot(mission.x - candidate.x, mission.y - candidate.y)), Number.POSITIVE_INFINITY)
+    const bestSeparation = Math.min(...state.missions.map(mission => Math.hypot(mission.x - best.x, mission.y - best.y)), Number.POSITIVE_INFINITY)
+    return separation > bestSeparation ? candidate : best
+  })
+  return { id: `cleanup-${serial}`, title: label, ...fallback, priority, status: 'available' }
 }
 
 function desiredMissionCount(time: number) {
@@ -1251,6 +1373,7 @@ function arriveAtBase(state: State, squad: Squad) {
   squad.routeFrom = { ...CONFIG.map.base }
   squad.restAfterReturn = false
   note(state, 'log.squad_returned', { squad: squad.name })
+  membersOf(state, squad).forEach(cat => applyPendingEquipment(state, cat))
   if (shouldRest) membersOf(state, squad).forEach(cat => putCatToSleep(state, cat))
 }
 
@@ -1353,6 +1476,11 @@ export function tick(state: State, seconds: number) {
       continue
     }
     if (squad.phase === 'field') {
+      if (squadHasPendingEquipment(state, squad)) {
+        sendHome(squad)
+        note(state, 'log.squad_returning_for_equipment', { squad: squad.name })
+        continue
+      }
       const origin = getSquadMapPosition(squad)
       const availableMissions = state.missions.filter(mission => mission.status === 'available')
       if (squad.autoDispatch && startMission(state, squad, undefined, origin)) continue
@@ -1420,4 +1548,74 @@ export function tick(state: State, seconds: number) {
     }
   }
   syncAchievements(state)
+}
+
+export type GameCommand =
+  | { type: 'set_speed'; speed: Speed }
+  | { type: 'assign_cat'; catId: string; squadId: string }
+  | { type: 'equip_item'; catId: string; slot: EquipmentSlot; itemId?: ItemId }
+  | { type: 'set_squad_style'; squadId: string; style: SquadStyle }
+  | { type: 'set_auto_dispatch'; squadId: string; enabled: boolean }
+  | { type: 'dispatch_squad'; squadId: string; missionId: string }
+  | { type: 'return_squad'; squadId: string }
+  | { type: 'select_research'; researchId?: ResearchId }
+  | { type: 'resolve_raid'; action: 'escape' | 'attack' | 'support' }
+  | { type: 'resolve_raid_followup'; action: 'retreat' | 'continue' }
+  | { type: 'resolve_ninth_life'; decision: NinthLifeDecision }
+  | { type: 'continue_after_finale' }
+
+/**
+ * The only owner of the live world state.  UI code must use dispatch/tick and
+ * receive copies through snapshot(); it never receives this mutable object.
+ */
+export class GameCore {
+  private world: State
+
+  constructor(initialState: State = createState()) {
+    this.world = initialState
+  }
+
+  dispatch(command: GameCommand): boolean {
+    switch (command.type) {
+      case 'set_speed':
+        if (command.speed !== 0 && (
+          this.world.storyIncident
+          || this.world.finalSummaryVisible
+          || (this.world.incident && this.world.incident.stage !== 'support_en_route')
+        )) return false
+        this.world.speed = command.speed
+        return true
+      case 'assign_cat': return assignCat(this.world, command.catId, command.squadId)
+      case 'equip_item': return equipItem(this.world, command.catId, command.slot, command.itemId)
+      case 'set_squad_style': return setSquadStyle(this.world, command.squadId, command.style)
+      case 'set_auto_dispatch': return setSquadAutoDispatch(this.world, command.squadId, command.enabled)
+      case 'dispatch_squad': return dispatchSquadToMission(this.world, command.squadId, command.missionId)
+      case 'return_squad': return returnSquadToBase(this.world, command.squadId)
+      case 'select_research': return selectResearch(this.world, command.researchId)
+      case 'resolve_raid': return resolveRaidDecision(this.world, command.action)
+      case 'resolve_raid_followup': return resolveRaidFollowup(this.world, command.action)
+      case 'resolve_ninth_life': return resolveNinthLife(this.world, command.decision)
+      case 'continue_after_finale': return continueAfterFinale(this.world)
+    }
+  }
+
+  tick(seconds: number) {
+    tick(this.world, seconds)
+  }
+
+  drainEvents() {
+    return drainEvents(this.world)
+  }
+
+  snapshot(): State {
+    return structuredClone(this.world)
+  }
+
+  replaceState(nextState: State) {
+    this.world = structuredClone(nextState)
+  }
+
+  serialize(pretty = true) {
+    return serializeState(this.world, pretty)
+  }
 }

@@ -14,7 +14,7 @@ import {
   successfulCleanups,
   tick,
   type State,
-} from './simulation.ts'
+} from '../src/simulation.ts'
 
 function advanceUntil(state: State, condition: () => boolean, message: string, maxSteps = 1_000) {
   for (let step = 0; step < maxSteps; step++) {

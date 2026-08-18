@@ -7,7 +7,7 @@ import {
   getRaidOptions,
   type NinthLifeDecision,
   type State,
-} from '../core/simulation'
+} from '@nine-lives/game-core'
 import { translate, type Locale } from '../i18n'
 
 const props = defineProps<{ state: State; locale: Locale; newGameConfirmOpen: boolean; totalRuns: number }>()

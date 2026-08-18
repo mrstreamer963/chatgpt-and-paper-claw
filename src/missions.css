@@ -68,6 +68,9 @@ button.cleanup-pin > small { top: 59px; }
 button.cleanup-pin:hover > span,
 button.cleanup-pin.selected > span { border-style: solid; box-shadow: 0 0 24px #e6a34ccc; }
 button.cleanup-pin:focus-visible > span { outline: 2px solid #f4d195; outline-offset: 4px; }
+button.cleanup-pin.enhanced-alert { color: #ff8b5c; }
+button.cleanup-pin.enhanced-alert > span { border-style: solid; border-width: 2px; border-color: #ff8b5c; box-shadow: 0 0 0 7px #ff754522, 0 0 26px #ff7545aa; animation-duration: .7s; }
+button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 
 .cleanup-pin.assigned small { color: #b5e7bd; }
 
@@ -351,25 +354,29 @@ button.cleanup-pin:focus-visible > span { outline: 2px solid #f4d195; outline-of
 .forecast-breakdown b { color: #c6d1ca; font-weight: 600; }
 
 .cat-card { margin-top: 7px; border: 1px solid #303b3b; background: #1b2224; }
-.cat-card[open] { border-color: #4d5c59; }
+.cat-card:has(details[open]) { border-color: #4d5c59; }
 .cat-card.injured { background: #3a211f66; }
 .cat-card.sleeping { background: #172126; }
-.cat-card summary { position: relative; display: grid; grid-template-columns: 42px minmax(0, 1fr) 115px; align-items: center; gap: 9px; padding: 8px; cursor: pointer; list-style: none; }
-.cat-card summary::-webkit-details-marker { display: none; }
-.cat-card summary::after { content: '+'; position: absolute; margin-left: 34px; margin-top: 31px; display: grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; background: #263130; color: #9baaa4; font-size: 10px; }
-.cat-card[open] summary::after { content: '−'; }
+.cat-header { display: grid; grid-template-columns: 42px minmax(0, 1fr) 115px; align-items: center; gap: 9px; padding: 8px; }
+.cat-card details summary { padding: 6px 9px; border-top: 1px solid #303b3b; color: #91a099; cursor: pointer; font-size: 9px; list-style: none; }
+.cat-card details summary::-webkit-details-marker { display: none; }
+.cat-card details summary::before { content: '+'; margin-right: 6px; color: #d7a25f; }
+.cat-card details[open] summary::before { content: '−'; }
 .cat-card img { width: 42px; height: 42px; object-fit: cover; border: 1px solid #51605d; }
 .cat-card b, .cat-card small { display: block; }
 .cat-card small { margin-top: 4px; color: #91a099; font-size: 9px; }
 .cat-card .injury-label { color: #ef765e; }
 .cat-card .sleeping-label { color: #73a9bd; }
-.cat-card summary select { min-width: 0; padding: 6px 4px; font-size: 9px; }
+.cat-assignment { padding: 0 9px 8px 60px; }
+.cat-assignment select { width: 100%; min-width: 0; padding: 6px 4px; font-size: 9px; }
+.cat-header select { min-width: 0; padding: 6px 4px; font-size: 9px; }
 .cat-card select:disabled { cursor: not-allowed; opacity: .5; }
 .cat-trait { display: flex; justify-content: space-between; gap: 8px; padding: 8px 9px; border-top: 1px solid #303b3b; color: #d6ae71; font-size: 8px; }
 .cat-trait small { margin: 0; color: #6f7f79; text-align: right; }
 
 .equipment-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 9px; border-top: 1px solid #303b3b; background: #151b1d; }
 .equipment-grid label > span { display: block; margin-bottom: 4px; color: #687772; font-size: 8px; letter-spacing: .8px; text-transform: uppercase; }
+.equipment-grid label.pending select { border: 1px solid #d8893a !important; background: inherit !important; color: inherit !important; box-shadow: inset 0 0 0 1px #d8893a66; }
 .equipment-grid select { width: 100%; min-width: 0; padding: 6px 4px; color: #b8c1bb; font-size: 8px; }
 
 .warehouse { margin-top: 18px; border-top: 1px solid #3b4645; padding-top: 13px; }
