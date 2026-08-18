@@ -13,6 +13,7 @@ import {
   getEquipmentSelection,
   getRaidOptions,
   getSquadCleanupEstimate,
+  getSquadMapPosition,
   GameCore,
   hasPendingEquipment,
   hasPendingAssignment,
@@ -241,6 +242,23 @@ test('the player can order an idle field squad back to base', () => {
   assert.equal(squad.phase, 'base')
   assert.equal(pixel.sleeping, false)
   assert.equal(returnSquadToBase(state, squad.id), false)
+})
+
+test('an idle field squad moves toward base without retaining a mission target', () => {
+  const state = createState()
+  const squad = state.squads[0]
+  squad.members = ['pixel']
+  squad.phase = 'field'
+  squad.routeFrom = { x: 30, y: 30 }
+  squad.target = undefined
+  state.speed = 1
+
+  assert.equal(returnSquadToBase(state, squad.id), true)
+  const duration = squad.travelDuration
+  tick(state, duration / 2)
+
+  assert.deepEqual(getSquadMapPosition(squad), { x: 38, y: 40.5 })
+  assert.equal(squad.phase, 'returning')
 })
 
 test('a manual field squad returns automatically when no available mission is safe', () => {

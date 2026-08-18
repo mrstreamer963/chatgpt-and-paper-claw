@@ -1291,9 +1291,16 @@ function removeMission(state: State, missionId?: string) {
 
 export function getSquadMapPosition(squad: Squad): MapPoint {
   if (squad.phase === 'base') return { ...CONFIG.map.base }
+  if (squad.phase === 'returning') {
+    const ratio = Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9))
+    return {
+      x: squad.routeFrom.x + (CONFIG.map.base.x - squad.routeFrom.x) * ratio,
+      y: squad.routeFrom.y + (CONFIG.map.base.y - squad.routeFrom.y) * ratio,
+    }
+  }
   if (!squad.target) return { ...squad.routeFrom }
-  if (!['outbound', 'support', 'returning'].includes(squad.phase)) return { x: squad.target.x, y: squad.target.y }
-  const destination = squad.phase === 'returning' ? CONFIG.map.base : squad.target
+  if (!['outbound', 'support'].includes(squad.phase)) return { x: squad.target.x, y: squad.target.y }
+  const destination = squad.target
   const ratio = Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9))
   return {
     x: squad.routeFrom.x + (destination.x - squad.routeFrom.x) * ratio,

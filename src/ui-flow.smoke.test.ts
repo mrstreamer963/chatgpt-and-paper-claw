@@ -123,6 +123,22 @@ test('completed mission disappears while its squad route continues from the squa
   assert.doesNotMatch(legacyHtml, /cleanup-pin/)
 })
 
+test('an idle field squad draws its return route without a mission target', async () => {
+  const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
+  const state = createState()
+  const squad = state.squads[0]
+  squad.members = ['pixel']
+  squad.phase = 'returning'
+  squad.target = undefined
+  squad.routeFrom = { x: 30, y: 35 }
+  squad.travel = 0
+  squad.travelDuration = 10
+
+  const html = await render(OperationsMap, { state, locale: 'ru' })
+
+  assert.match(html, /<line[^>]*x1="30"[^>]*y1="35"[^>]*x2="46"[^>]*y2="51"/)
+})
+
 test('queued equipment remains visible in its orange slot without extra status text', async () => {
   const BaseOperations = await loadComponent('/src/components/BaseOperations.vue')
   const state = createState()

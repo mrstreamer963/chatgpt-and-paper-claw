@@ -68,7 +68,7 @@ function formatLog(entry: LogEntry) {
   <section class="map-view">
     <div class="map-grid" :class="{ 'incident-active': state.incident }">
       <svg class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <line v-for="squad in state.squads.filter(candidate => candidate.target && ['outbound', 'support', 'returning'].includes(candidate.phase))" :key="`route-${squad.id}`" v-bind="route(squad)" :class="squad.id" />
+        <line v-for="squad in state.squads.filter(candidate => candidate.phase === 'returning' || (candidate.target && ['outbound', 'support'].includes(candidate.phase)))" :key="`route-${squad.id}`" v-bind="route(squad)" :class="squad.id" />
       </svg>
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <div class="district d1">{{ tr('Старый сектор') }}</div><div class="district d2">{{ tr('Промзона') }}</div><div class="district d3">{{ tr('Терминал') }}</div>
