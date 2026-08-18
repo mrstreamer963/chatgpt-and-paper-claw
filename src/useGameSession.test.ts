@@ -3,6 +3,13 @@ import test from 'node:test'
 import { createState, serializeState } from '@nine-lives/game-core'
 import { translate } from './i18n.ts'
 import { readSessionPreferences, serializeSessionEnvelope } from './sessionSave.ts'
+import { stateSpeedBeforePause } from './speedShortcut.ts'
+
+test('space pause remembers a running speed and defaults to x1 for a paused save', () => {
+  assert.equal(stateSpeedBeforePause(10), 10)
+  assert.equal(stateSpeedBeforePause(5), 5)
+  assert.equal(stateSpeedBeforePause(0), 1)
+})
 
 test('session save transfers locale and normalized audio settings', () => {
   const sound = { muted: true, master: 0.4, ambient: 0.3, signals: 0.9 }

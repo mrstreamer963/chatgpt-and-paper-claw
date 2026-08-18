@@ -16,6 +16,7 @@ import {
 import { createSoundSystem, normalizeSoundPreferences, type SoundPreferences } from './audio'
 import { translate, type Locale } from './i18n'
 import { readSessionPreferences, serializeSessionEnvelope } from './sessionSave'
+import { stateSpeedBeforePause } from './speedShortcut'
 import { WorkerWorldSource } from './world/WorkerWorldSource'
 import { WorldProjection } from './world/reconcileWorld'
 
@@ -106,6 +107,7 @@ export async function createGameSession() {
   const audioUnavailable = ref(false)
   const soundSystem = createSoundSystem(soundPreferences)
   const saveStatus = ref<SaveStatus>({ key: initialSaveError })
+  let speedBeforeSpacePause: Exclude<Speed, 0> = stateSpeedBeforePause(initialSnapshot.state.speed)
   let stateReady = false
   const queuedEvents: GameEvent[][] = []
 
@@ -221,13 +223,23 @@ export async function createGameSession() {
   }
 
   const speedByKey: Partial<Record<string, Speed>> = {
-    Space: 0, Digit1: 1, Numpad1: 1, Digit2: 5, Numpad2: 5, Digit3: 10, Numpad3: 10,
+    Digit1: 1, Numpad1: 1, Digit2: 5, Numpad2: 5, Digit3: 10, Numpad3: 10,
   }
 
   function handleSpeedShortcut(event: KeyboardEvent) {
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
     const target = event.target as HTMLElement | null
     if (target?.matches('input, select, textarea, [contenteditable="true"]')) return
+    if (event.code === 'Space') {
+      event.preventDefault()
+      const currentSpeed = state.value.speed
+      if (currentSpeed === 0) void setSpeed(speedBeforeSpacePause)
+      else {
+        speedBeforeSpacePause = currentSpeed
+        void setSpeed(0)
+      }
+      return
+    }
     const speed = speedByKey[event.code]
     if (speed === undefined) return
     event.preventDefault()
