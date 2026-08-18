@@ -369,6 +369,7 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .cat-card .sleeping-label { color: #73a9bd; }
 .cat-assignment { padding: 0 9px 8px 60px; }
 .cat-assignment select { width: 100%; min-width: 0; padding: 6px 4px; font-size: 9px; }
+.cat-assignment select.pending, .cat-header select.pending { border-color: #d8893a; box-shadow: inset 0 0 0 1px #d8893a66; }
 .cat-header select { min-width: 0; padding: 6px 4px; font-size: 9px; }
 .cat-card select:disabled { cursor: not-allowed; opacity: .5; }
 .cat-trait { display: flex; justify-content: space-between; gap: 8px; padding: 8px 9px; border-top: 1px solid #303b3b; color: #d6ae71; font-size: 8px; }

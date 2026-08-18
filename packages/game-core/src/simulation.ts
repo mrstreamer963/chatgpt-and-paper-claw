@@ -24,6 +24,7 @@ export type Cat = {
   injuryTrait: number
   sleeping: boolean
   assignedTo?: string
+  pendingAssignment?: string | null
   injuredRemaining: number
   equipment: Equipment
   pendingEquipment: PendingEquipment
@@ -314,6 +315,7 @@ function isValidCat(value: unknown) {
   return numericFields.every(field => isFiniteNumber(value[field]))
     && typeof value.sleeping === 'boolean'
     && (value.assignedTo === undefined || typeof value.assignedTo === 'string')
+    && (value.pendingAssignment === undefined || value.pendingAssignment === null || typeof value.pendingAssignment === 'string')
     && isValidEquipment(value.equipment)
     && isValidPendingEquipment(value.pendingEquipment)
 }
@@ -653,26 +655,33 @@ function syncCatSleep(state: State) {
 }
 
 export function canEditCat(state: State, catId: string) {
-  const cat = state.cats.find(candidate => candidate.id === catId)
-  if (!cat?.assignedTo) return true
-  return state.squads.find(squad => squad.id === cat.assignedTo)?.phase === 'base'
+  return state.cats.some(cat => cat.id === catId)
 }
 
-export function assignCat(state: State, catId: string, squadId: string) {
-  const cat = state.cats.find(candidate => candidate.id === catId)
-  if (!cat || !canEditCat(state, catId)) return false
+export function hasPendingAssignment(cat: Cat) {
+  return 'pendingAssignment' in cat
+}
+
+export function getCatAssignmentSelection(cat: Cat) {
+  return hasPendingAssignment(cat) ? cat.pendingAssignment ?? undefined : cat.assignedTo
+}
+
+function squadHasPendingAssignment(state: State, squad: Squad) {
+  return state.cats.some(cat => hasPendingAssignment(cat)
+    && (cat.assignedTo === squad.id || cat.pendingAssignment === squad.id))
+}
+
+function applyAssignment(state: State, cat: Cat, targetSquad?: Squad, wakeForOrder = true) {
   const currentSquad = state.squads.find(squad => squad.id === cat.assignedTo)
-  const targetSquad = squadId ? state.squads.find(squad => squad.id === squadId) : undefined
-  if (squadId && (!targetSquad || targetSquad.phase !== 'base')) return false
   if (currentSquad?.id === targetSquad?.id || (!currentSquad && !targetSquad)) return false
-  if (targetSquad) {
+  if (targetSquad && wakeForOrder) {
     if (cat.energy <= CONFIG.sleep.sleepAtEnergy) putCatToSleep(state, cat)
     if (!wakeForWorkOrder(state, cat)) return false
   }
 
-  if (currentSquad) currentSquad.members = currentSquad.members.filter(id => id !== catId)
+  if (currentSquad) currentSquad.members = currentSquad.members.filter(id => id !== cat.id)
   if (targetSquad) {
-    targetSquad.members.push(catId)
+    targetSquad.members.push(cat.id)
     cat.assignedTo = targetSquad.id
     if (state.research.workerCatId === cat.id) state.research.workerCatId = undefined
     note(state, 'log.cat_assigned', { cat: cat.name, squad: targetSquad.name })
@@ -682,6 +691,70 @@ export function assignCat(state: State, catId: string, squadId: string) {
   }
   syncAchievements(state)
   return true
+}
+
+function requestRosterReturn(state: State, squad: Squad) {
+  if (squad.phase !== 'field') return
+  sendHome(squad)
+  note(state, 'log.squad_returning_for_roster', { squad: squad.name })
+}
+
+function queueAssignment(state: State, cat: Cat, targetSquad?: Squad) {
+  const selectedSquadId = getCatAssignmentSelection(cat)
+  const targetSquadId = targetSquad?.id
+  if (selectedSquadId === targetSquadId) return false
+
+  if (targetSquadId === cat.assignedTo) {
+    delete cat.pendingAssignment
+    note(state, 'log.assignment_queue_canceled', { cat: cat.name })
+  } else {
+    cat.pendingAssignment = targetSquadId ?? null
+    if (targetSquad) note(state, 'log.cat_assignment_queued', { cat: cat.name, squad: targetSquad.name })
+    else {
+      const currentSquad = state.squads.find(squad => squad.id === cat.assignedTo)
+      note(state, 'log.cat_unassignment_queued', { cat: cat.name, squad: currentSquad?.name ?? '' })
+    }
+  }
+
+  const currentSquad = state.squads.find(squad => squad.id === cat.assignedTo)
+  if (currentSquad && hasPendingAssignment(cat)) requestRosterReturn(state, currentSquad)
+  if (targetSquad && hasPendingAssignment(cat)) requestRosterReturn(state, targetSquad)
+  return true
+}
+
+function applyAvailablePendingAssignments(state: State) {
+  for (const cat of state.cats) {
+    if (!hasPendingAssignment(cat)) continue
+    const currentSquad = state.squads.find(squad => squad.id === cat.assignedTo)
+    const targetSquad = cat.pendingAssignment
+      ? state.squads.find(squad => squad.id === cat.pendingAssignment)
+      : undefined
+    if (currentSquad && currentSquad.phase !== 'base') continue
+    if (cat.pendingAssignment && (!targetSquad || targetSquad.phase !== 'base')) continue
+    const intendedSquadId = cat.pendingAssignment ?? undefined
+    delete cat.pendingAssignment
+    if (intendedSquadId === cat.assignedTo) continue
+    applyAssignment(state, cat, targetSquad, false)
+  }
+}
+
+export function assignCat(state: State, catId: string, squadId: string) {
+  const cat = state.cats.find(candidate => candidate.id === catId)
+  if (!cat || !canEditCat(state, catId)) return false
+  const targetSquad = squadId ? state.squads.find(squad => squad.id === squadId) : undefined
+  if (squadId && !targetSquad) return false
+  if (getCatAssignmentSelection(cat) === targetSquad?.id) return false
+  if (hasPendingAssignment(cat) && targetSquad?.id === cat.assignedTo) {
+    delete cat.pendingAssignment
+    note(state, 'log.assignment_queue_canceled', { cat: cat.name })
+    return true
+  }
+  const currentSquad = state.squads.find(squad => squad.id === cat.assignedTo)
+  const canApplyNow = (!currentSquad || currentSquad.phase === 'base')
+    && (!targetSquad || targetSquad.phase === 'base')
+  if (!canApplyNow) return queueAssignment(state, cat, targetSquad)
+  if (hasPendingAssignment(cat)) delete cat.pendingAssignment
+  return applyAssignment(state, cat, targetSquad)
 }
 
 export function setSquadStyle(state: State, squadId: string, style: SquadStyle) {
@@ -731,6 +804,10 @@ export function hasPendingEquipment(cat: Cat, slot?: EquipmentSlot) {
 
 function squadHasPendingEquipment(state: State, squad: Squad) {
   return membersOf(state, squad).some(cat => hasPendingEquipment(cat))
+}
+
+function squadHasPendingChanges(state: State, squad: Squad) {
+  return squadHasPendingEquipment(state, squad) || squadHasPendingAssignment(state, squad)
 }
 
 function queueEquipment(state: State, cat: Cat, slot: EquipmentSlot, itemId?: ItemId) {
@@ -879,6 +956,7 @@ export function getManualDispatchBlockReason(state: State, squadId: string, miss
   if (!squad || !mission || mission.status !== 'available') return 'dispatch.reason.unavailable'
   if (squad.autoDispatch) return 'dispatch.reason.auto_enabled'
   if (!['base', 'field'].includes(squad.phase)) return 'dispatch.reason.away'
+  if (squadHasPendingAssignment(state, squad)) return 'dispatch.reason.pending_assignment'
   if (squadHasPendingEquipment(state, squad)) return 'dispatch.reason.pending_equipment'
   const members = membersOf(state, squad)
   if (!members.length) return 'dispatch.reason.empty'
@@ -911,9 +989,11 @@ function rewardMission(state: State, squad: Squad) {
 function dispatchNextMissionOrReturn(state: State, squad: Squad) {
   const previousMissionId = squad.missionId
   const origin = squad.target ? { x: squad.target.x, y: squad.target.y } : { ...CONFIG.map.base }
-  if (squadHasPendingEquipment(state, squad)) {
+  if (squadHasPendingChanges(state, squad)) {
     sendHome(squad)
-    note(state, 'log.squad_returning_for_equipment', { squad: squad.name })
+    note(state, squadHasPendingAssignment(state, squad)
+      ? 'log.squad_returning_for_roster'
+      : 'log.squad_returning_for_equipment', { squad: squad.name })
     return
   }
   const availableMissions = state.missions.filter(mission => mission.status === 'available')
@@ -1364,6 +1444,7 @@ export function resolveRaidFollowup(state: State, action: 'retreat' | 'continue'
 
 function arriveAtBase(state: State, squad: Squad) {
   const shouldRest = squad.restAfterReturn
+  const returnedMembers = membersOf(state, squad)
   removeMission(state, squad.missionId)
   squad.phase = 'base'
   squad.missionId = undefined
@@ -1373,8 +1454,9 @@ function arriveAtBase(state: State, squad: Squad) {
   squad.routeFrom = { ...CONFIG.map.base }
   squad.restAfterReturn = false
   note(state, 'log.squad_returned', { squad: squad.name })
-  membersOf(state, squad).forEach(cat => applyPendingEquipment(state, cat))
-  if (shouldRest) membersOf(state, squad).forEach(cat => putCatToSleep(state, cat))
+  returnedMembers.forEach(cat => applyPendingEquipment(state, cat))
+  if (shouldRest) returnedMembers.forEach(cat => putCatToSleep(state, cat))
+  applyAvailablePendingAssignments(state)
 }
 
 function chooseResearchWorker(state: State) {
@@ -1469,16 +1551,19 @@ export function tick(state: State, seconds: number) {
   syncCatSleep(state)
   updateRestAndRecovery(state, elapsed, workingCatId)
   syncCatSleep(state)
+  applyAvailablePendingAssignments(state)
 
   for (const squad of state.squads) {
     if (squad.phase === 'base') {
-      if (squad.autoDispatch) startMission(state, squad)
+      if (squad.autoDispatch && !squadHasPendingChanges(state, squad)) startMission(state, squad)
       continue
     }
     if (squad.phase === 'field') {
-      if (squadHasPendingEquipment(state, squad)) {
+      if (squadHasPendingChanges(state, squad)) {
         sendHome(squad)
-        note(state, 'log.squad_returning_for_equipment', { squad: squad.name })
+        note(state, squadHasPendingAssignment(state, squad)
+          ? 'log.squad_returning_for_roster'
+          : 'log.squad_returning_for_equipment', { squad: squad.name })
         continue
       }
       const origin = getSquadMapPosition(squad)

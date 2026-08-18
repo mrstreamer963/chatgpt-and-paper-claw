@@ -9,11 +9,13 @@ import {
   drainEvents,
   equipItem,
   getAchievements,
+  getCatAssignmentSelection,
   getEquipmentSelection,
   getRaidOptions,
   getSquadCleanupEstimate,
   GameCore,
   hasPendingEquipment,
+  hasPendingAssignment,
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
@@ -758,14 +760,79 @@ test('an incomplete current-version save is normalized like an open HMR tab', ()
   assert.deepEqual(restored.cats[0].pendingEquipment, {})
 })
 
-test('a deployed squad composition is locked', () => {
+test('removing a deployed cat is deferred until the current cleanup and return finish', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  const alpha = state.squads[0]
+  alpha.phase = 'cleanup'
+  alpha.missionId = state.missions[0].id
+  alpha.target = { ...state.missions[0] }
+  alpha.progress = 29
+  state.missions[0].status = 'assigned'
+  state.missions[0].squadId = alpha.id
+  state.raidTriggered = true
   state.speed = 1
-  tick(state, 0.25)
-  assert.equal(state.squads[0].phase, 'outbound')
-  assert.equal(assignCat(state, 'pixel', ''), false)
-  assert.equal(state.cats.find(cat => cat.id === 'pixel')?.assignedTo, 'alpha')
+
+  assert.equal(assignCat(state, pixel.id, ''), true)
+  assert.equal(hasPendingAssignment(pixel), true)
+  assert.equal(getCatAssignmentSelection(pixel), undefined)
+  assert.equal(pixel.assignedTo, 'alpha')
+  assert.deepEqual(alpha.members, ['pixel'])
+
+  tick(state, 1)
+  assert.equal(alpha.completed, 1)
+  assert.equal(alpha.phase, 'returning')
+  assert.equal(pixel.assignedTo, 'alpha')
+
+  tick(state, alpha.travelDuration + 1)
+  assert.equal(alpha.phase, 'base')
+  assert.equal(pixel.assignedTo, undefined)
+  assert.equal(hasPendingAssignment(pixel), false)
+  assert.deepEqual(alpha.members, [])
+})
+
+test('moving a deployed cat waits for both squads to return and can be canceled', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  const alpha = state.squads[0]
+  const bravo = state.squads[1]
+  alpha.phase = 'cleanup'
+  bravo.phase = 'field'
+  bravo.routeFrom = { x: 40, y: 40 }
+
+  assert.equal(assignCat(state, pixel.id, 'bravo'), true)
+  assert.equal(pixel.assignedTo, 'alpha')
+  assert.equal(pixel.pendingAssignment, 'bravo')
+  assert.equal(bravo.phase, 'returning')
+
+  assert.equal(assignCat(state, pixel.id, 'alpha'), true)
+  assert.equal(hasPendingAssignment(pixel), false)
+  assert.equal(pixel.assignedTo, 'alpha')
+
+  assert.equal(assignCat(state, pixel.id, 'bravo'), true)
+  alpha.phase = 'base'
+  state.speed = 1
+  tick(state, bravo.travelDuration + 1)
+  assert.equal(bravo.phase, 'base')
+  assert.equal(pixel.assignedTo, 'bravo')
+  assert.deepEqual(alpha.members, [])
+  assert.deepEqual(bravo.members, ['pixel'])
+})
+
+test('a deferred assignment survives save and load', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  state.squads[0].phase = 'outbound'
+
+  assert.equal(assignCat(state, 'pixel', 'bravo'), true)
+  const restored = deserializeState(serializeState(state))
+  const pixel = restored.cats.find(cat => cat.id === 'pixel')!
+
+  assert.equal(pixel.assignedTo, 'alpha')
+  assert.equal(pixel.pendingAssignment, 'bravo')
+  assert.equal(getCatAssignmentSelection(pixel), 'bravo')
 })
 
 test('the scripted raid pauses the third cleanup at 15 seconds', () => {

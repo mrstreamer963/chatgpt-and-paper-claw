@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
-import { canEditCat, type Cat, type State } from '@nine-lives/game-core'
+import { canEditCat, getCatAssignmentSelection, hasPendingAssignment, type Cat, type State } from '@nine-lives/game-core'
 import { translate, type Locale } from '../i18n'
 
 const props = defineProps<{
@@ -10,12 +10,12 @@ const props = defineProps<{
   assign: (catId: string, squadId: string) => Promise<boolean>
 }>()
 const tr = (key: string) => translate(props.locale, key)
-const draftSquadId = ref(props.cat.assignedTo || '')
+const draftSquadId = ref(getCatAssignmentSelection(props.cat) || '')
 let interacting = false
 let pendingAssignment: Promise<void> | undefined
 const editable = ref(canEditCat(props.state, props.cat.id))
 
-watch(() => props.cat.assignedTo, value => {
+watch(() => getCatAssignmentSelection(props.cat), value => {
   if (!interacting) draftSquadId.value = value || ''
 })
 watch(() => canEditCat(props.state, props.cat.id), value => {
@@ -33,7 +33,7 @@ async function handleChange(event: Event) {
   const task = (async () => {
     await props.assign(props.cat.id, value)
     await nextTick()
-    draftSquadId.value = props.cat.assignedTo || ''
+    draftSquadId.value = getCatAssignmentSelection(props.cat) || ''
   })()
   pendingAssignment = task
   await task
@@ -44,7 +44,7 @@ async function finishInteraction() {
   if (pendingAssignment) await pendingAssignment
   interacting = false
   editable.value = canEditCat(props.state, props.cat.id)
-  draftSquadId.value = props.cat.assignedTo || ''
+  draftSquadId.value = getCatAssignmentSelection(props.cat) || ''
 }
 
 </script>
@@ -52,6 +52,7 @@ async function finishInteraction() {
 <template>
   <select
     v-model="draftSquadId"
+    :class="{ pending: hasPendingAssignment(cat) }"
     :disabled="!editable"
     :aria-label="tr('Назначение в отряд')"
     @pointerdown="beginInteraction"

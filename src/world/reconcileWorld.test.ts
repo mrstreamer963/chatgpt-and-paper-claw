@@ -112,6 +112,30 @@ test('adding a deferred equipment key invalidates Vue computed state', () => {
   projection.dispose()
 })
 
+test('adding and removing a deferred assignment invalidates Vue computed state', () => {
+  const snapshot = initialSnapshot()
+  const source = new FakeWorldSource(snapshot)
+  const projection = new WorldProjection(source, snapshot, () => {})
+  const marlowe = projection.state.value.cats[0]
+  const pending = computed(() => 'pendingAssignment' in marlowe)
+  const selected = computed(() => marlowe.pendingAssignment)
+  assert.equal(pending.value, false)
+  assert.equal(selected.value, undefined)
+
+  const queued = structuredClone(snapshot.state)
+  queued.cats[0].pendingAssignment = 'bravo'
+  source.emit(createWorldPatch(snapshot.state, queued, 0)!)
+  assert.equal(pending.value, true)
+  assert.equal(selected.value, 'bravo')
+
+  const applied = structuredClone(queued)
+  delete applied.cats[0].pendingAssignment
+  source.emit(createWorldPatch(queued, applied, 1)!)
+  assert.equal(pending.value, false)
+  assert.equal(selected.value, undefined)
+  projection.dispose()
+})
+
 test('mission reconciliation preserves remaining entities and mutates member arrays in place', () => {
   const snapshot = initialSnapshot()
   const target = structuredClone(snapshot.state)
