@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  assistMission,
   assignCat,
   continueAfterFinale,
   createSquad,
@@ -20,6 +21,7 @@ import {
   getSquadCleanupEstimate,
   getSquadMapPosition,
   getMoveSquadBlockReason,
+  getSplitSquadBlockReason,
   GameCore,
   hasPendingEquipment,
   hasPendingAssignment,
@@ -28,10 +30,12 @@ import {
   resolveRaidFollowup,
   returnSquadToBase,
   moveSquadToPoint,
+  mergeSquads,
   selectResearch,
   serializeState,
   setSquadAutoDispatch,
   setSquadStyle,
+  splitSquad,
   successfulCleanups,
   tick,
 } from '../src/simulation.ts'
@@ -173,14 +177,13 @@ test('an auto squad chains a priority mission nearest to its current position', 
   state.raidTriggered = true
   assignCat(state, 'pixel', 'alpha')
   const squad = state.squads[0]
-  const current = { id: 'current', title: 'mission.a', x: 20, y: 20, priority: 1, status: 'assigned' as const, squadId: squad.id }
-  const farther = { id: 'farther', title: 'mission.b', x: 80, y: 80, priority: 2, status: 'available' as const }
-  const nearby = { id: 'nearby', title: 'mission.c', x: 24, y: 20, priority: 2, status: 'available' as const }
+  const current = { id: 'current', title: 'mission.a', x: 20, y: 20, priority: 1, status: 'assigned' as const, squadId: squad.id, progress: 29, interruptionPolicy: 'preserve_progress' as const }
+  const farther = { id: 'farther', title: 'mission.b', x: 80, y: 80, priority: 2, status: 'available' as const, progress: 0, interruptionPolicy: 'preserve_progress' as const }
+  const nearby = { id: 'nearby', title: 'mission.c', x: 24, y: 20, priority: 2, status: 'available' as const, progress: 0, interruptionPolicy: 'preserve_progress' as const }
   state.missions = [current, farther, nearby]
   squad.phase = 'cleanup'
   squad.missionId = current.id
   squad.target = { id: current.id, title: current.title, x: current.x, y: current.y, priority: current.priority }
-  squad.progress = 29
   state.speed = 1
 
   tick(state, 1)
@@ -206,7 +209,7 @@ test('a tired field squad preserves the trip home and sleeps after returning', (
   squad.phase = 'cleanup'
   squad.missionId = current.id
   squad.target = { id: current.id, title: current.title, x: current.x, y: current.y, priority: current.priority }
-  squad.progress = 29
+  current.progress = 29
   pixel.energy = 23
   state.speed = 1
 
@@ -261,7 +264,7 @@ test('a manual squad waits in the field and accepts its next mission there', () 
   squad.phase = 'cleanup'
   squad.missionId = completedMission.id
   squad.target = { ...completedMission }
-  squad.progress = 29
+  completedMission.progress = 29
   state.speed = 1
 
   tick(state, 1)
@@ -431,7 +434,7 @@ function openRaid() {
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
   state.missions[0].squadId = squad.id
-  squad.progress = 14
+  state.missions[0].progress = 14
   state.speed = 1
   tick(state, 1)
   assert.ok(state.incident)
@@ -450,7 +453,7 @@ function finishThirdCleanup() {
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
   state.missions[0].squadId = squad.id
-  squad.progress = 29
+  state.missions[0].progress = 29
   state.speed = 1
   tick(state, 1)
   return state
@@ -590,7 +593,7 @@ test('field equipment is reserved and applied after the squad returns', () => {
   squad.phase = 'cleanup'
   squad.missionId = mission.id
   squad.target = { ...mission }
-  squad.progress = 29
+  mission.progress = 29
   state.raidTriggered = true
   state.speed = 5
 
@@ -906,7 +909,7 @@ test('removing a deployed cat is deferred until the current cleanup and return f
   alpha.phase = 'cleanup'
   alpha.missionId = state.missions[0].id
   alpha.target = { ...state.missions[0] }
-  alpha.progress = 29
+  state.missions[0].progress = 29
   state.missions[0].status = 'assigned'
   state.missions[0].squadId = alpha.id
   state.raidTriggered = true
@@ -977,14 +980,15 @@ test('the scripted raid pauses the third cleanup at 15 seconds', () => {
   const state = createState()
   for (const catId of ['pixel', 'rust', 'bastion']) assignCat(state, catId, 'alpha')
   for (const catId of ['marlowe', 'shorokh', 'myata']) assignCat(state, catId, 'bravo')
+  state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
   state.speed = 10
   for (let step = 0; step < 500 && !state.incident; step++) tick(state, 0.25)
   assert.ok(state.incident)
   assert.equal(state.incident.stage, 'decision')
   assert.equal(state.speed, 0)
   assert.equal(successfulCleanups(state), 2)
-  const squad = state.squads.find(candidate => candidate.id === state.incident?.primarySquadId)
-  assert.equal(squad?.progress, 15)
+  const mission = state.missions.find(candidate => candidate.id === state.incident?.missionId)
+  assert.equal(mission?.progress, 15)
 })
 
 test('escaping cancels the raid mission without a reward', () => {
@@ -1007,6 +1011,7 @@ test('successful support arrives after eight seconds and can complete the cleanu
   const state = createState()
   for (const catId of ['pixel', 'rust', 'bastion']) assignCat(state, catId, 'alpha')
   for (const catId of ['marlowe', 'shorokh', 'myata']) assignCat(state, catId, 'bravo')
+  state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
   state.squads[0].completed = 2
   state.speed = 10
   for (let step = 0; step < 100 && !state.incident; step++) tick(state, 0.25)
@@ -1033,7 +1038,157 @@ test('successful support arrives after eight seconds and can complete the cleanu
   assert.equal(state.fame, fame + 5)
   assert.equal(state.scrap, scrap + 10)
   assert.equal(state.incident, undefined)
-  assert.equal(support?.phase, 'returning')
+  assert.notEqual(support?.phase, 'assisting')
+})
+
+test('retasking a working squad preserves cleanup progress on the old mission', () => {
+  const state = createState()
+  state.raidTriggered = true
+  assignCat(state, 'pixel', 'alpha')
+  const squad = state.squads[0]
+  const first = state.missions[0]
+  const second = state.missions[1]
+  assert.equal(dispatchSquadToMission(state, squad.id, first.id), true)
+  state.speed = 1
+  tick(state, squad.travelDuration)
+  tick(state, 4)
+  const savedProgress = first.progress
+  assert.ok(savedProgress > 0)
+
+  assert.equal(dispatchSquadToMission(state, squad.id, second.id), true)
+  assert.equal(first.status, 'available')
+  assert.equal(first.squadId, undefined)
+  assert.equal(first.progress, savedProgress)
+  assert.equal(squad.missionId, second.id)
+})
+
+test('an occupied cleanup accepts a separate assisting squad', () => {
+  const state = createState()
+  state.raidTriggered = true
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  const mission = state.missions[0]
+  const primary = state.squads[0]
+  const assistant = state.squads[1]
+  assert.equal(dispatchSquadToMission(state, primary.id, mission.id), true)
+  state.speed = 1
+  tick(state, primary.travelDuration)
+  assert.equal(assistMission(state, assistant.id, mission.id), true)
+  tick(state, assistant.travelDuration)
+  assert.equal(primary.phase, 'cleanup')
+  assert.equal(assistant.phase, 'assisting')
+  assert.equal(mission.squadId, primary.id)
+  const before = mission.progress
+  tick(state, 1)
+  assert.ok(mission.progress - before > 1.9)
+  assert.equal(returnSquadToBase(state, primary.id), true)
+  assert.equal(mission.squadId, assistant.id)
+  assert.equal(assistant.phase, 'cleanup')
+})
+
+test('a safe field split creates a normal manual squad at the same position', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'rust', 'alpha')
+  const source = state.squads[0]
+  source.phase = 'field'
+  source.routeFrom = { x: 42, y: 44 }
+  assert.equal(getSplitSquadBlockReason(state, source.id, ['pixel']), undefined)
+  assert.equal(splitSquad(state, source.id, ['pixel']), true)
+  const created = state.squads.at(-1)!
+  assert.deepEqual(source.members, ['rust'])
+  assert.deepEqual(created.members, ['pixel'])
+  assert.equal(created.phase, 'field')
+  assert.equal(created.autoDispatch, false)
+  assert.deepEqual(getSquadMapPosition(created), { x: 42, y: 44 })
+  assert.equal(state.cats.find(cat => cat.id === 'pixel')?.assignedTo, created.id)
+})
+
+test('a field squad physically merges into the clicked target squad', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  const source = state.squads[0]
+  const target = state.squads[1]
+  source.phase = 'field'
+  target.phase = 'field'
+  source.routeFrom = { x: 40, y: 40 }
+  target.routeFrom = { x: 40, y: 40 }
+  assert.equal(mergeSquads(state, source.id, target.id), true)
+  assert.equal(source.phase, 'merging')
+  state.speed = 1
+  tick(state, 2)
+  assert.equal(state.squads.some(squad => squad.id === source.id), false)
+  assert.deepEqual(target.members.sort(), ['marlowe', 'pixel'])
+  assert.equal(state.cats.find(cat => cat.id === 'pixel')?.assignedTo, target.id)
+})
+
+test('a merge intercepts a moving target on its route', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  const source = state.squads[0]
+  const target = state.squads[1]
+  source.phase = 'field'
+  source.routeFrom = { x: 30, y: 50 }
+  target.phase = 'moving'
+  target.autoDispatch = false
+  target.routeFrom = { x: 45, y: 50 }
+  target.destination = { x: 65, y: 50 }
+  target.travel = 0
+  target.travelDuration = 5
+
+  assert.equal(mergeSquads(state, source.id, target.id), true)
+  state.speed = 1
+  for (let step = 0; step < 100 && state.squads.some(squad => squad.id === source.id); step++) tick(state, 0.25)
+
+  assert.equal(state.squads.some(squad => squad.id === source.id), false)
+  assert.deepEqual(target.members.sort(), ['marlowe', 'pixel'])
+})
+
+test('a merge chain follows the final absorbing squad', () => {
+  const state = createState()
+  assert.equal(createSquad(state), true)
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  assignCat(state, 'rust', 'squad-3')
+  const alpha = state.squads[0]
+  const bravo = state.squads[1]
+  const charlie = state.squads[2]
+  for (const squad of state.squads) {
+    squad.phase = 'field'
+    squad.routeFrom = { x: 40, y: 40 }
+  }
+  alpha.routeFrom = { x: 20, y: 20 }
+
+  assert.equal(mergeSquads(state, bravo.id, charlie.id), true)
+  assert.equal(mergeSquads(state, alpha.id, bravo.id), true)
+  state.speed = 1
+  tick(state, 0.25)
+  assert.equal(alpha.mergeTargetSquadId, charlie.id)
+  for (let step = 0; step < 100 && state.squads.length > 1; step++) tick(state, 0.25)
+
+  assert.deepEqual(state.squads.map(squad => squad.id), [charlie.id])
+  assert.deepEqual(charlie.members.sort(), ['marlowe', 'pixel', 'rust'])
+})
+
+test('version eleven mission work migrates from the assigned squad', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  const mission = state.missions[0]
+  const squad = state.squads[0]
+  mission.status = 'assigned'
+  mission.squadId = squad.id
+  squad.missionId = mission.id
+  const envelope = JSON.parse(serializeState(state))
+  envelope.version = 11
+  envelope.saveVersion = 11
+  envelope.state.squads[0].progress = 7
+  delete envelope.state.missions[0].progress
+  delete envelope.state.missions[0].interruptionPolicy
+  const restored = deserializeCurrentSave(JSON.stringify(envelope))
+  assert.equal(restored.missions[0].progress, 7)
+  assert.equal(restored.missions[0].interruptionPolicy, 'preserve_progress')
 })
 
 test('a raid exposes every candidate and dispatches the squad selected by id', () => {
@@ -1050,6 +1205,59 @@ test('a raid exposes every candidate and dispatches the squad selected by id', (
   assert.equal(resolveRaidDecision(state, 'support', charlie.id), true)
   assert.equal(state.incident.supportSquadId, charlie.id)
   assert.equal(charlie.phase, 'support')
+})
+
+test('a squad already assigned to a mission cannot be recalled as raid support', () => {
+  const state = openRaid()
+  const support = state.squads.find(squad => squad.id === 'bravo')!
+  const mission = state.missions[1]
+  support.phase = 'cleanup'
+  support.missionId = mission.id
+  support.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
+  mission.status = 'assigned'
+  mission.squadId = support.id
+
+  assert.deepEqual(getRaidOptions(state)?.support.candidates, [])
+  assert.equal(resolveRaidDecision(state, 'support', support.id), false)
+  assert.equal(state.incident?.stage, 'decision')
+})
+
+test('a raid captures every squad that has arrived at the cleanup', () => {
+  const state = createState()
+  assert.equal(createSquad(state), true)
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  assignCat(state, 'rust', 'squad-3')
+  const primary = state.squads[0]
+  const assistant = state.squads[1]
+  const mission = state.missions[0]
+  primary.completed = 2
+  primary.phase = 'cleanup'
+  assistant.phase = 'assisting'
+  primary.missionId = mission.id
+  assistant.missionId = mission.id
+  primary.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
+  assistant.target = { ...primary.target }
+  primary.missionArrivalTime = 1
+  assistant.missionArrivalTime = 2
+  mission.status = 'assigned'
+  mission.squadId = primary.id
+  mission.progress = 14
+  state.speed = 1
+
+  tick(state, 0.5)
+
+  assert.deepEqual(state.incident?.participantSquadIds, ['alpha', 'bravo'])
+  assert.equal(primary.phase, 'incident')
+  assert.equal(assistant.phase, 'incident')
+  if (!state.incident) assert.fail('raid was not opened')
+  state.incident.supportRoll = 1
+  assert.equal(resolveRaidDecision(state, 'support', 'squad-3'), true)
+  tick(state, 8)
+  assert.equal(resolveRaidFollowup(state, 'continue'), true)
+  assert.equal(primary.phase, 'cleanup')
+  assert.equal(assistant.phase, 'assisting')
+  assert.equal(state.squads.find(squad => squad.id === 'squad-3')?.phase, 'assisting')
 })
 
 test('the ninth life investigation opens immediately after the third successful cleanup', () => {
@@ -1083,12 +1291,12 @@ test('a cautious story decision waits for 50 fame before the final summary', () 
   const squad = state.squads[0]
   state.speed = 1
   squad.phase = 'cleanup'
-  squad.progress = 29
+  state.missions.find(mission => mission.id === squad.missionId)!.progress = 29
   tick(state, 1)
   assert.equal(state.fame, 45)
   assert.equal(state.finalSummaryVisible, false)
   squad.phase = 'cleanup'
-  squad.progress = 29
+  state.missions.find(mission => mission.id === squad.missionId)!.progress = 29
   tick(state, 1)
   assert.equal(state.fame, 50)
   assert.equal(state.finalSummaryVisible, true)
@@ -1139,7 +1347,7 @@ test('equipped headset adds fifteen points to the support chance', () => {
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   equipped.missions[0].status = 'assigned'
   equipped.missions[0].squadId = squad.id
-  squad.progress = 14
+  equipped.missions[0].progress = 14
   equipped.speed = 1
   tick(equipped, 1)
   assert.equal(getRaidOptions(equipped)?.support.candidates.find(candidate => candidate.squadId === 'bravo')?.chance, Math.min(100, (baselineChance ?? 0) + 15))
@@ -1159,7 +1367,7 @@ test('completed defense research and an equipped weapon unlock a successful atta
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
   state.missions[0].squadId = squad.id
-  squad.progress = 14
+  state.missions[0].progress = 14
   state.speed = 1
   tick(state, 1)
   assert.equal(getRaidOptions(state)?.attack.available, true)
@@ -1199,7 +1407,7 @@ test('a medkit shortens the recovery time of its injured wearer', () => {
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
   state.missions[0].squadId = squad.id
-  squad.progress = 14
+  state.missions[0].progress = 14
   state.speed = 1
   tick(state, 1)
   if (!state.incident) assert.fail('raid was not opened')
@@ -1224,7 +1432,7 @@ test('an armor vest reduces injury chance and returns to the warehouse when remo
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
   state.missions[0].squadId = squad.id
-  squad.progress = 14
+  state.missions[0].progress = 14
   state.speed = 1
   tick(state, 1)
   if (!state.incident) assert.fail('raid was not opened')

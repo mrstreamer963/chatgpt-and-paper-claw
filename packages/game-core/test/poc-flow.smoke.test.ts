@@ -33,6 +33,7 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
 
   for (const catId of ['pixel', 'rust', 'bastion']) assert.equal(assignCat(state, catId, 'alpha'), true)
   for (const catId of ['marlowe', 'shorokh', 'myata']) assert.equal(assignCat(state, catId, 'bravo'), true)
+  state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
 
   state.speed = 10
   advanceUntil(state, () => Boolean(state.incident), 'The scripted raider incident did not open')

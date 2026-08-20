@@ -1,5 +1,6 @@
 .route-layer { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .route-layer line { fill: none; stroke: #e5ab64b8; stroke-width: 1.6; stroke-dasharray: 3.5 3; vector-effect: non-scaling-stroke; }
+.route-layer line.mission-link { stroke-width: 1; stroke-dasharray: 1.5 2; opacity: .72; }
 .map-grid.command-active { cursor: crosshair; }
 
 .base-pin,
@@ -51,6 +52,14 @@
 .command-hint { position: absolute; z-index: 8; left: 50%; top: 20px; display: grid; grid-template-columns: 1fr auto; align-items: center; min-width: 330px; padding: 10px 12px; transform: translateX(-50%); border: 1px solid #c89455; background: #161d1eef; box-shadow: 0 10px 30px #0009; color: #edcf9b; font-size: 10px; letter-spacing: .5px; }
 .command-hint button { padding: 1px 6px; border: 0; color: #c7b38e; font-size: 18px; }
 .command-hint small { grid-column: 1 / -1; margin-top: 5px; color: #ef8267; font-size: 8px; }
+.split-open { position: absolute; z-index: 9; left: 50%; top: 76px; transform: translateX(-50%); border-color: #bd8451; background: #201b17f2; color: #f0c58c; }
+.split-panel { position: absolute; z-index: 12; left: 50%; top: 50%; width: min(360px, calc(100% - 32px)); transform: translate(-50%, -50%); padding: 18px; border: 1px solid #66513f; background: #171d1ff5; box-shadow: 0 18px 60px #000a; }
+.split-panel header { display: flex; justify-content: space-between; align-items: center; color: #f0d7b1; }
+.split-panel header button { border: 0; padding: 2px 7px; }
+.split-panel p,.split-panel small { display: block; color: #98a39e; font-size: 10px; line-height: 1.5; }
+.split-panel label { display: flex; gap: 9px; align-items: center; padding: 7px 0; border-bottom: 1px solid #30393a; }
+.split-panel > button { width: 100%; margin-top: 14px; border-color: #bd8451; color: #f0c58c; }
+.split-panel > button:disabled { opacity: .4; cursor: not-allowed; }
 
 .map-squad-list { margin: -8px 0 20px; padding-bottom: 18px; border-bottom: 1px solid #384042; }
 .map-squad-list h2 { margin-bottom: 10px; font-size: 14px; }

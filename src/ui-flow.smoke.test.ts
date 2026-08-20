@@ -41,6 +41,7 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   const state = createState()
   for (const catId of ['pixel', 'rust', 'bastion']) assignCat(state, catId, 'alpha')
   for (const catId of ['marlowe', 'shorokh', 'myata']) assignCat(state, catId, 'bravo')
+  state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
   drainEvents(state)
 
   const achievements = getAchievements(state)

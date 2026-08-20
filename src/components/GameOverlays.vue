@@ -65,7 +65,7 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
           <div class="support-choice-group">
             <header><b>{{ tr('Укрыться и запросить поддержку') }}</b><small>{{ tr('raid.support_choose') }}</small></header>
             <button v-for="candidate in raidOptions?.support.candidates ?? []" :key="candidate.squadId" class="choice support" @click="emit('raidDecision', 'support', candidate.squadId)">
-              <span><b>{{ tr(candidate.squadName) }}</b><small>{{ supportMembers(candidate.memberIds) }}</small><small>{{ tr('raid.support_location', { location: `raid.support.location.${candidate.location}`, seconds: state.research.nodes.emergency_dispatch.completed ? RESEARCH_RULES.researchedSupportTravelTime : RESEARCH_RULES.supportTravelTime }) }}</small><small v-if="candidate.willRecallMission" class="support-warning">{{ tr('raid.support_recall_warning') }}</small></span>
+              <span><b>{{ tr(candidate.squadName) }}</b><small>{{ supportMembers(candidate.memberIds) }}</small><small>{{ tr('raid.support_location', { location: `raid.support.location.${candidate.location}`, seconds: state.research.nodes.emergency_dispatch.completed ? RESEARCH_RULES.researchedSupportTravelTime : RESEARCH_RULES.supportTravelTime }) }}</small></span>
               <strong>{{ candidate.chance }}%</strong>
             </button>
             <button v-if="!raidOptions?.support.available" class="choice support" disabled><span><b>{{ tr('Укрыться и запросить поддержку') }}</b><small>{{ tr(raidOptions?.support.reason ?? '') }}</small></span><strong>{{ tr('НЕТ') }}</strong></button>
