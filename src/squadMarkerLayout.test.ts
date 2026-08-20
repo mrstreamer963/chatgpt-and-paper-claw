@@ -45,6 +45,22 @@ test('squad marker layout pushes two coincident squads equally in opposite direc
   assertSeparated([...result.values()])
 })
 
+test('squad marker layout treats a mission as a fixed repelling center', () => {
+  const result = layoutSquadMarkers([
+    { id: 'alpha', x: 50, y: 50 },
+    { id: 'bravo', x: 51, y: 50 },
+  ], {
+    ...viewport,
+    obstacles: [{ id: 'mission-a', x: 50, y: 50, size: 44 }],
+  })
+  const mission = { x: viewport.width / 2, y: viewport.height / 2 }
+  for (const point of result.values()) {
+    const position = pixels(point)
+    assert.ok(Math.abs(position.x - mission.x) >= 56 || Math.abs(position.y - mission.y) >= 56)
+  }
+  assertSeparated([...result.values()])
+})
+
 test('squad marker layout stays separated at map edges and is deterministic', () => {
   const points = ['delta', 'bravo', 'alpha', 'charlie'].map(id => ({ id, x: 5, y: 7 }))
   const first = layoutSquadMarkers(points, viewport)

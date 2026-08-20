@@ -46,7 +46,12 @@ const separatedSquadPositions = computed(() => layoutSquadMarkers(
   props.state.squads
     .filter(squad => squad.phase !== 'base')
     .map(squad => ({ id: squad.id, ...squadPosition(squad) })),
-  mapSize.value,
+  {
+    ...mapSize.value,
+    obstacles: props.state.missions
+      .filter(mission => mission.status === 'available' || isActiveAssignedMission(mission))
+      .map(mission => ({ id: mission.id, x: mission.x, y: mission.y, size: 44 })),
+  },
 ))
 
 function separatedSquadPosition(squad: Squad) {
