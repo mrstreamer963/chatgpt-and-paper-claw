@@ -178,7 +178,7 @@ test('queued equipment remains visible in its orange slot without extra status t
   assert.equal(state.speed, 10)
 })
 
-test('a manual field squad appears in the command list with its waiting state', async () => {
+test('a manual field squad shows its waiting state only in the command list', async () => {
   const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
   const state = createState()
   const squad = state.squads[0]
@@ -189,7 +189,8 @@ test('a manual field squad appears in the command list with its waiting state', 
 
   const html = await render(OperationsMap, { state, locale: 'ru' })
 
-  assert.match(html, /В поле \/ ожидает приказа/)
+  assert.equal(html.match(/В поле \/ ожидает приказа/g)?.length, 1)
+  assert.doesNotMatch(html, /class="squad-callout"><b>[^<]+<\/b><small>/)
   assert.match(html, /ОТРЯДЫ/)
   assert.match(html, /СВОБОДЕН/)
   assert.match(html, /class="available"/)
