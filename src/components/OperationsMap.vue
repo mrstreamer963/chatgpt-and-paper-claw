@@ -18,10 +18,36 @@ function squadPosition(squad: Squad) {
   return { x: Math.max(5, Math.min(95, x)), y: Math.max(7, Math.min(93, y)) }
 }
 
-function squadStyle(squad: Squad) {
+const squadPalette = ['#e5ab64', '#77c5c9', '#8fca78', '#c58fda', '#df7d72', '#7d9fdf']
+
+function squadIndex(squad: Squad) {
+  return Math.max(0, props.state.squads.findIndex(candidate => candidate.id === squad.id))
+}
+
+function squadColor(squad: Squad) {
+  const index = squadIndex(squad)
+  return squadPalette[index] ?? `hsl(${(index * 137.5) % 360} 54% 66%)`
+}
+
+function separatedSquadPosition(squad: Squad) {
   const position = squadPosition(squad)
+  const colliding = props.state.squads
+    .filter(candidate => candidate.phase !== 'base')
+    .filter(candidate => {
+      const other = squadPosition(candidate)
+      return Math.hypot(other.x - position.x, other.y - position.y) < 1.5
+    })
+    .sort((a, b) => a.id.localeCompare(b.id))
+  if (colliding.length < 2) return position
+  const index = colliding.findIndex(candidate => candidate.id === squad.id)
+  const angle = index / colliding.length * Math.PI * 2 - Math.PI / 2
+  return { x: position.x + Math.cos(angle) * 1.6, y: position.y + Math.sin(angle) * 1.6 }
+}
+
+function squadStyle(squad: Squad) {
+  const position = separatedSquadPosition(squad)
   if (squad.phase === 'base') return { left: `${base.x}%`, top: `${base.y}%`, opacity: 0 }
-  return { left: `${position.x}%`, top: `${position.y}%` }
+  return { left: `${position.x}%`, top: `${position.y}%`, '--squad-color': squadColor(squad) }
 }
 
 function route(squad: Squad) {
@@ -162,7 +188,7 @@ function formatLog(entry: LogEntry) {
   <section class="map-view">
     <div class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedSquadId || selectedTarget }" @click="selectMapPoint">
       <svg class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <line v-for="squad in state.squads.filter(candidate => ['returning', 'moving'].includes(candidate.phase) || (candidate.target && ['outbound', 'support'].includes(candidate.phase)))" :key="`route-${squad.id}`" v-bind="route(squad)" :class="squad.id" />
+        <line v-for="squad in state.squads.filter(candidate => ['returning', 'moving'].includes(candidate.phase) || (candidate.target && ['outbound', 'support'].includes(candidate.phase)))" :key="`route-${squad.id}`" v-bind="route(squad)" :style="{ stroke: squadColor(squad), strokeDasharray: `${3 + squadIndex(squad) % 4} ${2 + squadIndex(squad) % 3}` }" />
       </svg>
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <div class="district d1">{{ tr('Старый сектор') }}</div><div class="district d2">{{ tr('Промзона') }}</div><div class="district d3">{{ tr('Терминал') }}</div>
@@ -171,7 +197,7 @@ function formatLog(entry: LogEntry) {
       <div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span><b>{{ tr('БАЗА ЕЖЕЙ') }}</b><small>{{ tr('координаты подтверждены') }}</small></div>
       <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id, 'enhanced-alert': mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(mission.priority > 1 ? 'ПРИОРИТЕТ' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></button>
       <div v-for="mission in state.missions.filter(isActiveAssignedMission)" :key="`assigned-${mission.id}`" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(state.incident?.missionId === mission.id ? 'ТРЕВОГА' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }}</small></div>
-      <button v-for="squad in state.squads.filter(candidate => candidate.phase !== 'base')" :key="squad.id" type="button" class="squad-marker" :class="[squad.phase, squad.id, { selected: selectedSquadId === squad.id, available: squadIsAvailable(squad) }]" :style="squadStyle(squad)" @click.stop="selectSquad(squad)">
+      <button v-for="squad in state.squads.filter(candidate => candidate.phase !== 'base')" :key="squad.id" type="button" class="squad-marker" :class="[squad.phase, squad.id, squadIndex(squad) % 2 ? 'callout-right' : 'callout-left', { selected: selectedSquadId === squad.id, available: squadIsAvailable(squad) }]" :style="squadStyle(squad)" @click.stop="selectSquad(squad)">
         <div class="map-squad-tokens"><svg v-for="member in squad.members" :key="member" class="cat-silhouette" viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${member}`" /></svg></div>
         <span class="squad-callout"><b>{{ tr(squad.name) }}</b><small>{{ squadLabel(squad) }}</small></span>
       </button>

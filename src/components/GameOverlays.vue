@@ -15,7 +15,7 @@ const emit = defineEmits<{
   cancelNewGame: []
   newGame: []
   reset: []
-  raidDecision: [action: 'escape' | 'attack' | 'support']
+  raidDecision: [action: 'escape' | 'attack' | 'support', supportSquadId?: string]
   raidFollowup: [action: 'retreat' | 'continue']
   storyDecision: [decision: NinthLifeDecision]
   continueFinale: []
@@ -26,6 +26,14 @@ const raidOptions = computed(() => getRaidOptions(props.state))
 const primarySquad = computed(() => props.state.squads.find(squad => squad.id === props.state.incident?.primarySquadId))
 const supportSquad = computed(() => props.state.squads.find(squad => squad.id === props.state.incident?.supportSquadId))
 const storySquad = computed(() => props.state.squads.find(squad => squad.id === props.state.storyIncident?.foundBySquadId))
+
+function supportMembers(memberIds: string[]) {
+  return memberIds
+    .map(id => props.state.cats.find(cat => cat.id === id))
+    .filter(Boolean)
+    .map(cat => tr(cat!.name))
+    .join(', ')
+}
 
 const storyChoicePresentation: { id: NinthLifeDecision; title: string; tag: string; description: string; tone: string }[] = [
   { id: 'shelter', title: 'Укрыть дезертира', tag: 'Гуманность', description: 'Дать убежище на базе. Слух укрепит имя корпорации, но приведёт преследователей к нашим воротам.', tone: 'danger' },
@@ -54,7 +62,14 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
         <div class="incident-actions">
           <button class="choice safe" @click="emit('raidDecision', 'escape')"><span><b>{{ tr('Сбежать') }}</b><small>{{ tr('Миссия отменится без добычи и ранений.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong></button>
           <button class="choice" :disabled="!raidOptions?.attack.available" @click="emit('raidDecision', 'attack')"><span><b>{{ tr('Напасть') }}</b><small>{{ tr(raidOptions?.attack.available ? 'Использовать нелетальное оружие и вытеснить рейдеров.' : raidOptions?.attack.reason ?? '') }}</small></span><strong>{{ raidOptions?.attack.chance ? `${raidOptions.attack.chance}%` : tr('ЗАКРЫТО') }}</strong></button>
-          <button class="choice support" :disabled="!raidOptions?.support.available" @click="emit('raidDecision', 'support')"><span><b>{{ tr('Укрыться и запросить поддержку') }}</b><small v-if="raidOptions?.support.available">{{ tr('raid.support_description', { squad: raidOptions.support.supportSquadName ?? '', seconds: state.research.nodes.emergency_dispatch.completed ? RESEARCH_RULES.researchedSupportTravelTime : RESEARCH_RULES.supportTravelTime }) }}</small><small v-else>{{ tr(raidOptions?.support.reason ?? '') }}</small></span><strong>{{ raidOptions?.support.chance ? `${raidOptions.support.chance}%` : tr('НЕТ') }}</strong></button>
+          <div class="support-choice-group">
+            <header><b>{{ tr('Укрыться и запросить поддержку') }}</b><small>{{ tr('raid.support_choose') }}</small></header>
+            <button v-for="candidate in raidOptions?.support.candidates ?? []" :key="candidate.squadId" class="choice support" @click="emit('raidDecision', 'support', candidate.squadId)">
+              <span><b>{{ tr(candidate.squadName) }}</b><small>{{ supportMembers(candidate.memberIds) }}</small><small>{{ tr('raid.support_location', { location: `raid.support.location.${candidate.location}`, seconds: state.research.nodes.emergency_dispatch.completed ? RESEARCH_RULES.researchedSupportTravelTime : RESEARCH_RULES.supportTravelTime }) }}</small><small v-if="candidate.willRecallMission" class="support-warning">{{ tr('raid.support_recall_warning') }}</small></span>
+              <strong>{{ candidate.chance }}%</strong>
+            </button>
+            <button v-if="!raidOptions?.support.available" class="choice support" disabled><span><b>{{ tr('Укрыться и запросить поддержку') }}</b><small>{{ tr(raidOptions?.support.reason ?? '') }}</small></span><strong>{{ tr('НЕТ') }}</strong></button>
+          </div>
         </div>
       </template>
       <template v-else>

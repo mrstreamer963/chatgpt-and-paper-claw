@@ -55,6 +55,8 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
     totalRuns: 0,
     saveStatus: { key: 'save.ready' },
     assignCat: acceptedAction,
+    createSquad: acceptedAction,
+    disbandSquad: acceptedAction,
     equipItem: acceptedAction,
     setSquadStyle: acceptedAction,
   })
@@ -73,7 +75,7 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(overlayHtml, /Встреча с рейдерами/)
   assert.match(overlayHtml, /Укрыться и запросить поддержку/)
 
-  assert.equal(resolveRaidDecision(state, 'support'), true)
+  assert.equal(resolveRaidDecision(state, 'support', 'bravo'), true)
   assert.equal(state.speed, 1)
   tick(state, 8)
   overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 2 })
@@ -160,6 +162,8 @@ test('queued equipment remains visible in its orange slot without extra status t
     totalRuns: 0,
     saveStatus: { key: 'save.ready' },
     assignCat: acceptedAction,
+    createSquad: acceptedAction,
+    disbandSquad: acceptedAction,
     equipItem: acceptedAction,
     setSquadStyle: acceptedAction,
   })

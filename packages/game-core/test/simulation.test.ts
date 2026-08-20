@@ -3,13 +3,17 @@ import test from 'node:test'
 import {
   assignCat,
   continueAfterFinale,
+  createSquad,
   createState,
+  disbandSquad,
   deserializeCurrentSave,
   deserializeState,
   dispatchSquadToMission,
   drainEvents,
   equipItem,
   getAchievements,
+  getCreateSquadBlockReason,
+  getDisbandSquadBlockReason,
   getCatAssignmentSelection,
   getEquipmentSelection,
   getRaidOptions,
@@ -51,6 +55,54 @@ test('GameCore accepts a fresh-game cat assignment command', () => {
   const snapshot = core.snapshot()
   assert.equal(snapshot.cats.find(cat => cat.id === 'pixel')?.assignedTo, 'alpha')
   assert.deepEqual(snapshot.squads.find(squad => squad.id === 'alpha')?.members, ['pixel'])
+})
+
+test('squads can be created up to the staff count with stable non-reused ids', () => {
+  const state = createState()
+  assert.equal(state.squads.length, 2)
+  assert.equal(state.squadSerial, 2)
+  for (let expected = 3; expected <= 6; expected++) {
+    assert.equal(createSquad(state), true)
+    assert.equal(state.squads.at(-1)?.id, `squad-${expected}`)
+  }
+  assert.equal(getCreateSquadBlockReason(state), 'squad.manage.reason.limit')
+  assert.equal(createSquad(state), false)
+
+  assert.equal(disbandSquad(state, 'squad-3'), true)
+  assert.equal(createSquad(state), true)
+  assert.equal(state.squads.at(-1)?.id, 'squad-7')
+  assert.equal(state.squads.at(-1)?.name, 'squad.generated.07')
+  const restored = deserializeState(serializeState(state))
+  assert.equal(restored.squadSerial, 7)
+  assert.deepEqual(restored.squads.map(squad => squad.id), state.squads.map(squad => squad.id))
+})
+
+test('disbanding only accepts an empty idle non-final squad', () => {
+  const state = createState()
+  assert.equal(getDisbandSquadBlockReason(state, 'alpha'), undefined)
+  assignCat(state, 'pixel', 'alpha')
+  assert.equal(getDisbandSquadBlockReason(state, 'alpha'), 'squad.manage.reason.members')
+  assert.equal(disbandSquad(state, 'alpha'), false)
+  assignCat(state, 'pixel', '')
+  state.squads[0].completed = 2
+  assert.equal(disbandSquad(state, 'alpha'), true)
+  assert.equal(successfulCleanups(state), 2)
+  assert.equal(state.disbandedSquadCleanups, 2)
+  assert.equal(getDisbandSquadBlockReason(state, 'bravo'), 'squad.manage.reason.last')
+  assert.equal(disbandSquad(state, 'bravo'), false)
+})
+
+test('adding a staff cat increases dynamic squad capacity', () => {
+  const state = createState()
+  while (createSquad(state)) { /* fill current capacity */ }
+  const recruit = structuredClone(state.cats[0])
+  recruit.id = 'recruit'
+  recruit.name = 'cat.recruit.name'
+  recruit.assignedTo = undefined
+  recruit.pendingAssignment = undefined
+  state.cats.push(recruit)
+  assert.equal(createSquad(state), true)
+  assert.equal(state.squads.length, 7)
 })
 
 test('cleanup estimate combines cats, traits and equipment into work rate', () => {
@@ -315,14 +367,18 @@ test('an arbitrary march survives save and load', () => {
   assert.equal(restored.squads[0].travel, state.squads[0].travel)
 })
 
-test('the application migrates version nine saves after adding march state', () => {
+test('the application migrates version ten saves after adding squad lifecycle state', () => {
   const envelope = JSON.parse(serializeState(createState()))
-  envelope.version = 9
-  envelope.saveVersion = 9
+  envelope.version = 10
+  envelope.saveVersion = 10
+  delete envelope.state.squadSerial
+  delete envelope.state.disbandedSquadCleanups
 
   const restored = deserializeCurrentSave(JSON.stringify(envelope))
   assert.equal(restored.squads[0].phase, 'base')
   assert.equal(restored.squads[0].destination, undefined)
+  assert.equal(restored.squadSerial, 2)
+  assert.equal(restored.disbandedSquadCleanups, 0)
 })
 
 test('a manual field squad returns automatically when no available mission is safe', () => {
@@ -774,7 +830,7 @@ test('version three saves resume support that was left paused by the old flow', 
   const state = openRaid()
   if (!state.incident) assert.fail('raid was not opened')
   state.incident.supportRoll = 1
-  assert.equal(resolveRaidDecision(state, 'support'), true)
+  assert.equal(resolveRaidDecision(state, 'support', 'bravo'), true)
   state.speed = 0
 
   const envelope = JSON.parse(serializeState(state))
@@ -959,7 +1015,7 @@ test('successful support arrives after eight seconds and can complete the cleanu
   const fame = state.fame
   const scrap = state.scrap
 
-  assert.equal(resolveRaidDecision(state, 'support'), true)
+  assert.equal(resolveRaidDecision(state, 'support', 'bravo'), true)
   assert.equal(state.incident.stage, 'support_en_route')
   const support = state.squads.find(squad => squad.id === state.incident?.supportSquadId)
   assert.equal(support?.phase, 'support')
@@ -978,6 +1034,22 @@ test('successful support arrives after eight seconds and can complete the cleanu
   assert.equal(state.scrap, scrap + 10)
   assert.equal(state.incident, undefined)
   assert.equal(support?.phase, 'returning')
+})
+
+test('a raid exposes every candidate and dispatches the squad selected by id', () => {
+  const state = openRaid()
+  assert.equal(createSquad(state), true)
+  const charlie = state.squads.at(-1)!
+  assert.equal(assignCat(state, 'shorokh', charlie.id), true)
+  const candidates = getRaidOptions(state)?.support.candidates ?? []
+  assert.deepEqual(candidates.map(candidate => candidate.squadId).sort(), ['bravo', charlie.id].sort())
+  assert.equal(resolveRaidDecision(state, 'support', 'missing'), false)
+  assert.equal(state.incident?.stage, 'decision')
+  if (!state.incident) assert.fail('raid was not opened')
+  state.incident.supportRoll = 1
+  assert.equal(resolveRaidDecision(state, 'support', charlie.id), true)
+  assert.equal(state.incident.supportSquadId, charlie.id)
+  assert.equal(charlie.phase, 'support')
 })
 
 test('the ninth life investigation opens immediately after the third successful cleanup', () => {
@@ -1054,10 +1126,10 @@ test('research pauses without scrap and resumes with the same progress', () => {
 
 test('equipped headset adds fifteen points to the support chance', () => {
   const baseline = openRaid()
-  const baselineChance = getRaidOptions(baseline)?.support.chance
+  const baselineChance = getRaidOptions(baseline)?.support.candidates.find(candidate => candidate.squadId === 'bravo')?.chance
 
   const equipped = createState()
-  assert.equal(equipItem(equipped, 'pixel', 'belt', 'headset'), true)
+  assert.equal(equipItem(equipped, 'marlowe', 'belt', 'headset'), true)
   assignCat(equipped, 'pixel', 'alpha')
   assignCat(equipped, 'marlowe', 'bravo')
   const squad = equipped.squads[0]
@@ -1070,7 +1142,7 @@ test('equipped headset adds fifteen points to the support chance', () => {
   squad.progress = 14
   equipped.speed = 1
   tick(equipped, 1)
-  assert.equal(getRaidOptions(equipped)?.support.chance, Math.min(100, (baselineChance ?? 0) + 15))
+  assert.equal(getRaidOptions(equipped)?.support.candidates.find(candidate => candidate.squadId === 'bravo')?.chance, Math.min(100, (baselineChance ?? 0) + 15))
 })
 
 test('completed defense research and an equipped weapon unlock a successful attack', () => {
@@ -1110,7 +1182,7 @@ test('dispatch research reduces support travel to five seconds', () => {
   state.research.nodes.emergency_dispatch.completed = true
   if (!state.incident) assert.fail('raid was not opened')
   state.incident.supportRoll = 1
-  assert.equal(resolveRaidDecision(state, 'support'), true)
+  assert.equal(resolveRaidDecision(state, 'support', 'bravo'), true)
   const support = state.squads.find(squad => squad.id === state.incident?.supportSquadId)
   assert.equal(support?.travelDuration, 5)
 })
@@ -1134,7 +1206,7 @@ test('a medkit shortens the recovery time of its injured wearer', () => {
   state.incident.supportRoll = 100
   state.incident.injuryRoll = 1
   state.incident.injuredMemberRoll = 1
-  assert.equal(resolveRaidDecision(state, 'support'), true)
+  assert.equal(resolveRaidDecision(state, 'support', 'bravo'), true)
   assert.equal(state.cats.find(cat => cat.id === 'pixel')?.injuredRemaining, 20)
 })
 
@@ -1158,7 +1230,7 @@ test('an armor vest reduces injury chance and returns to the warehouse when remo
   if (!state.incident) assert.fail('raid was not opened')
   state.incident.supportRoll = 100
   state.incident.injuryRoll = 55
-  assert.equal(resolveRaidDecision(state, 'support'), true)
+  assert.equal(resolveRaidDecision(state, 'support', 'bravo'), true)
   assert.equal(state.cats.find(cat => cat.id === 'pixel')?.injuredRemaining, 0)
 
   squad.phase = 'base'

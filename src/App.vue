@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { getAchievements } from '@nine-lives/game-core'
+import { getAchievements, successfulCleanups } from '@nine-lives/game-core'
 import { translate } from './i18n'
 import { useGameSession } from './useGameSession'
 import OpsTopBar from './components/OpsTopBar.vue'
@@ -22,6 +22,8 @@ const {
   saveStatus,
   setSpeed,
   assignCat,
+  createSquad,
+  disbandSquad,
   equipItem,
   setSquadStyle,
   setSquadAutoDispatch,
@@ -43,7 +45,7 @@ const {
 
 const basePanel = ref<'teams' | 'lab' | 'achievements'>('teams')
 const tr = (key: string, params?: Record<string, string | number>) => translate(locale.value, key, params)
-const totalRuns = computed(() => state.value.squads.reduce((total, squad) => total + squad.completed, 0))
+const totalRuns = computed(() => successfulCleanups(state.value))
 const formattedTime = computed(() => `${String(9 + Math.floor(state.value.time / 3600)).padStart(2, '0')}:${String(Math.floor(state.value.time / 60) % 60).padStart(2, '0')}`)
 const supportSquad = computed(() => state.value.squads.find(squad => squad.id === state.value.incident?.supportSquadId))
 const supportSeconds = computed(() => Math.max(0, Math.ceil((supportSquad.value?.travelDuration ?? 0) - (supportSquad.value?.travel ?? 0))))
@@ -118,6 +120,8 @@ async function resetProgress() {
       :total-runs="totalRuns"
       :save-status="saveStatus"
       :assign-cat="assignCat"
+      :create-squad="createSquad"
+      :disband-squad="disbandSquad"
       :equip-item="equipItem"
       :set-squad-style="setSquadStyle"
       @panel="basePanel = $event"

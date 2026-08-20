@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   EQUIPMENT_SLOTS,
   GAME_RULES,
@@ -7,6 +7,8 @@ import {
   RESEARCH_DEFINITIONS,
   RESEARCH_RULES,
   getResearchWorker,
+  getCreateSquadBlockReason,
+  getDisbandSquadBlockReason,
   getSquadCleanupEstimate,
   type Achievement,
   type EquipmentSlot,
@@ -43,6 +45,8 @@ const props = defineProps<{
   totalRuns: number
   saveStatus: SaveStatus
   assignCat: (catId: string, squadId: string) => Promise<boolean>
+  createSquad: () => Promise<boolean>
+  disbandSquad: (squadId: string) => Promise<boolean>
   equipItem: (catId: string, slot: EquipmentSlot, itemId?: ItemId) => Promise<boolean>
   setSquadStyle: (squadId: string, style: Squad['style']) => Promise<boolean>
 }>()
@@ -58,7 +62,9 @@ const emit = defineEmits<{
 }>()
 
 const saveInput = ref<HTMLInputElement>()
+const selectedSquadId = ref<string | undefined>(props.state.squads[0]?.id)
 const researchWorker = computed(() => getResearchWorker(props.state))
+const createSquadReason = computed(() => getCreateSquadBlockReason(props.state))
 const portraitUrls: Record<string, string> = {
   marlowe: portraitMarloweUrl,
   pixel: portraitPixelUrl,
@@ -68,6 +74,18 @@ const portraitUrls: Record<string, string> = {
   myata: portraitMyataUrl,
 }
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
+
+watch(() => props.state.squads.map(squad => squad.id), ids => {
+  if (!ids.includes(selectedSquadId.value ?? '')) selectedSquadId.value = ids[0]
+})
+
+async function handleCreateSquad() {
+  if (await props.createSquad()) selectedSquadId.value = props.state.squads.at(-1)?.id
+}
+
+async function handleDisbandSquad(squadId: string) {
+  if (await props.disbandSquad(squadId)) selectedSquadId.value = props.state.squads[0]?.id
+}
 
 function handleAutoDispatch(squadId: string, event: Event) {
   emit('autoDispatch', squadId, (event.target as HTMLInputElement).checked)
@@ -128,24 +146,35 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
       <div class="panel-tabs"><button class="active" @click="emit('panel', 'teams')">{{ tr('Состав / склад') }}</button><button @click="emit('panel', 'lab')">{{ tr('Лаборатория') }}</button><button @click="emit('panel', 'achievements')">{{ tr('Достижения') }}</button></div>
       <h2>{{ tr('СОСТАВ И ЭКИПИРОВКА') }}</h2>
       <p class="roster-hint">{{ tr('equipment.edit_hint') }}</p>
-      <div v-for="squad in state.squads" :key="squad.id" class="squad-status squad-config">
-        <div><b>{{ tr(squad.name) }}</b><span>{{ tr('squad.cleanup_estimate', { cats: squad.members.length, seconds: Math.ceil(cleanupEstimate(squad).seconds) }) }}</span></div>
-        <SquadStyleSelect :squad="squad" :locale="locale" :set-style="setSquadStyle" />
-        <label class="auto-dispatch-toggle">
-          <input type="checkbox" :checked="squad.autoDispatch" @change="handleAutoDispatch(squad.id, $event)">
-          <span><b>{{ tr('dispatch.auto.title') }}</b><small>{{ tr(squad.autoDispatch ? 'dispatch.auto.enabled' : squad.phase === 'base' ? 'dispatch.auto.manual' : squad.phase === 'field' ? 'dispatch.auto.field_manual' : 'dispatch.auto.after_return') }}</small></span>
-        </label>
-        <details class="forecast-breakdown">
-          <summary>{{ tr(squad.members.length ? 'cleanup.details' : 'cleanup.empty') }}</summary>
-          <template v-if="squad.members.length">
-            <span>{{ tr('cleanup.cats_rate') }} <b>×{{ formatRate(cleanupEstimate(squad).baseRate) }}</b></span>
-            <span v-if="cleanupEstimate(squad).traitRate">{{ tr('cleanup.traits_rate') }} <b>+{{ formatRate(cleanupEstimate(squad).traitRate) }}</b></span>
-            <span v-if="cleanupEstimate(squad).equipmentRate">{{ tr('cleanup.equipment_rate') }} <b>+{{ formatRate(cleanupEstimate(squad).equipmentRate) }}</b></span>
-            <span>{{ tr('cleanup.total_rate') }} <b>×{{ formatRate(cleanupEstimate(squad).totalRate) }}</b></span>
-            <span>{{ tr('cleanup.energy_per_cat') }} <b>−{{ formatRate(cleanupEstimate(squad).energyPerCat) }}</b></span>
-          </template>
-        </details>
-      </div>
+      <section class="squad-management">
+        <header><span>{{ tr('squad.manage.capacity', { current: state.squads.length, maximum: state.cats.length }) }}</span></header>
+        <div v-for="squad in state.squads" :key="squad.id" class="squad-status squad-config" :class="{ expanded: selectedSquadId === squad.id }">
+          <button type="button" class="squad-config-summary" @click="selectedSquadId = selectedSquadId === squad.id ? undefined : squad.id">
+            <span><b>{{ tr(squad.name) }}</b><small>{{ tr('squad.cleanup_estimate', { cats: squad.members.length, seconds: Math.ceil(cleanupEstimate(squad).seconds) }) }}</small></span>
+            <strong>{{ selectedSquadId === squad.id ? '−' : '+' }}</strong>
+          </button>
+          <div v-if="selectedSquadId === squad.id" class="squad-config-details">
+            <SquadStyleSelect :squad="squad" :locale="locale" :set-style="setSquadStyle" />
+            <label class="auto-dispatch-toggle">
+              <input type="checkbox" :checked="squad.autoDispatch" @change="handleAutoDispatch(squad.id, $event)">
+              <span><b>{{ tr('dispatch.auto.title') }}</b><small>{{ tr(squad.autoDispatch ? 'dispatch.auto.enabled' : squad.phase === 'base' ? 'dispatch.auto.manual' : squad.phase === 'field' ? 'dispatch.auto.field_manual' : 'dispatch.auto.after_return') }}</small></span>
+            </label>
+            <details class="forecast-breakdown">
+              <summary>{{ tr(squad.members.length ? 'cleanup.details' : 'cleanup.empty') }}</summary>
+              <template v-if="squad.members.length">
+                <span>{{ tr('cleanup.cats_rate') }} <b>×{{ formatRate(cleanupEstimate(squad).baseRate) }}</b></span>
+                <span v-if="cleanupEstimate(squad).traitRate">{{ tr('cleanup.traits_rate') }} <b>+{{ formatRate(cleanupEstimate(squad).traitRate) }}</b></span>
+                <span v-if="cleanupEstimate(squad).equipmentRate">{{ tr('cleanup.equipment_rate') }} <b>+{{ formatRate(cleanupEstimate(squad).equipmentRate) }}</b></span>
+                <span>{{ tr('cleanup.total_rate') }} <b>×{{ formatRate(cleanupEstimate(squad).totalRate) }}</b></span>
+                <span>{{ tr('cleanup.energy_per_cat') }} <b>−{{ formatRate(cleanupEstimate(squad).energyPerCat) }}</b></span>
+              </template>
+            </details>
+            <button type="button" class="disband-squad" :disabled="Boolean(getDisbandSquadBlockReason(state, squad.id))" :title="tr(getDisbandSquadBlockReason(state, squad.id) ?? '')" @click="handleDisbandSquad(squad.id)">{{ tr('squad.manage.disband') }}</button>
+          </div>
+        </div>
+        <button type="button" class="create-squad" :disabled="Boolean(createSquadReason)" :title="tr(createSquadReason ?? '')" @click="handleCreateSquad">+ {{ tr('squad.manage.create') }}</button>
+        <small v-if="createSquadReason" class="squad-manage-reason">{{ tr(createSquadReason) }}</small>
+      </section>
       <div v-for="cat in state.cats" :key="cat.id" class="cat-card" :class="{ injured: cat.injuredRemaining > 0, sleeping: cat.sleeping }">
         <div class="cat-header"><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else-if="cat.sleeping" class="sleeping-label">{{ tr('cat.sleeping', { energy: Math.round(cat.energy) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span><CatAssignmentSelect :state="state" :cat="cat" :locale="locale" :assign="assignCat" /></div>
         <details>

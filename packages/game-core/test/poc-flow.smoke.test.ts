@@ -43,7 +43,7 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
   if (!state.incident) assert.fail('The raider incident is missing')
   state.incident.supportRoll = 1
 
-  assert.equal(resolveRaidDecision(state, 'support'), true)
+  assert.equal(resolveRaidDecision(state, 'support', 'bravo'), true)
   assert.equal(state.incident.stage, 'support_en_route')
   assert.equal(state.speed, 1)
 

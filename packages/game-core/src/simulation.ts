@@ -102,6 +102,8 @@ export type State = {
   time: number
   cats: Cat[]
   squads: Squad[]
+  squadSerial: number
+  disbandedSquadCleanups: number
   missions: Mission[]
   missionSerial: number
   rngSeed: number
@@ -121,7 +123,15 @@ export type State = {
   achievements: { completedIds: AchievementId[] }
   log: LogEntry[]
 }
-export type RaidOption = { available: boolean; chance?: number; reason?: string; supportSquadName?: string }
+export type RaidOption = { available: boolean; chance?: number; reason?: string }
+export type RaidSupportCandidate = {
+  squadId: string
+  squadName: string
+  memberIds: string[]
+  chance: number
+  location: 'base' | 'field' | 'mission'
+  willRecallMission: boolean
+}
 export type CleanupEstimate = {
   members: number
   baseRate: number
@@ -140,7 +150,7 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 10
+export const SAVE_VERSION = 11
 export const GAME_VERSION = '0.1.0'
 export type SaveErrorKey =
   | 'save.error.invalid_json'
@@ -232,6 +242,8 @@ export function createState(): State {
     speed: 0,
     time: 0,
     cats: CONFIG.cats.map(cat => ({ ...cat, sleeping: false, injuredRemaining: 0, equipment: emptyEquipment(), pendingEquipment: {} })),
+    squadSerial: 2,
+    disbandedSquadCleanups: 0,
     missions: structuredClone(templates.slice(0, CONFIG.mission.initialAvailableCount)),
     missionSerial: 0,
     rngSeed: CONFIG.initial.rngSeed,
@@ -510,18 +522,42 @@ function migrateLegacyState(value: unknown) {
       }
       if (typeof squad.restAfterReturn !== 'boolean') squad.restAfterReturn = false
     }
+    if (!isFiniteNumber(migrated.squadSerial)) {
+      const generatedSerials = migrated.squads
+        .filter(isRecord)
+        .map(squad => /^squad-(\d+)$/.exec(typeof squad.id === 'string' ? squad.id : '')?.[1])
+        .filter((serial): serial is string => Boolean(serial))
+        .map(Number)
+      migrated.squadSerial = Math.max(2, migrated.squads.length, ...generatedSerials)
+    }
   }
+  if (!isFiniteNumber(migrated.disbandedSquadCleanups)) migrated.disbandedSquadCleanups = 0
   return migrated
 }
 
 function isValidState(value: unknown): value is State {
   if (!isRecord(value)) return false
   if (![0, 1, 5, 10].includes(value.speed as number)) return false
-  if (![value.fame, value.scrap, value.threat, value.time, value.missionSerial, value.rngSeed].every(isFiniteNumber)) return false
+  if (![value.fame, value.scrap, value.threat, value.time, value.squadSerial, value.disbandedSquadCleanups, value.missionSerial, value.rngSeed].every(isFiniteNumber)) return false
   if (![value.raidTriggered, value.storyTriggered, value.finalSummaryVisible, value.finalSummarySeen].every(flag => typeof flag === 'boolean')) return false
   if (!Array.isArray(value.cats) || !value.cats.every(isValidCat)) return false
   if (!Array.isArray(value.squads) || !value.squads.every(isValidSquad)) return false
   if (!Array.isArray(value.missions) || !value.missions.every(isValidMission)) return false
+  if (!isFiniteNumber(value.squadSerial) || !Number.isInteger(value.squadSerial) || value.squadSerial < 0) return false
+  if (!isFiniteNumber(value.disbandedSquadCleanups) || !Number.isInteger(value.disbandedSquadCleanups)
+    || value.disbandedSquadCleanups < 0) return false
+  const cats = value.cats as Cat[]
+  const squads = value.squads as Squad[]
+  const missions = value.missions as Mission[]
+  const squadIds = new Set(squads.map(squad => squad.id))
+  const catIds = new Set(cats.map(cat => cat.id))
+  if (squadIds.size !== squads.length || catIds.size !== cats.length) return false
+  if (cats.some(cat => (cat.assignedTo && !squadIds.has(cat.assignedTo))
+    || (cat.pendingAssignment && !squadIds.has(cat.pendingAssignment)))) return false
+  const rosterMembers = squads.flatMap(squad => squad.members.map(memberId => ({ memberId, squadId: squad.id })))
+  if (new Set(rosterMembers.map(entry => entry.memberId)).size !== rosterMembers.length
+    || rosterMembers.some(entry => !catIds.has(entry.memberId))) return false
+  if (missions.some(mission => mission.squadId && !squadIds.has(mission.squadId))) return false
   if (!isRecord(value.inventory)) return false
   const inventory = value.inventory
   if (!ITEM_DEFINITIONS.every(item => isFiniteNumber(inventory[item.id]))) return false
@@ -550,6 +586,8 @@ export function serializeState(state: State, pretty = true) {
   // Vite HMR can preserve a pre-migration in-memory state while replacing this module.
   // Normalize it before autosaving so an already open tab does not write an invalid current save.
   state.cats.forEach(cat => { cat.pendingEquipment ??= {} })
+  state.squadSerial ??= Math.max(2, state.squads.length)
+  state.disbandedSquadCleanups ??= 0
   const envelope: SaveEnvelope = {
     format: SAVE_FORMAT,
     version: SAVE_VERSION,
@@ -569,7 +607,7 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
@@ -606,14 +644,14 @@ export function deserializeCurrentSave(payload: string): State {
       version: String(isRecord(envelope) ? envelope.gameVersion ?? envelope.version : 'unknown'),
     })
   }
-  if (![9, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![10, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   return deserializeState(payload)
 }
 
 export function successfulCleanups(state: State) {
-  return state.squads.reduce((total, squad) => total + squad.completed, 0)
+  return state.disbandedSquadCleanups + state.squads.reduce((total, squad) => total + squad.completed, 0)
 }
 
 function catIsAtBase(state: State, cat: Cat) {
@@ -757,6 +795,70 @@ export function assignCat(state: State, catId: string, squadId: string) {
   if (!canApplyNow) return queueAssignment(state, cat, targetSquad)
   if (hasPendingAssignment(cat)) delete cat.pendingAssignment
   return applyAssignment(state, cat, targetSquad)
+}
+
+const SQUAD_CALLSIGN_KEYS = [
+  'squad.alpha',
+  'squad.bravo',
+  'squad.charlie',
+  'squad.delta',
+  'squad.echo',
+  'squad.foxtrot',
+]
+
+function squadNameForSerial(serial: number) {
+  return SQUAD_CALLSIGN_KEYS[serial - 1] ?? `squad.generated.${String(serial).padStart(2, '0')}`
+}
+
+export function getCreateSquadBlockReason(state: State) {
+  if (state.squads.length >= state.cats.length) return 'squad.manage.reason.limit'
+  return undefined
+}
+
+export function createSquad(state: State) {
+  if (getCreateSquadBlockReason(state)) return false
+  const serial = Math.max(2, state.squadSerial) + 1
+  const squad: Squad = {
+    id: `squad-${serial}`,
+    name: squadNameForSerial(serial),
+    members: [],
+    style: 'balanced',
+    autoDispatch: true,
+    phase: 'base',
+    travel: 0,
+    travelDuration: 0,
+    progress: 0,
+    completed: 0,
+    routeFrom: { ...CONFIG.map.base },
+    restAfterReturn: false,
+  }
+  state.squadSerial = serial
+  state.squads.push(squad)
+  note(state, 'log.squad_created', { squad: squad.name })
+  return true
+}
+
+export function getDisbandSquadBlockReason(state: State, squadId: string) {
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!squad) return 'squad.manage.reason.missing'
+  if (state.squads.length <= 1) return 'squad.manage.reason.last'
+  if (squad.members.length || state.cats.some(cat => cat.assignedTo === squadId)) return 'squad.manage.reason.members'
+  if (squad.phase !== 'base' || squad.missionId || squad.target || squad.destination
+    || state.missions.some(mission => mission.squadId === squadId)) return 'squad.manage.reason.away'
+  if (state.cats.some(cat => cat.pendingAssignment === squadId)) return 'squad.manage.reason.pending'
+  if (state.incident?.primarySquadId === squadId || state.incident?.supportSquadId === squadId
+    || state.storyIncident?.foundBySquadId === squadId) return 'squad.manage.reason.incident'
+  return undefined
+}
+
+export function disbandSquad(state: State, squadId: string) {
+  if (getDisbandSquadBlockReason(state, squadId)) return false
+  const index = state.squads.findIndex(squad => squad.id === squadId)
+  if (index < 0) return false
+  const [squad] = state.squads.splice(index, 1)
+  state.disbandedSquadCleanups += squad.completed
+  note(state, 'log.squad_disbanded', { squad: squad.name })
+  return true
 }
 
 export function setSquadStyle(state: State, squadId: string, style: SquadStyle) {
@@ -1282,14 +1384,26 @@ function actionChance(state: State, squad: Squad, action: 'support' | 'attack') 
   return baseTeamChance(members, baseChance, skillSum, styleBonus, traitBonus, equipmentBonus)
 }
 
-function eligibleSupportSquad(state: State, primarySquadId: string) {
+function eligibleSupportSquads(state: State, primarySquadId: string) {
   return state.squads
     .filter(squad => {
       const members = membersOf(state, squad)
       return squad.id !== primarySquadId && members.length > 0
         && members.every(cat => cat.injuredRemaining <= 0 && canReceiveWorkOrder(cat))
     })
-    .sort((a, b) => Number(a.phase !== 'base') - Number(b.phase !== 'base') || a.id.localeCompare(b.id))[0]
+    .sort((a, b) => Number(a.phase !== 'base') - Number(b.phase !== 'base') || a.id.localeCompare(b.id))
+}
+
+export function getRaidSupportCandidates(state: State): RaidSupportCandidate[] {
+  if (!state.incident || state.incident.stage !== 'decision') return []
+  return eligibleSupportSquads(state, state.incident.primarySquadId).map(squad => ({
+    squadId: squad.id,
+    squadName: squad.name,
+    memberIds: [...squad.members],
+    chance: actionChance(state, squad, 'support'),
+    location: squad.phase === 'base' ? 'base' : squad.phase === 'field' ? 'field' : 'mission',
+    willRecallMission: Boolean(squad.missionId && !['base', 'field'].includes(squad.phase)),
+  }))
 }
 
 function startRaidIncident(state: State, squad: Squad) {
@@ -1315,7 +1429,7 @@ function startRaidIncident(state: State, squad: Squad) {
 
 export function getRaidOptions(state: State) {
   if (!state.incident) return undefined
-  const supportSquad = eligibleSupportSquad(state, state.incident.primarySquadId)
+  const supportCandidates = getRaidSupportCandidates(state)
   const primarySquad = state.squads.find(squad => squad.id === state.incident?.primarySquadId)
   const hasWeapon = Boolean(primarySquad && membersOf(state, primarySquad).some(cat => hasEquipped(cat, 'nonlethal_weapon')))
   const defenseReady = state.research.nodes.improvised_defense.completed
@@ -1324,9 +1438,9 @@ export function getRaidOptions(state: State) {
     attack: defenseReady && hasWeapon
       ? { available: true, chance: state.incident.attackChance } satisfies RaidOption
       : { available: false, reason: defenseReady ? 'raid.reason.equip_weapon' : 'raid.reason.research_defense' } satisfies RaidOption,
-    support: supportSquad
-      ? { available: true, chance: state.incident.supportChance, supportSquadName: supportSquad.name }
-      : { available: false, reason: 'raid.reason.no_support_squad' } satisfies RaidOption,
+    support: supportCandidates.length
+      ? { available: true, candidates: supportCandidates }
+      : { available: false, reason: 'raid.reason.no_support_squad', candidates: [] },
   }
 }
 
@@ -1418,7 +1532,7 @@ function cancelSquadMission(state: State, squad: Squad) {
   squad.travel = 0
 }
 
-export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 'support') {
+export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 'support', supportSquadId?: string) {
   const incident = state.incident
   if (!incident || incident.stage !== 'decision') return false
   const primary = state.squads.find(squad => squad.id === incident.primarySquadId)
@@ -1448,9 +1562,10 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
     return true
   }
 
-  const support = eligibleSupportSquad(state, primary.id)
+  if (!supportSquadId) return false
+  const support = eligibleSupportSquads(state, primary.id).find(squad => squad.id === supportSquadId)
   if (!support) return false
-  if (incident.supportRoll > incident.supportChance) {
+  if (incident.supportRoll > actionChance(state, support, 'support')) {
     failRaid(state, primary, incident, 'log.raid_support_failed')
     syncAchievements(state)
     return true
@@ -1714,6 +1829,8 @@ export function tick(state: State, seconds: number) {
 export type GameCommand =
   | { type: 'set_speed'; speed: Speed }
   | { type: 'assign_cat'; catId: string; squadId: string }
+  | { type: 'create_squad' }
+  | { type: 'disband_squad'; squadId: string }
   | { type: 'equip_item'; catId: string; slot: EquipmentSlot; itemId?: ItemId }
   | { type: 'set_squad_style'; squadId: string; style: SquadStyle }
   | { type: 'set_auto_dispatch'; squadId: string; enabled: boolean }
@@ -1721,7 +1838,7 @@ export type GameCommand =
   | { type: 'move_squad'; squadId: string; x: number; y: number }
   | { type: 'return_squad'; squadId: string }
   | { type: 'select_research'; researchId?: ResearchId }
-  | { type: 'resolve_raid'; action: 'escape' | 'attack' | 'support' }
+  | { type: 'resolve_raid'; action: 'escape' | 'attack' | 'support'; supportSquadId?: string }
   | { type: 'resolve_raid_followup'; action: 'retreat' | 'continue' }
   | { type: 'resolve_ninth_life'; decision: NinthLifeDecision }
   | { type: 'continue_after_finale' }
@@ -1748,6 +1865,8 @@ export class GameCore {
         this.world.speed = command.speed
         return true
       case 'assign_cat': return assignCat(this.world, command.catId, command.squadId)
+      case 'create_squad': return createSquad(this.world)
+      case 'disband_squad': return disbandSquad(this.world, command.squadId)
       case 'equip_item': return equipItem(this.world, command.catId, command.slot, command.itemId)
       case 'set_squad_style': return setSquadStyle(this.world, command.squadId, command.style)
       case 'set_auto_dispatch': return setSquadAutoDispatch(this.world, command.squadId, command.enabled)
@@ -1755,7 +1874,7 @@ export class GameCore {
       case 'move_squad': return moveSquadToPoint(this.world, command.squadId, { x: command.x, y: command.y })
       case 'return_squad': return returnSquadToBase(this.world, command.squadId)
       case 'select_research': return selectResearch(this.world, command.researchId)
-      case 'resolve_raid': return resolveRaidDecision(this.world, command.action)
+      case 'resolve_raid': return resolveRaidDecision(this.world, command.action, command.supportSquadId)
       case 'resolve_raid_followup': return resolveRaidFollowup(this.world, command.action)
       case 'resolve_ninth_life': return resolveNinthLife(this.world, command.decision)
       case 'continue_after_finale': return continueAfterFinale(this.world)
