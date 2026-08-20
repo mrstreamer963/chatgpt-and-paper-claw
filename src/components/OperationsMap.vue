@@ -79,6 +79,11 @@ function markerOffsetLink(squad: Squad) {
   return { x1: actual.x, y1: actual.y, x2: displayed.x, y2: displayed.y }
 }
 
+function markerOriginStyle(squad: Squad) {
+  const position = squadPosition(squad)
+  return { left: `${position.x}%`, top: `${position.y}%`, '--squad-color': squadColor(squad) }
+}
+
 function isActiveAssignedMission(mission: Mission) {
   if (mission.status !== 'assigned') return false
   return props.state.squads.find(squad => squad.id === mission.squadId)?.phase !== 'returning'
@@ -269,6 +274,7 @@ function formatLog(entry: LogEntry) {
         <line v-for="squad in state.squads.filter(candidate => candidate.target && ['cleanup', 'assisting', 'incident'].includes(candidate.phase))" :key="`mission-link-${squad.id}`" class="mission-link" v-bind="missionLink(squad)" :style="{ stroke: squadColor(squad) }" />
         <line v-for="squad in state.squads.filter(candidate => candidate.phase !== 'base' && markerOffsetLink(candidate))" :key="`marker-offset-${squad.id}`" class="marker-offset-link" v-bind="markerOffsetLink(squad)" :style="{ stroke: squadColor(squad) }" />
       </svg>
+      <span v-for="squad in state.squads.filter(candidate => candidate.phase !== 'base' && markerOffsetLink(candidate))" :key="`marker-origin-${squad.id}`" class="squad-marker-origin" :style="markerOriginStyle(squad)" aria-hidden="true"></span>
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <div class="district d1">{{ tr('Старый сектор') }}</div><div class="district d2">{{ tr('Промзона') }}</div><div class="district d3">{{ tr('Терминал') }}</div>
       <button type="button" class="base-pin" :class="{ selected: selectedTarget?.type === 'base' }" @click.stop="selectBase"><strong>NL</strong><span>{{ tr('БАЗА') }}</span></button>

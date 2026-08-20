@@ -29,6 +29,20 @@ test('squad marker layout separates coincident and partially overlapping markers
     { id: 'bravo', x: 53, y: 50 },
   ], viewport)
   assertSeparated([...result.values()])
+  assert.notDeepEqual(result.get('alpha'), { x: 50, y: 50 })
+  assert.notDeepEqual(result.get('charlie'), { x: 50, y: 50 })
+})
+
+test('squad marker layout pushes two coincident squads equally in opposite directions', () => {
+  const result = layoutSquadMarkers([
+    { id: 'alpha', x: 50, y: 50 },
+    { id: 'bravo', x: 50, y: 50 },
+  ], viewport)
+  const alpha = pixels(result.get('alpha')!)
+  const bravo = pixels(result.get('bravo')!)
+  assert.equal((alpha.x + bravo.x) / 2, viewport.width / 2)
+  assert.equal((alpha.y + bravo.y) / 2, viewport.height / 2)
+  assertSeparated([...result.values()])
 })
 
 test('squad marker layout stays separated at map edges and is deterministic', () => {
