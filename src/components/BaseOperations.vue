@@ -9,6 +9,7 @@ import {
   getResearchWorker,
   getCreateSquadBlockReason,
   getDisbandSquadBlockReason,
+  getRenameSquadError,
   getSquadCleanupEstimate,
   type Achievement,
   type EquipmentSlot,
@@ -17,7 +18,7 @@ import {
   type Squad,
   type State,
 } from '@nine-lives/game-core'
-import { translate, type Locale } from '../i18n'
+import { squadDisplayName, translate, type Locale } from '../i18n'
 import CatAssignmentSelect from './CatAssignmentSelect.vue'
 import EquipmentSlotSelect from './EquipmentSlotSelect.vue'
 import SquadStyleSelect from './SquadStyleSelect.vue'
@@ -47,6 +48,7 @@ const props = defineProps<{
   assignCat: (catId: string, squadId: string) => Promise<boolean>
   createSquad: () => Promise<boolean>
   disbandSquad: (squadId: string) => Promise<boolean>
+  renameSquad: (squadId: string, name: string) => Promise<boolean>
   equipItem: (catId: string, slot: EquipmentSlot, itemId?: ItemId) => Promise<boolean>
   setSquadStyle: (squadId: string, style: Squad['style']) => Promise<boolean>
 }>()
@@ -63,6 +65,10 @@ const emit = defineEmits<{
 
 const saveInput = ref<HTMLInputElement>()
 const selectedSquadId = ref<string | undefined>(props.state.squads[0]?.id)
+const renamingSquadId = ref<string>()
+const renameValue = ref('')
+const renameError = ref<string>()
+const renamePending = ref(false)
 const researchWorker = computed(() => getResearchWorker(props.state))
 const createSquadReason = computed(() => getCreateSquadBlockReason(props.state))
 const portraitUrls: Record<string, string> = {
@@ -85,6 +91,31 @@ async function handleCreateSquad() {
 
 async function handleDisbandSquad(squadId: string) {
   if (await props.disbandSquad(squadId)) selectedSquadId.value = props.state.squads[0]?.id
+}
+
+function startRename(squad: Squad) {
+  renamingSquadId.value = squad.id
+  renameValue.value = squadDisplayName(props.locale, squad)
+  renameError.value = undefined
+}
+
+function cancelRename() {
+  renamingSquadId.value = undefined
+  renameError.value = undefined
+}
+
+async function submitRename(squadId: string) {
+  if (renamePending.value) return
+  const error = getRenameSquadError(props.state, squadId, renameValue.value)
+  if (error) {
+    renameError.value = error
+    return
+  }
+  renamePending.value = true
+  const accepted = await props.renameSquad(squadId, renameValue.value)
+  renamePending.value = false
+  if (accepted) cancelRename()
+  else renameError.value = getRenameSquadError(props.state, squadId, renameValue.value) ?? 'squad.rename.error.missing'
 }
 
 function handleAutoDispatch(squadId: string, event: Event) {
@@ -149,10 +180,19 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
       <section class="squad-management">
         <header><span>{{ tr('squad.manage.capacity', { current: state.squads.length, maximum: state.cats.length }) }}</span></header>
         <div v-for="squad in state.squads" :key="squad.id" class="squad-status squad-config" :class="{ expanded: selectedSquadId === squad.id }">
-          <button type="button" class="squad-config-summary" @click="selectedSquadId = selectedSquadId === squad.id ? undefined : squad.id">
-            <span><b>{{ tr(squad.name) }}</b><small>{{ tr('squad.cleanup_estimate', { cats: squad.members.length, seconds: Math.ceil(cleanupEstimate(squad).seconds) }) }}</small></span>
-            <strong>{{ selectedSquadId === squad.id ? '−' : '+' }}</strong>
-          </button>
+          <form v-if="renamingSquadId === squad.id" class="squad-rename-form" @submit.prevent="submitRename(squad.id)" @keydown.esc.prevent="cancelRename">
+            <input v-model="renameValue" maxlength="32" :placeholder="tr('squad.rename.placeholder')" :aria-label="tr('squad.rename.placeholder')" autofocus>
+            <button type="submit" :disabled="renamePending" :aria-label="tr('squad.rename.save')">✓</button>
+            <button type="button" :disabled="renamePending" :aria-label="tr('squad.rename.cancel')" @click="cancelRename">×</button>
+            <small v-if="renameError" class="squad-rename-error">{{ tr(renameError) }}</small>
+          </form>
+          <div v-else class="squad-config-heading">
+            <button type="button" class="squad-config-summary" @click="selectedSquadId = selectedSquadId === squad.id ? undefined : squad.id">
+              <span><b>{{ squadDisplayName(locale, squad) }}</b><small>{{ tr('squad.cleanup_estimate', { cats: squad.members.length, seconds: Math.ceil(cleanupEstimate(squad).seconds) }) }}</small></span>
+              <strong>{{ selectedSquadId === squad.id ? '−' : '+' }}</strong>
+            </button>
+            <button type="button" class="rename-squad" :aria-label="tr('squad.rename.action')" :title="tr('squad.rename.action')" @click="startRename(squad)">✎</button>
+          </div>
           <div v-if="selectedSquadId === squad.id" class="squad-config-details">
             <SquadStyleSelect :squad="squad" :locale="locale" :set-style="setSquadStyle" />
             <label class="auto-dispatch-toggle">

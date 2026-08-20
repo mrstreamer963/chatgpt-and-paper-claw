@@ -385,7 +385,13 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .squad-management > header { display: flex; justify-content: flex-end; margin-bottom: 6px; color: #7f8d88; font-size: 8px; letter-spacing: .8px; text-transform: uppercase; }
 .squad-config { display: block; padding: 0; border-left-color: #596967; }
 .squad-config.expanded { border-left-color: #d65b3c; }
+.squad-config-heading { display: flex; align-items: stretch; }
 .squad-config-summary { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 9px 10px; border: 0; background: transparent; text-align: left; }
+.rename-squad { flex: 0 0 34px; margin: 5px; padding: 0; border-color: #43514e; color: #9caaa4; font-size: 14px; }
+.squad-rename-form { display: grid; grid-template-columns: minmax(0, 1fr) 32px 32px; gap: 5px; padding: 7px; }
+.squad-rename-form input { min-width: 0; padding: 7px 8px; border: 1px solid #596967; background: #111817; color: #e3d4b6; }
+.squad-rename-form button { padding: 0; }
+.squad-rename-error { grid-column: 1 / -1; color: #d9826d; font-size: 8px; }
 .squad-config-summary span { margin: 0; }
 .squad-config-summary b, .squad-config-summary small { display: block; }
 .squad-config-summary small { margin-top: 3px; color: #80908a; font-size: 8px; }

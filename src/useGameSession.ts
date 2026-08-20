@@ -350,6 +350,7 @@ export async function createGameSession() {
     assignCat: (catId: string, squadId: string) => runCommand({ type: 'assign_cat', catId, squadId }),
     createSquad: () => runCommand({ type: 'create_squad' }),
     disbandSquad: (squadId: string) => runCommand({ type: 'disband_squad', squadId }),
+    renameSquad: (squadId: string, name: string) => runCommand({ type: 'rename_squad', squadId, name }),
     equipItem,
     setSquadStyle: (squadId: string, style: SquadStyle) => runCommand({ type: 'set_squad_style', squadId, style }),
     setSquadAutoDispatch: (squadId: string, enabled: boolean) => runCommand({ type: 'set_auto_dispatch', squadId, enabled }),

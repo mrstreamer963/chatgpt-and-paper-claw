@@ -58,6 +58,7 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
     assignCat: acceptedAction,
     createSquad: acceptedAction,
     disbandSquad: acceptedAction,
+    renameSquad: acceptedAction,
     equipItem: acceptedAction,
     setSquadStyle: acceptedAction,
   })
@@ -165,6 +166,7 @@ test('queued equipment remains visible in its orange slot without extra status t
     assignCat: acceptedAction,
     createSquad: acceptedAction,
     disbandSquad: acceptedAction,
+    renameSquad: acceptedAction,
     equipItem: acceptedAction,
     setSquadStyle: acceptedAction,
   })

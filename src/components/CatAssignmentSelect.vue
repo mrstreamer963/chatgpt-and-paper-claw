@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { canEditCat, getCatAssignmentSelection, hasPendingAssignment, type Cat, type State } from '@nine-lives/game-core'
-import { translate, type Locale } from '../i18n'
+import { squadDisplayName, translate, type Locale } from '../i18n'
 
 const props = defineProps<{
   state: State
@@ -61,6 +61,6 @@ async function finishInteraction() {
     @blur="finishInteraction"
   >
     <option value="">{{ tr('не назначен') }}</option>
-    <option v-for="squad in state.squads" :key="squad.id" :value="squad.id">{{ tr(squad.name) }}</option>
+    <option v-for="squad in state.squads" :key="squad.id" :value="squad.id">{{ squadDisplayName(locale, squad) }}</option>
   </select>
 </template>

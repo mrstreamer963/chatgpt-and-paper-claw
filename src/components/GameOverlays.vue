@@ -8,7 +8,7 @@ import {
   type NinthLifeDecision,
   type State,
 } from '@nine-lives/game-core'
-import { translate, type Locale } from '../i18n'
+import { squadDisplayName, translate, type Locale } from '../i18n'
 
 const props = defineProps<{ state: State; locale: Locale; newGameConfirmOpen: boolean; totalRuns: number }>()
 const emit = defineEmits<{
@@ -26,6 +26,7 @@ const raidOptions = computed(() => getRaidOptions(props.state))
 const primarySquad = computed(() => props.state.squads.find(squad => squad.id === props.state.incident?.primarySquadId))
 const supportSquad = computed(() => props.state.squads.find(squad => squad.id === props.state.incident?.supportSquadId))
 const storySquad = computed(() => props.state.squads.find(squad => squad.id === props.state.storyIncident?.foundBySquadId))
+const squadName = (squad?: State['squads'][number]) => squad ? squadDisplayName(props.locale, squad) : ''
 
 function supportMembers(memberIds: string[]) {
   return memberIds
@@ -57,7 +58,7 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
     <section class="incident-card" role="dialog" aria-modal="true" aria-labelledby="incident-title">
       <div class="incident-kicker"><span></span> {{ tr('НЕШТАТНАЯ СИТУАЦИЯ · ВРЕМЯ ОСТАНОВЛЕНО') }}</div>
       <template v-if="state.incident.stage === 'decision'">
-        <h1 id="incident-title">{{ tr('Встреча с рейдерами') }}</h1><p>{{ tr('raid.description', { squad: primarySquad?.name ?? '' }) }}</p>
+        <h1 id="incident-title">{{ tr('Встреча с рейдерами') }}</h1><p>{{ tr('raid.description', { squad: squadName(primarySquad) }) }}</p>
         <div class="incident-facts"><span>{{ tr('ОТРЯД') }} <b>{{ tr('cats.count', { count: primarySquad?.members.length ?? 0 }) }}</b></span><span>{{ tr('ПРОГРЕСС') }} <b>{{ Math.round(GAME_RULES.raidTriggerWork / GAME_RULES.cleanupWork * 100) }}%</b></span><span>{{ tr('НАГРАДА ПОД УГРОЗОЙ') }} <b>{{ tr('scrap.count', { count: GAME_RULES.cleanupRewardScrap }) }}</b></span></div>
         <div class="incident-actions">
           <button class="choice safe" @click="emit('raidDecision', 'escape')"><span><b>{{ tr('Сбежать') }}</b><small>{{ tr('Миссия отменится без добычи и ранений.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong></button>
@@ -65,7 +66,7 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
           <div class="support-choice-group">
             <header><b>{{ tr('Укрыться и запросить поддержку') }}</b><small>{{ tr('raid.support_choose') }}</small></header>
             <button v-for="candidate in raidOptions?.support.candidates ?? []" :key="candidate.squadId" class="choice support" @click="emit('raidDecision', 'support', candidate.squadId)">
-              <span><b>{{ tr(candidate.squadName) }}</b><small>{{ supportMembers(candidate.memberIds) }}</small><small>{{ tr('raid.support_location', { location: `raid.support.location.${candidate.location}`, seconds: state.research.nodes.emergency_dispatch.completed ? RESEARCH_RULES.researchedSupportTravelTime : RESEARCH_RULES.supportTravelTime }) }}</small></span>
+              <span><b>{{ candidate.squadName }}</b><small>{{ supportMembers(candidate.memberIds) }}</small><small>{{ tr('raid.support_location', { location: `raid.support.location.${candidate.location}`, seconds: state.research.nodes.emergency_dispatch.completed ? RESEARCH_RULES.researchedSupportTravelTime : RESEARCH_RULES.supportTravelTime }) }}</small></span>
               <strong>{{ candidate.chance }}%</strong>
             </button>
             <button v-if="!raidOptions?.support.available" class="choice support" disabled><span><b>{{ tr('Укрыться и запросить поддержку') }}</b><small>{{ tr(raidOptions?.support.reason ?? '') }}</small></span><strong>{{ tr('НЕТ') }}</strong></button>
@@ -73,7 +74,7 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
         </div>
       </template>
       <template v-else>
-        <h1 id="incident-title">{{ tr('Поддержка прибыла') }}</h1><p>{{ tr('raid.support_arrived_description', { squad: supportSquad?.name ?? '' }) }}</p>
+        <h1 id="incident-title">{{ tr('Поддержка прибыла') }}</h1><p>{{ tr('raid.support_arrived_description', { squad: squadName(supportSquad) }) }}</p>
         <div class="incident-actions followup"><button class="choice safe" @click="emit('raidFollowup', 'retreat')"><span><b>{{ tr('Отступить вместе') }}</b><small>{{ tr('Безопасно уйти без добычи.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong></button><button class="choice support" @click="emit('raidFollowup', 'continue')"><span><b>{{ tr('Продолжить разбор ситуации') }}</b><small>{{ tr('Вытеснить рейдеров и закончить уборку.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong></button></div>
       </template>
     </section>
@@ -82,7 +83,7 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
   <div v-if="!newGameConfirmOpen && state.storyIncident && !state.incident" class="story-overlay">
     <section class="story-card" role="dialog" aria-modal="true" aria-labelledby="story-title">
       <div class="case-number"><span>{{ tr('РАССЛЕДОВАНИЕ') }}</span><strong>09</strong></div>
-      <div class="story-heading"><div class="story-kicker">{{ tr('ВХОДЯЩЕЕ ДЕЛО · ВРЕМЯ ОСТАНОВЛЕНО') }}</div><h1 id="story-title">{{ tr('Девятая жизнь') }}</h1><p>{{ tr('story.description', { squad: storySquad?.name ?? '' }) }}</p><div class="witness-line"><span>{{ tr('СВИДЕТЕЛЬ') }}</span><b>{{ tr('Позывной «Игла»') }}</b><i>{{ tr('показания не подтверждены') }}</i></div></div>
+      <div class="story-heading"><div class="story-kicker">{{ tr('ВХОДЯЩЕЕ ДЕЛО · ВРЕМЯ ОСТАНОВЛЕНО') }}</div><h1 id="story-title">{{ tr('Девятая жизнь') }}</h1><p>{{ tr('story.description', { squad: squadName(storySquad) }) }}</p><div class="witness-line"><span>{{ tr('СВИДЕТЕЛЬ') }}</span><b>{{ tr('Позывной «Игла»') }}</b><i>{{ tr('показания не подтверждены') }}</i></div></div>
       <div class="story-choices"><button v-for="(choice, index) in storyChoices" :key="choice.id" class="story-choice" :class="choice.tone" @click="emit('storyDecision', choice.id)"><span class="choice-index">0{{ index + 1 }}</span><span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(choice.description) }}</em></span><span class="choice-impact"><b>+{{ choice.fame }}</b><small>{{ tr('известность') }}</small><strong :class="{ quiet: !choice.threat }">{{ choice.threat ? `+${choice.threat}` : '±0' }}</strong><small>{{ tr('угроза') }}</small></span></button></div>
       <footer><span>{{ tr('Решение нельзя отменить') }}</span><span>{{ tr('Каждый вариант открывает отдельную будущую ветку') }}</span><button class="story-reset" @click="emit('newGame')">{{ tr('reset.open') }}</button></footer>
     </section>

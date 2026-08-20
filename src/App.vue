@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { getAchievements, successfulCleanups } from '@nine-lives/game-core'
-import { translate } from './i18n'
+import { squadDisplayName, translate } from './i18n'
 import { useGameSession } from './useGameSession'
 import OpsTopBar from './components/OpsTopBar.vue'
 import OperationsMap from './components/OperationsMap.vue'
@@ -24,6 +24,7 @@ const {
   assignCat,
   createSquad,
   disbandSquad,
+  renameSquad,
   equipItem,
   setSquadStyle,
   setSquadAutoDispatch,
@@ -51,6 +52,7 @@ const tr = (key: string, params?: Record<string, string | number>) => translate(
 const totalRuns = computed(() => successfulCleanups(state.value))
 const formattedTime = computed(() => `${String(9 + Math.floor(state.value.time / 3600)).padStart(2, '0')}:${String(Math.floor(state.value.time / 60) % 60).padStart(2, '0')}`)
 const supportSquad = computed(() => state.value.squads.find(squad => squad.id === state.value.incident?.supportSquadId))
+const supportSquadName = computed(() => supportSquad.value ? squadDisplayName(locale.value, supportSquad.value) : '')
 const supportSeconds = computed(() => Math.max(0, Math.ceil((supportSquad.value?.travelDuration ?? 0) - (supportSquad.value?.travel ?? 0))))
 const achievements = computed(() => getAchievements(state.value))
 const completedAchievementCount = computed(() => achievements.value.filter(achievement => achievement.completed).length)
@@ -108,7 +110,7 @@ async function resetProgress() {
     </section>
     <button v-else-if="!hintsVisible && nextAchievement" class="guidance-toggle" @click="hintsVisible = true">{{ tr('ЦЕЛЬ') }} {{ completedAchievementCount }} / {{ achievements.length }}</button>
 
-    <div v-if="state.incident?.stage === 'support_en_route'" class="support-strip"><span class="alert-dot"></span><b>{{ tr('support.en_route', { squad: supportSquad?.name ?? '' }) }}</b><span>{{ tr('support.eta', { seconds: supportSeconds }) }}</span><button v-if="state.speed === 0" @click="setSpeed(1)">{{ tr('Продолжить на ×1') }}</button></div>
+    <div v-if="state.incident?.stage === 'support_en_route'" class="support-strip"><span class="alert-dot"></span><b>{{ tr('support.en_route', { squad: supportSquadName }) }}</b><span>{{ tr('support.eta', { seconds: supportSeconds }) }}</span><button v-if="state.speed === 0" @click="setSpeed(1)">{{ tr('Продолжить на ×1') }}</button></div>
 
     <OperationsMap v-if="activeView === 'map'" :state="state" :locale="locale" @dispatch="dispatchSquadToMission" @assist="assistMission" @split="splitSquad" @merge="mergeSquads" @move="moveSquadToPoint" @return-home="returnSquadToBase" />
     <BaseOperations
@@ -125,6 +127,7 @@ async function resetProgress() {
       :assign-cat="assignCat"
       :create-squad="createSquad"
       :disband-squad="disbandSquad"
+      :rename-squad="renameSquad"
       :equip-item="equipItem"
       :set-squad-style="setSquadStyle"
       @panel="basePanel = $event"

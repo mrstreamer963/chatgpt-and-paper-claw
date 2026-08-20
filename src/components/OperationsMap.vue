@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { GAME_RULES, getAssistMissionBlockReason, getCleanupSecondsRemaining, getManualDispatchBlockReason, getMergeSquadsBlockReason, getMoveSquadBlockReason, getSplitSquadBlockReason, getSquadMapPosition, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
-import { translate, type Locale } from '../i18n'
+import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
 
@@ -256,7 +256,7 @@ function formatLog(entry: LogEntry) {
       <button v-for="mission in state.missions.filter(isActiveAssignedMission)" :key="`assigned-${mission.id}`" type="button" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id, selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span><b>{{ tr(state.incident?.missionId === mission.id ? 'ТРЕВОГА' : 'УБОРКА') }}</b><small>{{ tr(mission.title) }} · {{ Math.round(mission.progress / GAME_RULES.cleanupWork * 100) }}%</small></button>
       <button v-for="squad in state.squads.filter(candidate => candidate.phase !== 'base')" :key="squad.id" type="button" class="squad-marker" :class="[squad.phase, squad.id, squadIndex(squad) % 2 ? 'callout-right' : 'callout-left', { selected: selectedSquadId === squad.id, available: squadIsAvailable(squad) }]" :style="squadStyle(squad)" @click.stop="selectSquad(squad)">
         <div class="map-squad-tokens"><svg v-for="member in squad.members" :key="member" class="cat-silhouette" viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${member}`" /></svg></div>
-        <span class="squad-callout"><b>{{ tr(squad.name) }}</b><small>{{ squadLabel(squad) }}</small></span>
+        <span class="squad-callout"><b>{{ squadDisplayName(locale, squad) }}</b><small>{{ squadLabel(squad) }}</small></span>
       </button>
       <div v-if="selectedSquadId || selectedTarget" class="command-hint"><span>{{ tr(selectedSquadId ? 'dispatch.command.choose_target' : 'dispatch.command.choose_squad') }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
       <button v-if="selectedSquadId && state.squads.find(squad => squad.id === selectedSquadId)?.phase !== 'base' && (state.squads.find(squad => squad.id === selectedSquadId)?.members.length ?? 0) > 1" type="button" class="split-open" @click.stop="openSplit(state.squads.find(squad => squad.id === selectedSquadId)!)">{{ tr('squad.split.action') }}</button>
@@ -275,7 +275,7 @@ function formatLog(entry: LogEntry) {
       <section class="map-squad-list">
         <h2>{{ tr('dispatch.command.squads') }}</h2>
         <button v-for="squad in state.squads" :key="`command-${squad.id}`" type="button" :class="{ selected: selectedSquadId === squad.id, available: squadIsAvailable(squad) }" @click="selectSquad(squad)">
-          <span><b>{{ tr(squad.name) }} <em v-if="squadIsAvailable(squad)">{{ tr('dispatch.command.available') }}</em></b><small>{{ squadLabel(squad) }}</small></span>
+          <span><b>{{ squadDisplayName(locale, squad) }} <em v-if="squadIsAvailable(squad)">{{ tr('dispatch.command.available') }}</em></b><small>{{ squadLabel(squad) }}</small></span>
           <span><strong class="squad-energy" :class="{ tired: squadCommandReason(squad) === 'dispatch.reason.tired' }">{{ tr('dispatch.command.energy', { energy: squadEnergy(squad) }) }}</strong><small v-if="squadCommandReason(squad) && squadCommandReason(squad) !== 'dispatch.reason.tired'">{{ tr(squadCommandReason(squad)!) }}</small></span>
         </button>
       </section>

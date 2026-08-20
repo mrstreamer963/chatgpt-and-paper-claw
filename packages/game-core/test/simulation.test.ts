@@ -28,6 +28,7 @@ import {
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
+  renameSquad,
   returnSquadToBase,
   moveSquadToPoint,
   mergeSquads,
@@ -94,6 +95,36 @@ test('disbanding only accepts an empty idle non-final squad', () => {
   assert.equal(state.disbandedSquadCleanups, 2)
   assert.equal(getDisbandSquadBlockReason(state, 'bravo'), 'squad.manage.reason.last')
   assert.equal(disbandSquad(state, 'bravo'), false)
+})
+
+test('squads can be renamed in any phase with trimmed unique names', () => {
+  const state = createState()
+  state.squads[0].phase = 'incident'
+  assert.equal(renameSquad(state, 'alpha', '  Night Watch  '), true)
+  assert.equal(state.squads[0].customName, 'Night Watch')
+  assert.deepEqual(state.log[0], {
+    time: 0,
+    key: 'log.squad_renamed',
+    params: { previous: 'squad.alpha', squad: 'Night Watch' },
+  })
+  assert.equal(renameSquad(state, 'bravo', 'night watch'), false)
+  assert.equal(renameSquad(state, 'alpha', 'Night Watch'), false)
+  assert.equal(renameSquad(state, 'missing', 'Other'), false)
+  assert.equal(renameSquad(state, 'bravo', ''), false)
+  assert.equal(renameSquad(state, 'bravo', ' '.repeat(8)), false)
+  assert.equal(renameSquad(state, 'bravo', 'x'.repeat(32)), true)
+  assert.equal(renameSquad(state, 'bravo', 'x'.repeat(33)), false)
+})
+
+test('custom squad names survive save round trips and remain optional in old saves', () => {
+  const state = createState()
+  assert.equal(renameSquad(state, 'alpha', 'Lanterns'), true)
+  const restored = deserializeState(serializeState(state))
+  assert.equal(restored.squads[0].customName, 'Lanterns')
+
+  const envelope = JSON.parse(serializeState(createState()))
+  delete envelope.state.squads[0].customName
+  assert.equal(deserializeState(JSON.stringify(envelope)).squads[0].customName, undefined)
 })
 
 test('adding a staff cat increases dynamic squad capacity', () => {

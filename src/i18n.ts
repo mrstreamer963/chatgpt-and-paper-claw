@@ -1,4 +1,5 @@
 export type Locale = 'ru' | 'en'
+import type { Squad } from '@nine-lives/game-core'
 
 type Params = Record<string, string | number>
 
@@ -14,6 +15,7 @@ const ru: Record<string, string> = {
   'log.squad_returning_for_roster': '{squad} возвращается на базу для изменения состава',
   'log.squad_created': 'Сформирован {squad}',
   'log.squad_disbanded': '{squad} расформирован',
+  'log.squad_renamed': '{previous} переименован в «{squad}»',
   'log.squad_style': '{squad}: выбран стиль «{style}»',
   'log.auto_dispatch_enabled': '{squad}: автовыезд включён',
   'log.auto_dispatch_disabled': '{squad}: автовыезд выключен, после текущей уборки отряд будет ждать приказа в поле',
@@ -82,6 +84,15 @@ const ru: Record<string, string> = {
   'squad.manage.capacity': 'Отряды: {current}/{maximum}',
   'squad.manage.create': 'Сформировать отряд',
   'squad.manage.disband': 'Расформировать отряд',
+  'squad.rename.action': 'Переименовать отряд',
+  'squad.rename.placeholder': 'Название отряда',
+  'squad.rename.save': 'Сохранить имя',
+  'squad.rename.cancel': 'Отменить',
+  'squad.rename.error.missing': 'Отряд больше не существует.',
+  'squad.rename.error.empty': 'Введите название отряда.',
+  'squad.rename.error.too_long': 'Название должно быть не длиннее 32 символов.',
+  'squad.rename.error.duplicate': 'У другого отряда уже есть такое название.',
+  'squad.rename.error.unchanged': 'Название не изменилось.',
   'squad.manage.reason.limit': 'Число отрядов не может превышать число штатных котов.',
   'squad.manage.reason.missing': 'Отряд больше не существует.',
   'squad.manage.reason.last': 'В игре должен остаться хотя бы один отряд.',
@@ -226,6 +237,7 @@ const en: Record<string, string> = {
   'log.squad_returning_for_roster': '{squad} is returning to base for a crew change',
   'log.squad_created': '{squad} formed',
   'log.squad_disbanded': '{squad} disbanded',
+  'log.squad_renamed': '{previous} renamed to “{squad}”',
   'log.squad_style': '{squad}: operating style set to “{style}”',
   'log.auto_dispatch_enabled': '{squad}: auto-deploy enabled',
   'log.auto_dispatch_disabled': '{squad}: auto-deploy disabled; the squad will await orders in the field after its current cleanup',
@@ -294,6 +306,15 @@ const en: Record<string, string> = {
   'squad.manage.capacity': 'Squads: {current}/{maximum}',
   'squad.manage.create': 'Form squad',
   'squad.manage.disband': 'Disband squad',
+  'squad.rename.action': 'Rename squad',
+  'squad.rename.placeholder': 'Squad name',
+  'squad.rename.save': 'Save name',
+  'squad.rename.cancel': 'Cancel',
+  'squad.rename.error.missing': 'The squad no longer exists.',
+  'squad.rename.error.empty': 'Enter a squad name.',
+  'squad.rename.error.too_long': 'The name must be no longer than 32 characters.',
+  'squad.rename.error.duplicate': 'Another squad already uses that name.',
+  'squad.rename.error.unchanged': 'The name has not changed.',
   'squad.manage.reason.limit': 'Squad count cannot exceed the number of staff operatives.',
   'squad.manage.reason.missing': 'The squad no longer exists.',
   'squad.manage.reason.last': 'At least one squad must remain.',
@@ -518,4 +539,8 @@ export function translate(locale: Locale, key: string, params: Params = {}) {
     if (value === undefined) return `{${name}}`
     return typeof value === 'string' ? dictionary[value] ?? value : String(value)
   })
+}
+
+export function squadDisplayName(locale: Locale, squad: Pick<Squad, 'name' | 'customName'>) {
+  return squad.customName ?? translate(locale, squad.name)
 }

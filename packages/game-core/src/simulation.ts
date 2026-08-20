@@ -46,6 +46,7 @@ export type Phase = 'base' | 'field' | 'moving' | 'outbound' | 'cleanup' | 'assi
 export type Squad = {
   id: string
   name: string
+  customName?: string
   members: string[]
   style: SquadStyle
   autoDispatch: boolean
@@ -292,7 +293,11 @@ export function createState(): State {
 }
 
 function note(state: State, key: string, params?: Record<string, string | number>) {
-  state.log = [{ time: state.time, key, params }, ...state.log].slice(0, CONFIG.mission.eventLogLimit)
+  const displayedParams = params && Object.fromEntries(Object.entries(params).map(([param, value]) => {
+    const squad = typeof value === 'string' ? state.squads.find(candidate => candidate.name === value) : undefined
+    return [param, squad ? getSquadDisplayName(squad) : value]
+  }))
+  state.log = [{ time: state.time, key, params: displayedParams }, ...state.log].slice(0, CONFIG.mission.eventLogLimit)
 }
 
 function achievementCondition(state: State, id: AchievementId) {
@@ -367,6 +372,7 @@ function isValidMapPoint(value: unknown) {
 
 function isValidSquad(value: unknown) {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string') return false
+  if (value.customName !== undefined && (typeof value.customName !== 'string' || value.customName.length < 1 || value.customName.length > 32)) return false
   if (!Array.isArray(value.members) || !value.members.every(member => typeof member === 'string')) return false
   if (!['careful', 'balanced', 'risky'].includes(value.style as string)
     || !['base', 'field', 'moving', 'outbound', 'cleanup', 'assisting', 'incident', 'support', 'returning', 'merging'].includes(value.phase as string)) return false
@@ -865,6 +871,41 @@ const SQUAD_CALLSIGN_KEYS = [
 
 function squadNameForSerial(serial: number) {
   return SQUAD_CALLSIGN_KEYS[serial - 1] ?? `squad.generated.${String(serial).padStart(2, '0')}`
+}
+
+export function getSquadDisplayName(squad: Pick<Squad, 'name' | 'customName'>) {
+  return squad.customName ?? squad.name
+}
+
+export type RenameSquadErrorKey =
+  | 'squad.rename.error.missing'
+  | 'squad.rename.error.empty'
+  | 'squad.rename.error.too_long'
+  | 'squad.rename.error.duplicate'
+  | 'squad.rename.error.unchanged'
+
+export function getRenameSquadError(state: State, squadId: string, requestedName: string): RenameSquadErrorKey | undefined {
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!squad) return 'squad.rename.error.missing'
+  const name = requestedName.trim()
+  if (!name) return 'squad.rename.error.empty'
+  if (name.length > 32) return 'squad.rename.error.too_long'
+  if (squad.customName === name) return 'squad.rename.error.unchanged'
+  const normalized = name.toLocaleLowerCase()
+  if (state.squads.some(candidate => candidate.id !== squadId
+    && candidate.customName?.toLocaleLowerCase() === normalized)) return 'squad.rename.error.duplicate'
+  return undefined
+}
+
+export function renameSquad(state: State, squadId: string, requestedName: string) {
+  if (getRenameSquadError(state, squadId, requestedName)) return false
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!squad) return false
+  const previous = getSquadDisplayName(squad)
+  const name = requestedName.trim()
+  note(state, 'log.squad_renamed', { previous, squad: name })
+  squad.customName = name
+  return true
 }
 
 export function getCreateSquadBlockReason(state: State) {
@@ -1706,7 +1747,7 @@ export function getRaidSupportCandidates(state: State): RaidSupportCandidate[] {
   if (!state.incident || state.incident.stage !== 'decision') return []
   return eligibleSupportSquads(state, state.incident.primarySquadId, state.incident.participantSquadIds).map(squad => ({
     squadId: squad.id,
-    squadName: squad.name,
+    squadName: getSquadDisplayName(squad),
     memberIds: [...squad.members],
     chance: actionChance(state, squad, 'support'),
     location: squad.phase === 'base' ? 'base' : 'field',
@@ -2252,6 +2293,7 @@ export type GameCommand =
   | { type: 'assign_cat'; catId: string; squadId: string }
   | { type: 'create_squad' }
   | { type: 'disband_squad'; squadId: string }
+  | { type: 'rename_squad'; squadId: string; name: string }
   | { type: 'equip_item'; catId: string; slot: EquipmentSlot; itemId?: ItemId }
   | { type: 'set_squad_style'; squadId: string; style: SquadStyle }
   | { type: 'set_auto_dispatch'; squadId: string; enabled: boolean }
@@ -2291,6 +2333,7 @@ export class GameCore {
       case 'assign_cat': return assignCat(this.world, command.catId, command.squadId)
       case 'create_squad': return createSquad(this.world)
       case 'disband_squad': return disbandSquad(this.world, command.squadId)
+      case 'rename_squad': return renameSquad(this.world, command.squadId, command.name)
       case 'equip_item': return equipItem(this.world, command.catId, command.slot, command.itemId)
       case 'set_squad_style': return setSquadStyle(this.world, command.squadId, command.style)
       case 'set_auto_dispatch': return setSquadAutoDispatch(this.world, command.squadId, command.enabled)
