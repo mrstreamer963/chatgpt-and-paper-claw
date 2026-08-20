@@ -1,6 +1,7 @@
 .route-layer { position: absolute; z-index: 1; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .route-layer line { fill: none; stroke: #e5ab64b8; stroke-width: 1.6; stroke-dasharray: 3.5 3; vector-effect: non-scaling-stroke; }
 .route-layer line.mission-link { stroke-width: 1; stroke-dasharray: 1.5 2; opacity: .72; }
+.route-layer line.marker-offset-link { stroke-width: 1.25; stroke-dasharray: none; opacity: .85; }
 .map-grid.command-active { cursor: crosshair; }
 
 .base-pin,
@@ -43,7 +44,7 @@
 .cat-silhouette { width: 30px; height: 30px; margin: 12px -8px 0; overflow: visible; }
 .cat-silhouette:nth-child(2) { margin-top: 3px; }
 .cat-silhouette:nth-child(3) { margin-top: 14px; }
-.squad-callout { position: absolute; top: 50%; width: 150px; transform: translateY(-50%); }
+.squad-callout { position: absolute; top: 50%; width: 150px; transform: translateY(-50%); pointer-events: none; }
 .squad-marker.callout-left .squad-callout { right: calc(100% + 8px); text-align: right; }
 .squad-marker.callout-right .squad-callout { left: calc(100% + 8px); text-align: left; }
 .squad-callout b, .squad-callout small { display: block; text-shadow: 0 2px 4px #000, 0 0 8px #000; }

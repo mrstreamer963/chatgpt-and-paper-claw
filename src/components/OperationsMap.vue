@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { GAME_RULES, getAssistMissionBlockReason, getCleanupSecondsRemaining, getManualDispatchBlockReason, getMergeSquadsBlockReason, getMoveSquadBlockReason, getSplitSquadBlockReason, getSquadMapPosition, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
+import { layoutSquadMarkers } from './squadMarkerLayout'
 
 const props = defineProps<{ state: State; locale: Locale }>()
 const emit = defineEmits<{
@@ -21,6 +22,9 @@ const selectedTarget = ref<{ type: 'mission'; missionId: string } | { type: 'bas
 const commandMessage = ref<string>()
 const splitSquadId = ref<string>()
 const splitMemberIds = ref<string[]>([])
+const mapGrid = ref<HTMLElement>()
+const mapSize = ref({ width: 1000, height: 700 })
+let mapResizeObserver: ResizeObserver | undefined
 
 function squadPosition(squad: Squad) {
   const { x, y } = getSquadMapPosition(squad)
@@ -38,19 +42,15 @@ function squadColor(squad: Squad) {
   return squadPalette[index] ?? `hsl(${(index * 137.5) % 360} 54% 66%)`
 }
 
+const separatedSquadPositions = computed(() => layoutSquadMarkers(
+  props.state.squads
+    .filter(squad => squad.phase !== 'base')
+    .map(squad => ({ id: squad.id, ...squadPosition(squad) })),
+  mapSize.value,
+))
+
 function separatedSquadPosition(squad: Squad) {
-  const position = squadPosition(squad)
-  const colliding = props.state.squads
-    .filter(candidate => candidate.phase !== 'base')
-    .filter(candidate => {
-      const other = squadPosition(candidate)
-      return Math.hypot(other.x - position.x, other.y - position.y) < 1.5
-    })
-    .sort((a, b) => a.id.localeCompare(b.id))
-  if (colliding.length < 2) return position
-  const index = colliding.findIndex(candidate => candidate.id === squad.id)
-  const angle = index / colliding.length * Math.PI * 2 - Math.PI / 2
-  return { x: position.x + Math.cos(angle) * 1.6, y: position.y + Math.sin(angle) * 1.6 }
+  return separatedSquadPositions.value.get(squad.id) ?? squadPosition(squad)
 }
 
 function squadStyle(squad: Squad) {
@@ -70,6 +70,13 @@ function route(squad: Squad) {
 function missionLink(squad: Squad) {
   const position = separatedSquadPosition(squad)
   return { x1: position.x, y1: position.y, x2: squad.target?.x ?? position.x, y2: squad.target?.y ?? position.y }
+}
+
+function markerOffsetLink(squad: Squad) {
+  const actual = squadPosition(squad)
+  const displayed = separatedSquadPosition(squad)
+  if (Math.abs(actual.x - displayed.x) < 0.01 && Math.abs(actual.y - displayed.y) < 0.01) return
+  return { x1: actual.x, y1: actual.y, x2: displayed.x, y2: displayed.y }
 }
 
 function isActiveAssignedMission(mission: Mission) {
@@ -230,8 +237,22 @@ function handleEscape(event: KeyboardEvent) {
   if (event.key === 'Escape' && (selectedSquadId.value || selectedTarget.value)) clearCommand()
 }
 
-onMounted(() => window.addEventListener('keydown', handleEscape))
-onBeforeUnmount(() => window.removeEventListener('keydown', handleEscape))
+onMounted(() => {
+  window.addEventListener('keydown', handleEscape)
+  if (mapGrid.value) {
+    const updateMapSize = () => {
+      if (!mapGrid.value) return
+      mapSize.value = { width: mapGrid.value.clientWidth, height: mapGrid.value.clientHeight }
+    }
+    updateMapSize()
+    mapResizeObserver = new ResizeObserver(updateMapSize)
+    mapResizeObserver.observe(mapGrid.value)
+  }
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleEscape)
+  mapResizeObserver?.disconnect()
+})
 
 function formatLog(entry: LogEntry) {
   const minutes = 540 + Math.floor(entry.time / 60)
@@ -242,10 +263,11 @@ function formatLog(entry: LogEntry) {
 
 <template>
   <section class="map-view">
-    <div class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedSquadId || selectedTarget }" @click="selectMapPoint">
+    <div ref="mapGrid" class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedSquadId || selectedTarget }" @click="selectMapPoint">
       <svg class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
         <line v-for="squad in state.squads.filter(candidate => ['returning', 'moving', 'merging'].includes(candidate.phase) || (candidate.target && ['outbound', 'support'].includes(candidate.phase)))" :key="`route-${squad.id}`" v-bind="route(squad)" :style="{ stroke: squadColor(squad), strokeDasharray: `${3 + squadIndex(squad) % 4} ${2 + squadIndex(squad) % 3}` }" />
         <line v-for="squad in state.squads.filter(candidate => candidate.target && ['cleanup', 'assisting', 'incident'].includes(candidate.phase))" :key="`mission-link-${squad.id}`" class="mission-link" v-bind="missionLink(squad)" :style="{ stroke: squadColor(squad) }" />
+        <line v-for="squad in state.squads.filter(candidate => candidate.phase !== 'base' && markerOffsetLink(candidate))" :key="`marker-offset-${squad.id}`" class="marker-offset-link" v-bind="markerOffsetLink(squad)" :style="{ stroke: squadColor(squad) }" />
       </svg>
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <div class="district d1">{{ tr('Старый сектор') }}</div><div class="district d2">{{ tr('Промзона') }}</div><div class="district d3">{{ tr('Терминал') }}</div>
