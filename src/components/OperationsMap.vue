@@ -4,6 +4,12 @@ import { GAME_RULES, getAssignMissionBlockReason, getCleanupSecondsRemaining, ge
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
+import { baseFormationOffsets, formationOffsets } from '../map/formation'
+import { useMapSelection } from '../map/useMapSelection'
+import { orderFailureSummary, partitionSelectedBaseCats as getSelectedBaseCats, validateDeployOrder } from '../map/useMapOrders'
+import MapRouteLayer from './MapRouteLayer.vue'
+import MapSquadLayer from './MapSquadLayer.vue'
+import MapSidePanel from './MapSidePanel.vue'
 
 const props = defineProps<{ state: State; locale: Locale }>()
 const emit = defineEmits<{
@@ -16,13 +22,9 @@ const emit = defineEmits<{
 }>()
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
 const base = { x: 46, y: 51 }
-const selectedSquadIds = ref<string[]>([])
-const selectedCatIds = ref<string[]>([])
-const selectedTarget = ref<{ type: 'mission'; missionId: string } | { type: 'base' }>()
-const commandMessage = ref<string>()
+const { selectedSquadIds, selectedCatIds, selectedTarget, commandMessage, mergeSourceSquadId, selectedCount, clearCommand, handleEscape } = useMapSelection()
 const splitSquadId = ref<string>()
 const splitMemberIds = ref<string[]>([])
-const mergeSourceSquadId = ref<string>()
 const mapGrid = ref<HTMLElement>()
 const mapSize = ref({ width: 1000, height: 700 })
 const selectionBox = ref<{ startX: number; startY: number; x: number; y: number; additive: boolean; pointerId: number; dragging: boolean }>()
@@ -38,8 +40,8 @@ function squadIndex(squad: Squad) { return Math.max(0, props.state.squads.findIn
 function squadColor(squad: Squad) { const index = squadIndex(squad); return squadPalette[index] ?? `hsl(${(index * 137.5) % 360} 54% 66%)` }
 
 function squadStyle(squad: Squad) { const position = squadPosition(squad); return { left: `${position.x}%`, top: `${position.y}%`, '--squad-color': squadColor(squad) } }
-function formationMemberStyle() { return { left: '0px', top: '0px' } }
-function squadMembers(squad: Squad) { return squad.members.map(id => ({ id, x: 0, y: 0 })) }
+function formationMemberStyle(member: { x: number; y: number }) { return { left: `${member.x}px`, top: `${member.y}px` } }
+function squadMembers(squad: Squad) { return squad.members.map((id, index) => ({ id, ...formationOffsets(squad.members.length)[index] })) }
 function fieldCat(_squad: Squad, memberId: string) { return props.state.cats.find(cat => cat.id === memberId) }
 function fieldCatTooltip(squad: Squad, memberId: string) {
   const cat = fieldCat(squad, memberId)
@@ -76,11 +78,17 @@ function missionLink(squad: Squad) { const position = squadPosition(squad); retu
 function markerOriginStyle(squad: Squad) { const position = squadPosition(squad); return { left: `${position.x}%`, top: `${position.y}%`, '--squad-color': squadColor(squad) } }
 
 function catIsAtBase(cat: Cat) { return !cat.assignedTo || props.state.squads.find(squad => squad.id === cat.assignedTo)?.phase === 'base' }
-function baseCatPosition(_cat: Cat) { return base }
+function baseCatPosition(cat: Cat) {
+  const baseCats = props.state.cats.filter(candidate => catIsAtBase(candidate))
+  const index = Math.max(0, baseCats.findIndex(candidate => candidate.id === cat.id))
+  const offset = baseFormationOffsets(baseCats.length)[index] ?? { x: 0, y: 0 }
+  return { x: base.x + offset.x / mapSize.value.width * 100, y: base.y + offset.y / mapSize.value.height * 100 }
+}
 function baseCatStyle(cat: Cat) {
   const squad = props.state.squads.find(candidate => candidate.id === cat.assignedTo)
+  const position = baseCatPosition(cat)
   return {
-    left: `${base.x}%`, top: `${base.y}%`,
+    left: `${position.x}%`, top: `${position.y}%`,
     '--squad-color': squad ? squadColor(squad) : '#d8c7a7',
   }
 }
@@ -98,20 +106,9 @@ function squadLabel(squad: Squad) {
   return tr('status.cleanup', { progress: Math.round((props.state.missions.find(mission => mission.id === squad.missionId)?.progress ?? 0) / GAME_RULES.cleanupWork * 100), seconds: Math.ceil(getCleanupSecondsRemaining(props.state, squad)) })
 }
 
-function selectedCount() { return selectedSquadIds.value.length + selectedCatIds.value.length }
-function clearCommand() { selectedSquadIds.value = []; selectedCatIds.value = []; selectedTarget.value = undefined; commandMessage.value = undefined; mergeSourceSquadId.value = undefined }
 function setFailure(reason: string) { commandMessage.value = reason }
-function failureSummary(reasons: string[]) { return reasons.length > 1 ? 'dispatch.reason.partial' : reasons[0] }
 function partitionSelectedBaseCats() {
-  const ready: string[] = [], blocked: string[] = [], reasons: string[] = []
-  for (const catId of selectedCatIds.value) {
-    const cat = props.state.cats.find(candidate => candidate.id === catId)
-    if (!cat || !catIsAtBase(cat)) { blocked.push(catId); reasons.push('dispatch.reason.away') }
-    else if (cat.injuredRemaining > 0) { blocked.push(catId); reasons.push('dispatch.reason.injured') }
-    else if (cat.sleeping ? cat.energy < GAME_RULES.wakeForOrderEnergy : cat.energy <= GAME_RULES.sleepAtEnergy) { blocked.push(catId); reasons.push('dispatch.reason.tired') }
-    else ready.push(catId)
-  }
-  return { ready, blocked, reasons }
+  return getSelectedBaseCats(props.state, selectedCatIds.value)
 }
 function issueMission(mission: Mission) {
   const blockedSquads: string[] = [], reasons: string[] = []
@@ -123,12 +120,12 @@ function issueMission(mission: Mission) {
   selectedSquadIds.value = blockedSquads
   selectedCatIds.value = cats.blocked
   selectedTarget.value = undefined
-  commandMessage.value = failureSummary(reasons)
+  commandMessage.value = orderFailureSummary(reasons)
 }
 function issueReturn() {
   const blocked: string[] = [], reasons: string[] = []
   for (const squadId of selectedSquadIds.value) { const squad = props.state.squads.find(candidate => candidate.id === squadId); if (!squad || ['incident', 'support'].includes(squad.phase)) { blocked.push(squadId); reasons.push('dispatch.reason.away') } else if (squad.phase !== 'base') emit('returnHome', squad.id) }
-  selectedSquadIds.value = blocked; selectedCatIds.value = []; selectedTarget.value = undefined; commandMessage.value = failureSummary(reasons)
+  selectedSquadIds.value = blocked; selectedCatIds.value = []; selectedTarget.value = undefined; commandMessage.value = orderFailureSummary(reasons)
 }
 function selectSquad(squad: Squad, event?: MouseEvent) {
   commandMessage.value = undefined
@@ -152,12 +149,12 @@ function openSplit(squad: Squad) { splitSquadId.value = squad.id; splitMemberIds
 function toggleSplitMember(memberId: string) { splitMemberIds.value = splitMemberIds.value.includes(memberId) ? splitMemberIds.value.filter(id => id !== memberId) : [...splitMemberIds.value, memberId] }
 function confirmSplit() { const squadId = splitSquadId.value; if (!squadId) return; const reason = getSplitSquadBlockReason(props.state, squadId, splitMemberIds.value); if (reason) return setFailure(reason); emit('split', squadId, [...splitMemberIds.value]); splitSquadId.value = undefined; splitMemberIds.value = []; clearCommand() }
 function armMerge() { if (selectedSquadIds.value.length === 1) { mergeSourceSquadId.value = selectedSquadIds.value[0]; commandMessage.value = undefined } }
-function selectMission(mission: Mission) { commandMessage.value = undefined; if (selectedCount()) return issueMission(mission); selectedTarget.value = selectedTarget.value?.type === 'mission' && selectedTarget.value.missionId === mission.id ? undefined : { type: 'mission', missionId: mission.id } }
-function selectBase() { commandMessage.value = undefined; if (selectedCount()) return issueReturn(); selectedTarget.value = selectedTarget.value?.type === 'base' ? undefined : { type: 'base' } }
+function selectMission(mission: Mission) { commandMessage.value = undefined; if (selectedCount.value) return issueMission(mission); selectedTarget.value = selectedTarget.value?.type === 'mission' && selectedTarget.value.missionId === mission.id ? undefined : { type: 'mission', missionId: mission.id } }
+function selectBase() { commandMessage.value = undefined; if (selectedCount.value) return issueReturn(); selectedTarget.value = selectedTarget.value?.type === 'base' ? undefined : { type: 'base' } }
 
 function selectMapPoint(event: MouseEvent) {
   if (suppressMapClick) { suppressMapClick = false; return }
-  if (!selectedCount()) return
+  if (!selectedCount.value) return
   const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const point: MapPoint = { x: Math.max(5, Math.min(95, (event.clientX - bounds.left) / bounds.width * 100)), y: Math.max(7, Math.min(93, (event.clientY - bounds.top) / bounds.height * 100)) }
   const cats = partitionSelectedBaseCats()
@@ -166,9 +163,9 @@ function selectMapPoint(event: MouseEvent) {
   actors.forEach((actor, index) => {
     const destination = { x: Math.max(5, Math.min(95, point.x + ((index % columns) - (Math.min(columns, actors.length) - 1) / 2) * 3)), y: Math.max(7, Math.min(93, point.y + (Math.floor(index / columns) - (Math.ceil(actors.length / columns) - 1) / 2) * 3)) }
     if (actor.type === 'squad') { const reason = getMoveSquadBlockReason(props.state, actor.id, destination); if (reason) { blockedSquads.push(actor.id); reasons.push(reason) } else emit('move', actor.id, destination.x, destination.y) }
-    else { const order: DeployOrder = { type: 'move', ...destination }; const reason = getDeployCatsBlockReason(props.state, cats.ready, order); if (reason) { catsBlocked = true; reasons.push(reason) } else emit('deploy', cats.ready, order) }
+    else { const order: DeployOrder = { type: 'move', ...destination }; const reason = validateDeployOrder(props.state, cats.ready, order); if (reason) { catsBlocked = true; reasons.push(reason) } else emit('deploy', cats.ready, order) }
   })
-  selectedSquadIds.value = blockedSquads; selectedCatIds.value = catsBlocked ? [...cats.blocked, ...cats.ready] : cats.blocked; commandMessage.value = failureSummary(reasons)
+  selectedSquadIds.value = blockedSquads; selectedCatIds.value = catsBlocked ? [...cats.blocked, ...cats.ready] : cats.blocked; commandMessage.value = orderFailureSummary(reasons)
 }
 function squadCommandReason(squad: Squad) { const target = selectedTarget.value; if (target?.type === 'mission') return getAssignMissionBlockReason(props.state, squad.id, target.missionId); if (target?.type === 'base') return !['base', 'incident', 'support'].includes(squad.phase) ? undefined : 'dispatch.reason.away'; return getMoveSquadBlockReason(props.state, squad.id) }
 function squadEnergy(squad: Squad) { const members = squad.members.map(id => props.state.cats.find(cat => cat.id === id)).filter(Boolean); return members.length ? Math.round(Math.min(...members.map(cat => cat!.energy))) : 0 }
@@ -183,7 +180,6 @@ function finishSelection(event: PointerEvent) {
   if (box.dragging) { const left = Math.min(box.startX, box.x), right = Math.max(box.startX, box.x), top = Math.min(box.startY, box.y), bottom = Math.max(box.startY, box.y); const squadIds = props.state.squads.filter(squad => squad.phase !== 'base').filter(squad => formationIntersectsBox(squad, left, right, top, bottom)).map(squad => squad.id); const catIds = props.state.cats.filter(catIsAtBase).filter(cat => { const point = baseCatPosition(cat); return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom }).map(cat => cat.id); selectedSquadIds.value = box.additive ? [...new Set([...selectedSquadIds.value, ...squadIds])] : squadIds; selectedCatIds.value = box.additive ? [...new Set([...selectedCatIds.value, ...catIds])] : catIds; suppressMapClick = true }
   selectionBox.value = undefined
 }
-function handleEscape(event: KeyboardEvent) { if (event.key === 'Escape' && (selectedCount() || selectedTarget.value)) clearCommand() }
 onMounted(() => { window.addEventListener('keydown', handleEscape); if (mapGrid.value) { const updateMapSize = () => { if (mapGrid.value) mapSize.value = { width: mapGrid.value.clientWidth, height: mapGrid.value.clientHeight } }; updateMapSize(); mapResizeObserver = new ResizeObserver(updateMapSize); mapResizeObserver.observe(mapGrid.value) } })
 onBeforeUnmount(() => { window.removeEventListener('keydown', handleEscape); mapResizeObserver?.disconnect() })
 function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.time / 60); return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} · ${tr(entry.key, entry.params)}` }
@@ -191,21 +187,20 @@ function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.tim
 
 <template>
   <section class="map-view">
-    <div ref="mapGrid" class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedCount() || selectedTarget, 'return-command-active': selectedSquadIds.length > 0, 'merge-active': mergeSourceSquadId }" @click="selectMapPoint" @pointerdown="beginSelection" @pointermove="updateSelection" @pointerup="finishSelection" @pointercancel="selectionBox = undefined">
-      <svg class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line v-for="squad in state.squads.filter(candidate => ['returning', 'moving', 'merging'].includes(candidate.phase) || (candidate.target && ['outbound', 'support'].includes(candidate.phase)))" :key="`route-${squad.id}`" v-bind="route(squad)" :style="{ stroke: squadColor(squad), strokeDasharray: `${3 + squadIndex(squad) % 4} ${2 + squadIndex(squad) % 3}` }" /><line v-for="squad in state.squads.filter(candidate => candidate.target && ['cleanup', 'incident'].includes(candidate.phase))" :key="`mission-link-${squad.id}`" class="mission-link" v-bind="missionLink(squad)" :style="{ stroke: squadColor(squad) }" /></svg>
-      <span v-for="squad in state.squads.filter(candidate => candidate.phase !== 'base' && selectedSquadIds.includes(candidate.id))" :key="`marker-origin-${squad.id}`" class="squad-marker-origin" :style="markerOriginStyle(squad)" aria-hidden="true"></span>
+    <div ref="mapGrid" class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedCount || selectedTarget, 'return-command-active': selectedSquadIds.length > 0, 'merge-active': mergeSourceSquadId }" @click="selectMapPoint" @pointerdown="beginSelection" @pointermove="updateSelection" @pointerup="finishSelection" @pointercancel="selectionBox = undefined">
+      <MapRouteLayer :state="state" :base="base" :squad-color="squadColor" :squad-index="squadIndex" />
+      <MapSquadLayer :state="state" :selected-squad-ids="selectedSquadIds" :squad-style="squadStyle" :squad-is-available="squadIsAvailable" :field-cat-tooltip="fieldCatTooltip" :squad-color="squadColor" :field-cat="fieldCat" :cat-tokens-url="catTokensUrl" :squad-palette="squadPalette" @select="selectSquad" />
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <button type="button" class="base-pin" :class="{ selected: selectedTarget?.type === 'base' }" :aria-label="tr('БАЗА')" @click.stop="selectBase"><strong>NL</strong></button>
       <button v-for="cat in state.cats.filter(catIsAtBase)" :key="`map-cat-${cat.id}`" type="button" class="base-cat-marker" :class="{ selected: selectedCatIds.includes(cat.id), sleeping: cat.sleeping, injured: cat.injuredRemaining > 0 }" :style="baseCatStyle(cat)" :aria-label="tr(cat.name)" :title="baseCatTooltip(cat)" @click.stop="selectCat(cat, $event)"><svg viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg></button>
       <div v-if="state.storyIncident" class="story-pin" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }" :aria-label="tr('Дезертир ждёт решения')"><span>!</span></div><div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span></div>
       <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id, 'enhanced-alert': mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
       <button v-for="mission in state.missions.filter(isActiveAssignedMission)" :key="`assigned-${mission.id}`" type="button" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id, selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
-      <div v-for="squad in state.squads.filter(candidate => candidate.phase !== 'base')" :key="squad.id" class="squad-formation" :class="[squad.phase, squad.id, { selected: selectedSquadIds.includes(squad.id), available: squadIsAvailable(squad) }]" :style="squadStyle(squad)" :data-squad-id="squad.id"><button v-for="member in squadMembers(squad)" :key="member.id" type="button" class="field-cat-marker" :class="{ injured: fieldCat(squad, member.id)?.injuredRemaining }" :style="formationMemberStyle()" :data-cat-id="member.id" :aria-label="fieldCatTooltip(squad, member.id)" :title="fieldCatTooltip(squad, member.id)" @click.stop="selectSquad(squad, $event)"><span aria-hidden="true"></span><svg viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${member.id}`" /></svg></button></div>
-      <div v-if="selectedCount() || selectedTarget || commandMessage" class="command-hint"><span>{{ tr(mergeSourceSquadId ? 'squad.merge.choose_target' : selectedCount() ? 'dispatch.command.choose_target_count' : 'dispatch.command.choose_squad', { count: selectedCount() }) }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
+      <div v-if="selectedCount || selectedTarget || commandMessage" class="command-hint"><span>{{ tr(mergeSourceSquadId ? 'squad.merge.choose_target' : selectedCount ? 'dispatch.command.choose_target_count' : 'dispatch.command.choose_squad', { count: selectedCount }) }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
       <div v-if="selectedSquadIds.length === 1" class="single-squad-actions"><button v-if="state.squads.find(squad => squad.id === selectedSquadIds[0])?.phase !== 'base' && (state.squads.find(squad => squad.id === selectedSquadIds[0])?.members.length ?? 0) > 1" type="button" @click.stop="openSplit(state.squads.find(squad => squad.id === selectedSquadIds[0])!)">{{ tr('squad.split.action') }}</button><button type="button" @click.stop="armMerge">{{ tr('squad.merge.action') }}</button></div>
       <div v-if="selectionBox?.dragging" class="selection-box" :style="selectionBoxStyle()"></div>
       <section v-if="splitSquadId" class="split-panel" @click.stop><header><b>{{ tr('squad.split.title') }}</b><button type="button" @click="splitSquadId = undefined">×</button></header><p>{{ tr('squad.split.description') }}</p><label v-for="memberId in state.squads.find(squad => squad.id === splitSquadId)?.members ?? []" :key="memberId"><input type="checkbox" :checked="splitMemberIds.includes(memberId)" @change="toggleSplitMember(memberId)">{{ tr(state.cats.find(cat => cat.id === memberId)?.name ?? memberId) }}</label><small v-if="getSplitSquadBlockReason(state, splitSquadId, splitMemberIds)">{{ tr(getSplitSquadBlockReason(state, splitSquadId, splitMemberIds)!) }}</small><button type="button" :disabled="Boolean(getSplitSquadBlockReason(state, splitSquadId, splitMemberIds))" @click="confirmSplit">{{ tr('squad.split.confirm') }}</button></section>
     </div>
-    <aside><section class="map-squad-list"><h2>{{ tr('dispatch.command.squads') }}</h2><p v-if="!state.squads.length" class="empty-squad-list">{{ tr('dispatch.command.no_squads') }}</p><button v-for="squad in state.squads" :key="`command-${squad.id}`" type="button" :class="{ selected: squad.phase === 'base' ? squad.members.every(id => selectedCatIds.includes(id)) : selectedSquadIds.includes(squad.id), available: squadIsAvailable(squad) }" @click="selectSquad(squad, $event)"><span><b>{{ squadDisplayName(locale, squad) }} <em v-if="squadIsAvailable(squad)">{{ tr('dispatch.command.available') }}</em></b><small>{{ squadLabel(squad) }}</small></span><span><strong class="squad-energy" :class="{ tired: squadCommandReason(squad) === 'dispatch.reason.tired' }">{{ tr('dispatch.command.energy', { energy: squadEnergy(squad) }) }}</strong><small v-if="squadCommandReason(squad) && squadCommandReason(squad) !== 'dispatch.reason.tired'">{{ tr(squadCommandReason(squad)!) }}</small></span></button></section><h2>{{ tr('ОПЕРАТИВНАЯ ЛЕНТА') }}</h2><p class="goal">{{ tr('objective.summary', { fame: GAME_RULES.fameGoal }) }}</p><div class="case-progress" :class="{ done: state.storyResolution }"><span>{{ tr('ДЕЛО 09') }}</span><b>{{ tr(state.storyResolution ? 'ЗАКРЫТО' : state.storyIncident ? 'ТРЕБУЕТ РЕШЕНИЯ' : 'ОЖИДАЕТ СИГНАЛА') }}</b></div><article v-for="(item, index) in state.log" :key="`${index}-${item.time}-${item.key}`">{{ formatLog(item) }}</article></aside>
+    <MapSidePanel :state="state" :locale="locale" :selected-squad-ids="selectedSquadIds" :selected-cat-ids="selectedCatIds" :squad-is-available="squadIsAvailable" :squad-command-reason="squadCommandReason" :squad-energy="squadEnergy" :squad-label="squadLabel" @select="selectSquad" />
   </section>
 </template>
