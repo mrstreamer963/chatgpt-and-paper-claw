@@ -21,7 +21,7 @@
   cursor: pointer;
   transform: translate(-50%, -35%);
 }
-.map-grid.command-active:not(.merge-active) .base-pin { z-index: 6; }
+.map-grid.return-command-active:not(.merge-active) .base-pin { z-index: 6; }
 .base-pin.selected strong { box-shadow: 0 0 0 7px #ffc16f2b, 0 0 36px #ffb347aa; }
 
 .base-pin strong,
@@ -47,10 +47,17 @@
 .cleanup-pin > b { top: 22px; }
 .cleanup-pin > small { top: 37px; }
 
-.squad-marker { display: grid; place-items: center; width: 56px; min-width: 0; height: 56px; padding: 0; border: 0; background: transparent; pointer-events: auto; }
-.squad-marker.selected .map-squad-tokens { filter: drop-shadow(0 0 8px #ffd27d) drop-shadow(0 3px 5px #000c); }
-.squad-marker.available .map-squad-tokens { filter: drop-shadow(0 0 7px #68d5a688) drop-shadow(0 3px 5px #000c); }
-.squad-marker.available.selected .map-squad-tokens { filter: drop-shadow(0 0 9px #ffd27d) drop-shadow(0 0 5px #68d5a6) drop-shadow(0 3px 5px #000c); }
+.squad-formation { position: absolute; z-index: 4; width: 0; height: 0; transition: left .25s linear, top .25s linear, opacity .2s; pointer-events: none; }
+.field-cat-marker { position: absolute; width: 38px; min-width: 0; height: 44px; padding: 0; transform: translate(-50%, -50%); border: 0; background: transparent; color: var(--squad-color); pointer-events: auto; }
+.field-cat-marker > span { position: absolute; left: 50%; bottom: 1px; width: 30px; height: 12px; transform: translateX(-50%); border: 1px solid color-mix(in srgb, var(--squad-color) 72%, transparent); border-radius: 50%; background: color-mix(in srgb, var(--squad-color) 18%, transparent); box-shadow: 0 2px 5px #000b; }
+.field-cat-marker svg { position: relative; width: 34px; height: 34px; overflow: visible; filter: drop-shadow(0 3px 4px #000c); }
+.squad-formation.selected .field-cat-marker > span { border-color: #ffd27d; background: #ffd27d35; box-shadow: 0 0 0 3px #ffd27d24, 0 0 10px #ffc46b99; }
+.squad-formation.selected .field-cat-marker svg { filter: drop-shadow(0 0 7px #ffd27d) drop-shadow(0 3px 4px #000c); }
+.squad-formation.available:not(.selected) .field-cat-marker > span { border-color: #68d5a6; box-shadow: 0 0 8px #68d5a677; }
+.field-cat-marker.injured { color: #e16f5d; }
+.squad-formation:is(.moving, .outbound, .returning, .support, .merging) .field-cat-marker svg { animation: field-cat-march .52s ease-in-out infinite alternate; animation-delay: var(--step-delay, 0s); }
+@keyframes field-cat-march { from { transform: translateY(1px) rotate(-1.5deg); } to { transform: translateY(-2px) rotate(1.5deg); } }
+@media (prefers-reduced-motion: reduce) { .squad-formation .field-cat-marker svg { animation: none; } }
 .base-cat-marker { position: absolute; z-index: 4; width: 46px; height: 54px; padding: 0; transform: translate(-50%, -50%); border: 0; background: transparent; color: var(--squad-color); }
 .base-cat-marker svg { width: 35px; height: 35px; overflow: visible; filter: drop-shadow(0 3px 4px #000b); }
 .base-cat-marker small { display: block; margin-top: -2px; color: #d9d7c9; font-size: 7px; text-shadow: 0 2px 4px #000; white-space: nowrap; }
@@ -58,13 +65,7 @@
 .base-cat-marker.selected::after { content: ''; position: absolute; left: 50%; top: 16px; width: 38px; height: 38px; transform: translate(-50%, -50%); border: 1px solid #ffd27d; border-radius: 50%; }
 .base-cat-marker.sleeping { opacity: .62; }
 .base-cat-marker.injured { color: #e16f5d; }
-.map-squad-tokens { position: relative; display: flex; justify-content: center; width: 56px; height: 48px; filter: drop-shadow(0 3px 5px #000c); }
-.cat-silhouette { width: 30px; height: 30px; margin: 12px -8px 0; overflow: visible; }
-.cat-silhouette:nth-child(2) { margin-top: 3px; }
-.cat-silhouette:nth-child(3) { margin-top: 14px; }
-.squad-callout { position: absolute; top: 50%; width: 150px; transform: translateY(-50%); pointer-events: none; }
-.squad-marker.callout-left .squad-callout { right: calc(100% + 8px); text-align: right; }
-.squad-marker.callout-right .squad-callout { left: calc(100% + 8px); text-align: left; }
+.squad-callout { position: absolute; left: 0; top: var(--formation-label-y, 40px); width: 150px; transform: translateX(-50%); text-align: center; pointer-events: none; }
 .squad-callout b { display: block; text-shadow: 0 2px 4px #000, 0 0 8px #000; }
 .squad-callout b { color: var(--squad-color, #fff1c8); }
 

@@ -2,6 +2,8 @@ export interface SquadMarkerPoint {
   id: string
   x: number
   y: number
+  width?: number
+  height?: number
 }
 
 export interface SquadMarkerLayoutOptions {
@@ -9,32 +11,93 @@ export interface SquadMarkerLayoutOptions {
   height: number
   markerSize?: number
   gap?: number
-  obstacles?: Array<{ id: string; x: number; y: number; size: number }>
+  obstacles?: Array<{ id: string; x: number; y: number; size?: number; width?: number; height?: number }>
+}
+
+export interface FormationMemberSlot {
+  id: string
+  x: number
+  y: number
+  stepDelay: number
+}
+
+export interface SquadFormationLayout {
+  members: FormationMemberSlot[]
+  width: number
+  height: number
 }
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value))
 
+const formationPatterns: Record<number, Array<[number, number]>> = {
+  1: [[0, 0]],
+  2: [[-.5, 0], [.5, 0]],
+  3: [[0, -.5], [-.55, .5], [.55, .5]],
+  4: [[-.45, -.5], [.45, -.5], [-.55, .5], [.55, .5]],
+  5: [[0, -.75], [-.55, 0], [.55, 0], [-.42, .75], [.42, .75]],
+  6: [[-.4, -.8], [.4, -.8], [-.65, 0], [.65, 0], [-.4, .8], [.4, .8]],
+}
+
+export function layoutSquadFormation(memberIds: string[], direction = { x: 0, y: -1 }): SquadFormationLayout {
+  const ids = [...new Set(memberIds)].sort((a, b) => a.localeCompare(b))
+  const pattern = formationPatterns[ids.length] ?? ids.map((_, index) => {
+    const columns = Math.ceil(Math.sqrt(ids.length))
+    const rows = Math.ceil(ids.length / columns)
+    return [(index % columns) - (Math.min(columns, ids.length) - 1) / 2, Math.floor(index / columns) - (rows - 1) / 2] as [number, number]
+  })
+  const length = Math.hypot(direction.x, direction.y)
+  const heading = length > 1e-6 ? Math.atan2(direction.y, direction.x) + Math.PI / 2 : 0
+  const cosine = Math.cos(heading)
+  const sine = Math.sin(heading)
+  const members = ids.map((id, index) => {
+    const [column, row] = pattern[index]
+    const rawX = column * 34
+    const rawY = row * 30
+    return {
+      id,
+      x: rawX * cosine - rawY * sine,
+      y: rawX * sine + rawY * cosine,
+      stepDelay: index * -.09,
+    }
+  })
+  const halfUnitWidth = 19
+  const halfUnitHeight = 22
+  const width = members.length ? Math.max(...members.map(member => member.x + halfUnitWidth)) - Math.min(...members.map(member => member.x - halfUnitWidth)) + 8 : 0
+  const height = members.length ? Math.max(...members.map(member => member.y + halfUnitHeight)) - Math.min(...members.map(member => member.y - halfUnitHeight)) + 8 : 0
+  return { members, width, height }
+}
+
 export function layoutSquadMarkers(points: SquadMarkerPoint[], options: SquadMarkerLayoutOptions) {
   const markerSize = options.markerSize ?? 56
   const gap = options.gap ?? 6
-  const spacing = markerSize + gap
-  const half = markerSize / 2
   const width = Math.max(markerSize, options.width)
   const height = Math.max(markerSize, options.height)
   const placed = [...points]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map(point => ({
-      ...point,
-      px: clamp(point.x / 100 * width, half, width - half),
-      py: clamp(point.y / 100 * height, half, height - half),
-    }))
+    .map(point => {
+      const pointWidth = point.width ?? markerSize
+      const pointHeight = point.height ?? markerSize
+      return {
+        ...point,
+        width: pointWidth,
+        height: pointHeight,
+        px: clamp(point.x / 100 * width, pointWidth / 2, width - pointWidth / 2),
+        py: clamp(point.y / 100 * height, pointHeight / 2, height - pointHeight / 2),
+      }
+    })
   const obstacles = [...(options.obstacles ?? [])]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map(obstacle => ({
-      ...obstacle,
-      px: clamp(obstacle.x / 100 * width, obstacle.size / 2, width - obstacle.size / 2),
-      py: clamp(obstacle.y / 100 * height, obstacle.size / 2, height - obstacle.size / 2),
-    }))
+    .map(obstacle => {
+      const obstacleWidth = obstacle.width ?? obstacle.size ?? markerSize
+      const obstacleHeight = obstacle.height ?? obstacle.size ?? markerSize
+      return {
+        ...obstacle,
+        width: obstacleWidth,
+        height: obstacleHeight,
+        px: clamp(obstacle.x / 100 * width, obstacleWidth / 2, width - obstacleWidth / 2),
+        py: clamp(obstacle.y / 100 * height, obstacleHeight / 2, height - obstacleHeight / 2),
+      }
+    })
 
   const idAngle = (id: string) => {
     let hash = 0
@@ -42,17 +105,18 @@ export function layoutSquadMarkers(points: SquadMarkerPoint[], options: SquadMar
     return hash / 0xffffffff * Math.PI * 2
   }
 
-  // Resolve every collision by pushing both participants equally. Repeating the
-  // pass lets the displacement propagate through a whole group like a force field.
+  // Repeated passes let displacement propagate through a cluster while the
+  // logical simulation coordinates remain untouched.
   for (let iteration = 0; iteration < 100; iteration++) {
     let collisionFound = false
     for (const point of placed) {
       for (const obstacle of obstacles) {
         let dx = point.px - obstacle.px
         let dy = point.py - obstacle.py
-        const clearance = markerSize / 2 + obstacle.size / 2 + gap
-        const overlapX = clearance - Math.abs(dx)
-        const overlapY = clearance - Math.abs(dy)
+        const clearanceX = (point.width + obstacle.width) / 2 + gap
+        const clearanceY = (point.height + obstacle.height) / 2 + gap
+        const overlapX = clearanceX - Math.abs(dx)
+        const overlapY = clearanceY - Math.abs(dy)
         if (overlapX <= 0 || overlapY <= 0) continue
         collisionFound = true
 
@@ -61,14 +125,8 @@ export function layoutSquadMarkers(points: SquadMarkerPoint[], options: SquadMar
           dx = Math.cos(angle)
           dy = Math.sin(angle)
         }
-        const distance = Math.hypot(dx, dy)
-        const unitX = dx / distance
-        const unitY = dy / distance
-        const pushX = Math.abs(unitX) > 0.001 ? overlapX / Math.abs(unitX) : Number.POSITIVE_INFINITY
-        const pushY = Math.abs(unitY) > 0.001 ? overlapY / Math.abs(unitY) : Number.POSITIVE_INFINITY
-        const push = Math.min(pushX, pushY) + 0.01
-        point.px = clamp(point.px + unitX * push, half, width - half)
-        point.py = clamp(point.py + unitY * push, half, height - half)
+        if (overlapX <= overlapY) point.px = clamp(point.px + (Math.sign(dx) || 1) * (overlapX + .01), point.width / 2, width - point.width / 2)
+        else point.py = clamp(point.py + (Math.sign(dy) || 1) * (overlapY + .01), point.height / 2, height - point.height / 2)
       }
     }
 
@@ -78,21 +136,23 @@ export function layoutSquadMarkers(points: SquadMarkerPoint[], options: SquadMar
         const second = placed[otherIndex]
         const dx = second.px - first.px
         const dy = second.py - first.py
-        const overlapX = spacing - Math.abs(dx)
-        const overlapY = spacing - Math.abs(dy)
+        const clearanceX = (first.width + second.width) / 2 + gap
+        const clearanceY = (first.height + second.height) / 2 + gap
+        const overlapX = clearanceX - Math.abs(dx)
+        const overlapY = clearanceY - Math.abs(dy)
         if (overlapX <= 0 || overlapY <= 0) continue
         collisionFound = true
 
         if (overlapX <= overlapY) {
           const direction = dx === 0 ? (index + otherIndex) % 2 ? 1 : -1 : Math.sign(dx)
-          const push = overlapX / 2 + 0.01
-          first.px = clamp(first.px - direction * push, half, width - half)
-          second.px = clamp(second.px + direction * push, half, width - half)
+          const push = overlapX / 2 + .01
+          first.px = clamp(first.px - direction * push, first.width / 2, width - first.width / 2)
+          second.px = clamp(second.px + direction * push, second.width / 2, width - second.width / 2)
         } else {
           const direction = dy === 0 ? (index + otherIndex) % 2 ? -1 : 1 : Math.sign(dy)
-          const push = overlapY / 2 + 0.01
-          first.py = clamp(first.py - direction * push, half, height - half)
-          second.py = clamp(second.py + direction * push, half, height - half)
+          const push = overlapY / 2 + .01
+          first.py = clamp(first.py - direction * push, first.height / 2, height - first.height / 2)
+          second.py = clamp(second.py + direction * push, second.height / 2, height - second.height / 2)
         }
       }
     }

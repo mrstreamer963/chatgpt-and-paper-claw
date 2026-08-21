@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { layoutSquadMarkers } from './components/squadMarkerLayout.ts'
+import { layoutSquadFormation, layoutSquadMarkers } from './components/squadMarkerLayout.ts'
 
 const viewport = { width: 800, height: 600, markerSize: 56, gap: 6 }
 
@@ -72,4 +72,40 @@ test('squad marker layout stays separated at map edges and is deterministic', ()
     assert.ok(position.x >= 28 && position.x <= viewport.width - 28)
     assert.ok(position.y >= 28 && position.y <= viewport.height - 28)
   }
+})
+
+test('field formation assigns every member a stable independent slot', () => {
+  const first = layoutSquadFormation(['rust', 'marlowe', 'pixel'])
+  const second = layoutSquadFormation(['pixel', 'rust', 'marlowe'])
+
+  assert.deepEqual(first, second)
+  assert.deepEqual(first.members.map(member => member.id), ['marlowe', 'pixel', 'rust'])
+  assert.equal(new Set(first.members.map(member => `${member.x}:${member.y}`)).size, 3)
+  assert.ok(first.width > 38)
+  assert.ok(first.height > 44)
+})
+
+test('field formation rotates its slots toward the route without rotating member identity', () => {
+  const north = layoutSquadFormation(['marlowe', 'pixel', 'rust'], { x: 0, y: -1 })
+  const east = layoutSquadFormation(['marlowe', 'pixel', 'rust'], { x: 1, y: 0 })
+
+  assert.deepEqual(north.members.map(member => member.id), east.members.map(member => member.id))
+  assert.notDeepEqual(north.members.map(({ x, y }) => ({ x, y })), east.members.map(({ x, y }) => ({ x, y })))
+  assert.ok(east.height > north.height)
+  assert.ok(east.width < north.width)
+})
+
+test('squad marker layout separates rectangular formation footprints and keeps them on screen', () => {
+  const result = layoutSquadMarkers([
+    { id: 'alpha', x: 50, y: 50, width: 110, height: 60 },
+    { id: 'bravo', x: 50, y: 50, width: 54, height: 96 },
+  ], { width: viewport.width, height: viewport.height, gap: 8 })
+  const alpha = pixels(result.get('alpha')!)
+  const bravo = pixels(result.get('bravo')!)
+
+  assert.ok(Math.abs(alpha.x - bravo.x) >= 90 || Math.abs(alpha.y - bravo.y) >= 86)
+  assert.ok(alpha.x >= 55 && alpha.x <= viewport.width - 55)
+  assert.ok(alpha.y >= 30 && alpha.y <= viewport.height - 30)
+  assert.ok(bravo.x >= 27 && bravo.x <= viewport.width - 27)
+  assert.ok(bravo.y >= 48 && bravo.y <= viewport.height - 48)
 })

@@ -13,7 +13,7 @@ test('a dynamically formed field squad can split and merge again', async ({ page
   await formSquadAtPoint(page, ['Марлоу', 'Пиксель'])
   await waitForSquadPhase(page, 'squad-1', ['moving', 'field'])
 
-  await page.locator('.squad-marker.squad-1').click()
+  await page.locator('.squad-formation.squad-1 .field-cat-marker').first().click()
   await page.getByRole('button', { name: 'Разделить отряд', exact: true }).click()
   await page.getByRole('button', { name: 'Сформировать новый отряд', exact: true }).click()
 
@@ -26,9 +26,9 @@ test('a dynamically formed field squad can split and merge again', async ({ page
     { id: 'squad-2', members: 1, autoDispatch: false },
   ])
 
-  await page.locator('.squad-marker.squad-2').click()
+  await page.locator('.squad-formation.squad-2 .field-cat-marker').first().click()
   await page.getByRole('button', { name: 'Объединить', exact: true }).click()
-  await page.locator('.squad-marker.squad-1').click()
+  await page.locator('.squad-formation.squad-1 .field-cat-marker').first().click()
   await page.getByRole('button', { name: /^×1,/ }).click()
 
   await expect.poll(() => readWorld(page, state => state.squads.map((squad: any) => ({
