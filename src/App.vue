@@ -21,15 +21,12 @@ const {
   audioUnavailable,
   saveStatus,
   setSpeed,
-  assignCat,
-  createSquad,
-  disbandSquad,
   renameSquad,
   equipItem,
   setSquadStyle,
   setSquadAutoDispatch,
-  dispatchSquadToMission,
-  assistMission,
+  assignSquadToMission,
+  deployCats,
   splitSquad,
   mergeSquads,
   moveSquadToPoint,
@@ -112,7 +109,7 @@ async function resetProgress() {
 
     <div v-if="state.incident?.stage === 'support_en_route'" class="support-strip"><span class="alert-dot"></span><b>{{ tr('support.en_route', { squad: supportSquadName }) }}</b><span>{{ tr('support.eta', { seconds: supportSeconds }) }}</span><button v-if="state.speed === 0" @click="setSpeed(1)">{{ tr('Продолжить на ×1') }}</button></div>
 
-    <OperationsMap v-if="activeView === 'map'" :state="state" :locale="locale" @dispatch="dispatchSquadToMission" @assist="assistMission" @split="splitSquad" @merge="mergeSquads" @move="moveSquadToPoint" @return-home="returnSquadToBase" />
+    <OperationsMap v-if="activeView === 'map'" :state="state" :locale="locale" @assign="assignSquadToMission" @deploy="deployCats" @split="splitSquad" @merge="mergeSquads" @move="moveSquadToPoint" @return-home="returnSquadToBase" />
     <BaseOperations
       v-else
       :state="state"
@@ -124,9 +121,6 @@ async function resetProgress() {
       :hints-visible="hintsVisible"
       :total-runs="totalRuns"
       :save-status="saveStatus"
-      :assign-cat="assignCat"
-      :create-squad="createSquad"
-      :disband-squad="disbandSquad"
       :rename-squad="renameSquad"
       :equip-item="equipItem"
       :set-squad-style="setSquadStyle"

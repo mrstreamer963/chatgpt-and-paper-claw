@@ -1,6 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:5174'
+const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5191'
+const webServerPort = new URL(baseURL).port || '5191'
 
 export default defineConfig({
   testDir: './e2e',
@@ -15,7 +16,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 5174',
+    command: `npm run dev -- --host 127.0.0.1 --port ${webServerPort}`,
     url: baseURL,
     reuseExistingServer: true,
     timeout: 30_000,

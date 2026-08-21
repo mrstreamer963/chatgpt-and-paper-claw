@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { orderSelectedToPoint, readWorld } from './rts-helpers'
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -7,41 +8,61 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-test('field cat transfer is queued and applied after the current squad returns', async ({ page }) => {
+test('click, Shift, Escape and drag rectangle control RTS selection', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'База', exact: true }).click()
+  const pixel = page.getByRole('button', { name: 'Пиксель', exact: true })
+  const rust = page.getByRole('button', { name: 'Ржа', exact: true })
 
-  const pixelCard = page.locator('.cat-card').filter({ hasText: 'Пиксель' })
-  const assignment = pixelCard.getByLabel('Назначение в отряд')
-  await assignment.selectOption('alpha')
+  await pixel.click()
+  await rust.click({ modifiers: ['Shift'] })
+  await expect(page.locator('.base-cat-marker.selected')).toHaveCount(2)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.base-cat-marker.selected')).toHaveCount(0)
 
+  const map = page.locator('.map-grid')
+  const bounds = await map.boundingBox()
+  if (!bounds) throw new Error('Map has no bounds')
+  await page.mouse.move(bounds.x + bounds.width * 0.35, bounds.y + bounds.height * 0.38)
+  await page.mouse.down()
+  await page.mouse.move(bounds.x + bounds.width * 0.58, bounds.y + bounds.height * 0.68)
+  await page.mouse.up()
+  await expect(page.locator('.base-cat-marker.selected')).toHaveCount(6)
+
+  await page.getByRole('button', { name: 'Мята', exact: true }).click({ modifiers: ['Shift'] })
+  await expect(page.locator('.base-cat-marker.selected')).toHaveCount(5)
+  await page.locator('.cleanup-pin').first().click()
+
+  await expect.poll(() => readWorld(page, state => ({
+    squads: state.squads.length,
+    members: state.squads[0]?.members.length,
+    assigned: state.missions.find((mission: any) => mission.status === 'assigned')?.squadIds,
+  }))).toEqual({ squads: 1, members: 5, assigned: ['squad-1'] })
+})
+
+test('a mass order skips an injured base cat and keeps it selected with an explanation', async ({ page }) => {
+  await page.goto('/')
   await page.getByRole('button', { name: /^×1,/ }).click()
-  await page.getByRole('button', { name: 'Карта', exact: true }).click()
-  await expect(page.locator('.squad-marker.alpha small')).toContainText(/Выезд|Уборка/)
-  await page.getByRole('button', { name: /^Ⅱ/ }).click()
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem('nine-lives-corp-autosave-v1')))
+    .not.toBeNull()
+  const payload = await page.evaluate(() => window.localStorage.getItem('nine-lives-corp-autosave-v1'))
+  const save = JSON.parse(payload!)
+  save.state.speed = 0
+  save.state.cats.find((cat: { id: string }) => cat.id === 'myata').injuredRemaining = 30
 
   await page.getByRole('button', { name: 'База', exact: true }).click()
-  await expect(assignment).toBeEnabled()
-  await assignment.selectOption('bravo')
-  await assignment.blur()
-  await expect.poll(async () => page.evaluate(() => {
-    const payload = window.localStorage.getItem('nine-lives-corp-autosave-v1')
-    if (!payload) return null
-    const state = JSON.parse(payload).state
-    const pixel = state.cats.find((cat: { id: string }) => cat.id === 'pixel')
-    const alpha = state.squads.find((squad: { id: string }) => squad.id === 'alpha')
-    return { assignedTo: pixel.assignedTo, pendingAssignment: pixel.pendingAssignment, phase: alpha.phase }
-  })).toEqual({ assignedTo: 'alpha', pendingAssignment: 'bravo', phase: 'outbound' })
-  await expect(assignment).toHaveClass(/pending/)
-  await expect(assignment).toHaveValue('bravo')
-
+  await page.getByRole('button', { name: 'Достижения', exact: true }).click()
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'injured-save.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(save)),
+  })
   await page.getByRole('button', { name: 'Карта', exact: true }).click()
-  const operationLog = page.locator('.map-view aside')
-  await expect(operationLog).toContainText('Пиксель будет назначен в Отряд «Браво»')
-  await page.getByRole('button', { name: /×10/ }).click()
-  await expect(operationLog).toContainText('Пиксель назначен в Отряд «Браво»')
 
-  await page.getByRole('button', { name: 'База', exact: true }).click()
-  await expect(assignment).not.toHaveClass(/pending/)
-  await expect(assignment).toHaveValue('bravo')
+  await page.getByRole('button', { name: 'Пиксель', exact: true }).click()
+  await page.getByRole('button', { name: 'Мята', exact: true }).click({ modifiers: ['Shift'] })
+  await orderSelectedToPoint(page)
+
+  await expect.poll(() => readWorld(page, state => state.squads[0]?.members)).toEqual(['pixel'])
+  await expect(page.getByRole('button', { name: 'Мята', exact: true })).toHaveClass(/selected/)
+  await expect(page.locator('.command-hint')).toContainText('В составе есть раненый кот')
 })

@@ -7,8 +7,6 @@ import {
   RESEARCH_DEFINITIONS,
   RESEARCH_RULES,
   getResearchWorker,
-  getCreateSquadBlockReason,
-  getDisbandSquadBlockReason,
   getRenameSquadError,
   getSquadCleanupEstimate,
   type Achievement,
@@ -19,7 +17,6 @@ import {
   type State,
 } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
-import CatAssignmentSelect from './CatAssignmentSelect.vue'
 import EquipmentSlotSelect from './EquipmentSlotSelect.vue'
 import SquadStyleSelect from './SquadStyleSelect.vue'
 import baseCutawayUrl from '../../assets/art/base-cutaway-v1.webp?url'
@@ -45,9 +42,6 @@ const props = defineProps<{
   hintsVisible: boolean
   totalRuns: number
   saveStatus: SaveStatus
-  assignCat: (catId: string, squadId: string) => Promise<boolean>
-  createSquad: () => Promise<boolean>
-  disbandSquad: (squadId: string) => Promise<boolean>
   renameSquad: (squadId: string, name: string) => Promise<boolean>
   equipItem: (catId: string, slot: EquipmentSlot, itemId?: ItemId) => Promise<boolean>
   setSquadStyle: (squadId: string, style: Squad['style']) => Promise<boolean>
@@ -70,7 +64,6 @@ const renameValue = ref('')
 const renameError = ref<string>()
 const renamePending = ref(false)
 const researchWorker = computed(() => getResearchWorker(props.state))
-const createSquadReason = computed(() => getCreateSquadBlockReason(props.state))
 const portraitUrls: Record<string, string> = {
   marlowe: portraitMarloweUrl,
   pixel: portraitPixelUrl,
@@ -84,14 +77,6 @@ const tr = (key: string, params?: Record<string, string | number>) => translate(
 watch(() => props.state.squads.map(squad => squad.id), ids => {
   if (!ids.includes(selectedSquadId.value ?? '')) selectedSquadId.value = ids[0]
 })
-
-async function handleCreateSquad() {
-  if (await props.createSquad()) selectedSquadId.value = props.state.squads.at(-1)?.id
-}
-
-async function handleDisbandSquad(squadId: string) {
-  if (await props.disbandSquad(squadId)) selectedSquadId.value = props.state.squads[0]?.id
-}
 
 function startRename(squad: Squad) {
   renamingSquadId.value = squad.id
@@ -209,14 +194,12 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
                 <span>{{ tr('cleanup.energy_per_cat') }} <b>−{{ formatRate(cleanupEstimate(squad).energyPerCat) }}</b></span>
               </template>
             </details>
-            <button type="button" class="disband-squad" :disabled="Boolean(getDisbandSquadBlockReason(state, squad.id))" :title="tr(getDisbandSquadBlockReason(state, squad.id) ?? '')" @click="handleDisbandSquad(squad.id)">{{ tr('squad.manage.disband') }}</button>
           </div>
         </div>
-        <button type="button" class="create-squad" :disabled="Boolean(createSquadReason)" :title="tr(createSquadReason ?? '')" @click="handleCreateSquad">+ {{ tr('squad.manage.create') }}</button>
-        <small v-if="createSquadReason" class="squad-manage-reason">{{ tr(createSquadReason) }}</small>
+        <small v-if="!state.squads.length" class="squad-manage-reason">{{ tr('squad.manage.form_on_map') }}</small>
       </section>
       <div v-for="cat in state.cats" :key="cat.id" class="cat-card" :class="{ injured: cat.injuredRemaining > 0, sleeping: cat.sleeping }">
-        <div class="cat-header"><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else-if="cat.sleeping" class="sleeping-label">{{ tr('cat.sleeping', { energy: Math.round(cat.energy) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span><CatAssignmentSelect :state="state" :cat="cat" :locale="locale" :assign="assignCat" /></div>
+        <div class="cat-header"><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else-if="cat.sleeping" class="sleeping-label">{{ tr('cat.sleeping', { energy: Math.round(cat.energy) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span></div>
         <details>
           <summary>{{ tr('Досье и экипировка') }}</summary>
           <div class="cat-trait"><span>{{ catTraitText(cat) }}</span><small>{{ tr('cat.stats', { combat: cat.combat, tech: cat.tech, perception: cat.perception, scouting: cat.scouting }) }}</small></div>

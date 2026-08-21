@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { orderSelectedToPoint } from './rts-helpers'
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => window.localStorage.clear())
@@ -71,9 +72,8 @@ test('Worker source starts, ticks, orders patch before result, serializes, impor
 
 test('accepted UI commands trigger asynchronous autosave', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'База', exact: true }).click()
-  const pixelAssignment = page.locator('.cat-card').filter({ hasText: 'Пиксель' }).getByLabel('Назначение в отряд')
-  await pixelAssignment.selectOption('alpha')
+  await page.getByRole('button', { name: 'Пиксель', exact: true }).click()
+  await orderSelectedToPoint(page)
 
   await expect.poll(async () => page.evaluate(() => window.localStorage.getItem('nine-lives-corp-autosave-v1')))
     .not.toBeNull()
@@ -82,5 +82,5 @@ test('accepted UI commands trigger asynchronous autosave', async ({ page }) => {
     const save = JSON.parse(payload)
     return save.state.cats.find((cat: { id: string }) => cat.id === 'pixel')?.assignedTo
   })
-  expect(savedAssignment).toBe('alpha')
+  expect(savedAssignment).toBe('squad-1')
 })

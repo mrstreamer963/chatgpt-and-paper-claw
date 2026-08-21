@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { formSquadAtPoint, readWorld, waitForSquadPhase } from './rts-helpers'
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -7,50 +8,31 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-test('a field squad can split and merge again through the map controls', async ({ page }) => {
+test('a dynamically formed field squad can split and merge again', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'База', exact: true }).click()
+  await formSquadAtPoint(page, ['Марлоу', 'Пиксель'])
+  await waitForSquadPhase(page, 'squad-1', ['moving', 'field'])
 
-  for (const catName of ['Марлоу', 'Пиксель']) {
-    await page.locator('.cat-card').filter({ hasText: catName }).getByLabel('Назначение в отряд').selectOption('alpha')
-  }
-
-  await page.getByRole('button', { name: /^×1,/ }).click()
-  await page.getByRole('button', { name: 'Карта', exact: true }).click()
-  await expect(page.locator('.squad-marker.alpha')).toBeVisible()
-  await page.getByRole('button', { name: /^Ⅱ/ }).click()
-
-  const squadList = page.locator('.map-squad-list')
-  await squadList.getByRole('button').filter({ hasText: 'Отряд «Альфа»' }).click()
+  await page.locator('.squad-marker.squad-1').click()
   await page.getByRole('button', { name: 'Разделить отряд', exact: true }).click()
   await page.getByRole('button', { name: 'Сформировать новый отряд', exact: true }).click()
 
-  await expect.poll(async () => page.evaluate(() => {
-    const payload = window.localStorage.getItem('nine-lives-corp-autosave-v1')
-    if (!payload) return null
-    const state = JSON.parse(payload).state
-    return state.squads.map((squad: { name: string; members: string[]; autoDispatch: boolean }) => ({
-      name: squad.name,
-      members: squad.members.length,
-      autoDispatch: squad.autoDispatch,
-    }))
-  })).toEqual([
-    { name: 'squad.alpha', members: 1, autoDispatch: true },
-    { name: 'squad.bravo', members: 0, autoDispatch: true },
-    { name: 'squad.charlie', members: 1, autoDispatch: false },
+  await expect.poll(() => readWorld(page, state => state.squads.map((squad: any) => ({
+    id: squad.id,
+    members: squad.members.length,
+    autoDispatch: squad.autoDispatch,
+  })))).toEqual([
+    { id: 'squad-1', members: 1, autoDispatch: false },
+    { id: 'squad-2', members: 1, autoDispatch: false },
   ])
 
-  await squadList.getByRole('button').filter({ hasText: 'Отряд «Чарли»' }).click()
-  await squadList.getByRole('button').filter({ hasText: 'Отряд «Альфа»' }).click()
+  await page.locator('.squad-marker.squad-2').click()
+  await page.getByRole('button', { name: 'Объединить', exact: true }).click()
+  await page.locator('.squad-marker.squad-1').click()
   await page.getByRole('button', { name: /^×1,/ }).click()
 
-  await expect.poll(async () => page.evaluate(() => {
-    const payload = window.localStorage.getItem('nine-lives-corp-autosave-v1')
-    if (!payload) return null
-    const state = JSON.parse(payload).state
-    return state.squads.map((squad: { name: string; members: string[] }) => ({ name: squad.name, members: squad.members.length }))
-  })).toEqual([
-    { name: 'squad.alpha', members: 2 },
-    { name: 'squad.bravo', members: 0 },
-  ])
+  await expect.poll(() => readWorld(page, state => state.squads.map((squad: any) => ({
+    id: squad.id,
+    members: squad.members.length,
+  })))).toEqual([{ id: 'squad-1', members: 2 }])
 })

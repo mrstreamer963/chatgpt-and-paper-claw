@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  assignCat,
   continueAfterFinale,
   createState,
+  deployCats,
   drainEvents,
   equipItem,
   getAchievements,
@@ -31,9 +31,11 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
   assert.equal(equipItem(state, 'marlowe', 'belt', 'headset'), true)
   assert.equal(selectResearch(state, 'field_scanners'), true)
 
-  for (const catId of ['pixel', 'rust', 'bastion']) assert.equal(assignCat(state, catId, 'alpha'), true)
-  for (const catId of ['marlowe', 'shorokh', 'myata']) assert.equal(assignCat(state, catId, 'bravo'), true)
-  state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
+  assert.equal(deployCats(state, ['pixel', 'rust', 'bastion'], { type: 'mission', missionId: state.missions[0].id }), true)
+  assert.equal(deployCats(state, ['marlowe', 'shorokh', 'myata'], { type: 'move', x: 46, y: 55 }), true)
+  const operationsSquad = state.squads[0]
+  const supportSquad = state.squads[1]
+  operationsSquad.autoDispatch = true
 
   state.speed = 10
   advanceUntil(state, () => Boolean(state.incident), 'The scripted raider incident did not open')
@@ -44,7 +46,7 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
   if (!state.incident) assert.fail('The raider incident is missing')
   state.incident.supportRoll = 1
 
-  assert.equal(resolveRaidDecision(state, 'support', 'bravo'), true)
+  assert.equal(resolveRaidDecision(state, 'support', supportSquad.id), true)
   assert.equal(state.incident.stage, 'support_en_route')
   assert.equal(state.speed, 1)
 

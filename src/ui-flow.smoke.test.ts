@@ -5,7 +5,8 @@ import { createSSRApp, h, type Component } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import {
   assignCat,
-  createState,
+  createSquad,
+  createState as createFreshState,
   drainEvents,
   equipItem,
   getAchievements,
@@ -14,6 +15,20 @@ import {
   resolveRaidFollowup,
   tick,
 } from '@nine-lives/game-core'
+
+function createState() {
+  const state = createFreshState()
+  createSquad(state)
+  createSquad(state)
+  state.squads[0].id = 'alpha'
+  state.squads[0].name = 'squad.alpha'
+  state.squads[0].autoDispatch = true
+  state.squads[1].id = 'bravo'
+  state.squads[1].name = 'squad.bravo'
+  state.squads[1].style = 'careful'
+  state.squads[1].autoDispatch = true
+  return state
+}
 
 let vite: ViteDevServer
 
@@ -67,6 +82,7 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(baseHtml, /Пиксель/)
 
   state.squads[0].completed = 2
+  state.completedMissionCount = 2
   state.fame = 30
   state.speed = 10
   for (let step = 0; step < 100 && !state.incident; step++) tick(state, 0.25)
@@ -107,7 +123,8 @@ test('completed mission disappears while its squad route continues from the squa
   const mission = state.missions[0]
   state.missions = [mission]
   mission.status = 'completed'
-  mission.squadId = 'alpha'
+  mission.squadIds = ['alpha']
+  mission.contributorSquadIds = ['alpha']
 
   const squad = state.squads[0]
   squad.members = ['pixel']

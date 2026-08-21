@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   createState,
+  createSquad,
   createWorldPatch,
   hasPendingEquipment,
   type CommandResult,
@@ -138,6 +139,7 @@ test('adding and removing a deferred assignment invalidates Vue computed state',
 
 test('mission reconciliation preserves remaining entities and mutates member arrays in place', () => {
   const snapshot = initialSnapshot()
+  createSquad(snapshot.state)
   const target = structuredClone(snapshot.state)
   const firstMission = target.missions[0]
   const secondMission = target.missions[1]
@@ -145,6 +147,7 @@ test('mission reconciliation preserves remaining entities and mutates member arr
   const next = structuredClone(snapshot.state)
   next.missions = [next.missions[1], {
     id: 'new-mission', title: 'mission.new', x: 10, y: 20, priority: 2, status: 'available',
+    progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [],
   }]
   next.squads[0].members = ['marlowe', 'pixel']
   const patch = createWorldPatch(snapshot.state, next, 0)!
@@ -160,7 +163,7 @@ test('mission reconciliation preserves remaining entities and mutates member arr
 
 test('optional fields are deleted recursively and snapshots restore without replacing identities', () => {
   const target = createState()
-  target.storyIncident = { kind: 'ninth_life', foundBySquadId: 'alpha', x: 1, y: 2 }
+  target.storyIncident = { kind: 'ninth_life', participantSquadIds: [], x: 1, y: 2 }
   target.cats[0].assignedTo = 'alpha'
   const world = target
   const cats = target.cats

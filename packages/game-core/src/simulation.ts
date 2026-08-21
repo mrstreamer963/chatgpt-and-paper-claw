@@ -39,10 +39,12 @@ export type Mission = {
   status: 'available' | 'assigned' | 'completed'
   progress: number
   interruptionPolicy: MissionInterruptionPolicy
-  squadId?: string
+  squadIds: string[]
+  contributorSquadIds: string[]
 }
 export type MapPoint = { x: number; y: number }
-export type Phase = 'base' | 'field' | 'moving' | 'outbound' | 'cleanup' | 'assisting' | 'incident' | 'support' | 'returning' | 'merging'
+export type DeployOrder = { type: 'mission'; missionId: string } | { type: 'move'; x: number; y: number }
+export type Phase = 'base' | 'field' | 'moving' | 'outbound' | 'cleanup' | 'incident' | 'support' | 'returning' | 'merging'
 export type Squad = {
   id: string
   name: string
@@ -67,7 +69,6 @@ export type RaidStage = 'decision' | 'support_en_route' | 'support_decision'
 export type RaidIncident = {
   kind: 'raiders'
   stage: RaidStage
-  primarySquadId: string
   missionId: string
   supportSquadId?: string
   supportChance: number
@@ -81,7 +82,7 @@ export type RaidIncident = {
 export type NinthLifeDecision = 'shelter' | 'interrogate' | 'escort' | 'exploit'
 export type StoryIncident = {
   kind: 'ninth_life'
-  foundBySquadId: string
+  participantSquadIds: string[]
   x: number
   y: number
 }
@@ -97,23 +98,22 @@ export type StoryResolution = {
 export type LogEntry = { time: number; key: string; params?: Record<string, string | number> }
 export type GameEvent =
   | { type: 'mission_started'; squadId: string; missionId: string }
-  | { type: 'mission_completed'; squadId: string; missionId: string }
-  | { type: 'mission_failed'; squadId: string; missionId?: string; reason: 'escape' | 'attack' | 'support' | 'recalled' | 'retreat' }
-  | { type: 'incident_started'; incident: 'raiders'; squadId: string; missionId: string }
-  | { type: 'support_requested'; squadId: string; primarySquadId: string; seconds: number }
-  | { type: 'support_arrived'; squadId: string; primarySquadId: string }
+  | { type: 'mission_completed'; squadIds: string[]; missionId: string }
+  | { type: 'mission_failed'; squadIds: string[]; missionId?: string; reason: 'escape' | 'attack' | 'support' | 'recalled' | 'retreat' }
+  | { type: 'incident_started'; incident: 'raiders'; squadIds: string[]; missionId: string }
+  | { type: 'support_requested'; squadId: string; missionId: string; seconds: number }
+  | { type: 'support_arrived'; squadId: string; missionId: string }
   | { type: 'cat_injured'; catId: string; seconds: number }
   | { type: 'research_started'; researchId: ResearchId }
   | { type: 'research_completed'; researchId: ResearchId }
   | { type: 'achievement_unlocked'; achievementId: AchievementId }
-  | { type: 'story_started'; story: 'ninth_life'; squadId: string }
+  | { type: 'story_started'; story: 'ninth_life'; squadIds: string[] }
   | { type: 'story_resolved'; story: 'ninth_life'; decision: NinthLifeDecision }
   | { type: 'final_summary_available' }
   | { type: 'squad_split'; squadId: string; newSquadId: string; memberIds: string[] }
   | { type: 'squad_merge_started'; sourceSquadId: string; targetSquadId: string }
   | { type: 'squad_merged'; sourceSquadId: string; targetSquadId: string }
-  | { type: 'mission_assistance_started'; squadId: string; missionId: string }
-  | { type: 'mission_primary_changed'; squadId: string; missionId: string }
+  | { type: 'mission_squad_assigned'; squadId: string; missionId: string }
 export type State = {
   fame: number
   scrap: number
@@ -124,6 +124,7 @@ export type State = {
   squads: Squad[]
   squadSerial: number
   disbandedSquadCleanups: number
+  completedMissionCount: number
   missions: Mission[]
   missionSerial: number
   rngSeed: number
@@ -169,7 +170,7 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 12
+export const SAVE_VERSION = 13
 export const GAME_VERSION = '0.1.0'
 export type SaveErrorKey =
   | 'save.error.invalid_json'
@@ -242,6 +243,8 @@ const templates: Mission[] = CONFIG.mission.templates.map(template => ({
   status: 'available',
   progress: 0,
   interruptionPolicy: 'preserve_progress',
+  squadIds: [],
+  contributorSquadIds: [],
 }))
 const pendingEvents = new WeakMap<State, GameEvent[]>()
 
@@ -266,8 +269,9 @@ export function createState(): State {
     speed: 0,
     time: 0,
     cats: CONFIG.cats.map(cat => ({ ...cat, sleeping: false, injuredRemaining: 0, equipment: emptyEquipment(), pendingEquipment: {} })),
-    squadSerial: 2,
+    squadSerial: 0,
     disbandedSquadCleanups: 0,
+    completedMissionCount: 0,
     missions: structuredClone(templates.slice(0, CONFIG.mission.initialAvailableCount)),
     missionSerial: 0,
     rngSeed: CONFIG.initial.rngSeed,
@@ -284,10 +288,7 @@ export function createState(): State {
       },
     },
     achievements: { completedIds: [] },
-    squads: [
-      { id: 'alpha', name: 'squad.alpha', members: [], style: 'balanced', autoDispatch: true, phase: 'base', travel: 0, travelDuration: 0, completed: 0, routeFrom: { ...CONFIG.map.base }, restAfterReturn: false },
-      { id: 'bravo', name: 'squad.bravo', members: [], style: 'careful', autoDispatch: true, phase: 'base', travel: 0, travelDuration: 0, completed: 0, routeFrom: { ...CONFIG.map.base }, restAfterReturn: false },
-    ],
+    squads: [],
     log: [{ time: 0, key: 'log.base_ready' }],
   }
 }
@@ -375,7 +376,7 @@ function isValidSquad(value: unknown) {
   if (value.customName !== undefined && (typeof value.customName !== 'string' || value.customName.length < 1 || value.customName.length > 32)) return false
   if (!Array.isArray(value.members) || !value.members.every(member => typeof member === 'string')) return false
   if (!['careful', 'balanced', 'risky'].includes(value.style as string)
-    || !['base', 'field', 'moving', 'outbound', 'cleanup', 'assisting', 'incident', 'support', 'returning', 'merging'].includes(value.phase as string)) return false
+    || !['base', 'field', 'moving', 'outbound', 'cleanup', 'incident', 'support', 'returning', 'merging'].includes(value.phase as string)) return false
   if (typeof value.autoDispatch !== 'boolean') return false
   if (!isValidMapPoint(value.routeFrom) || typeof value.restAfterReturn !== 'boolean') return false
   if (![value.travel, value.travelDuration, value.completed].every(isFiniteNumber)) return false
@@ -395,21 +396,23 @@ function isValidMission(value: unknown) {
     && isFiniteNumber(value.progress)
     && ['preserve_progress', 'reset', 'fail', 'remove', 'scripted'].includes(value.interruptionPolicy as string)
     && ['available', 'assigned', 'completed'].includes(value.status as string)
-    && (value.squadId === undefined || typeof value.squadId === 'string')
+    && Array.isArray(value.squadIds) && value.squadIds.every(id => typeof id === 'string')
+    && Array.isArray(value.contributorSquadIds) && value.contributorSquadIds.every(id => typeof id === 'string')
 }
 
 function isValidIncident(value: unknown) {
   if (!isRecord(value)) return false
   const rolls = ['supportChance', 'attackChance', 'supportRoll', 'attackRoll', 'injuryRoll', 'injuredMemberRoll']
   return value.kind === 'raiders' && ['decision', 'support_en_route', 'support_decision'].includes(value.stage as string)
-    && typeof value.primarySquadId === 'string' && typeof value.missionId === 'string'
+    && typeof value.missionId === 'string'
     && (value.supportSquadId === undefined || typeof value.supportSquadId === 'string')
     && Array.isArray(value.participantSquadIds) && value.participantSquadIds.every(id => typeof id === 'string')
     && rolls.every(field => isFiniteNumber(value[field]))
 }
 
 function isValidStoryIncident(value: unknown) {
-  return isRecord(value) && value.kind === 'ninth_life' && typeof value.foundBySquadId === 'string'
+  return isRecord(value) && value.kind === 'ninth_life'
+    && Array.isArray(value.participantSquadIds) && value.participantSquadIds.every(id => typeof id === 'string')
     && isFiniteNumber(value.x) && isFiniteNumber(value.y)
 }
 
@@ -534,7 +537,7 @@ function replaceLegacyText(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, replaceLegacyText(entry)]))
 }
 
-function migrateLegacyState(value: unknown) {
+function migrateLegacyState(value: unknown, removeLegacyEmptySquads = false) {
   const migrated = replaceLegacyText(value)
   if (!isRecord(migrated)) return undefined
   delete migrated.activeView
@@ -549,6 +552,7 @@ function migrateLegacyState(value: unknown) {
   if (Array.isArray(migrated.squads)) {
     for (const squad of migrated.squads) {
       if (!isRecord(squad)) continue
+      if (squad.phase === 'assisting') squad.phase = 'cleanup'
       if (typeof squad.autoDispatch !== 'boolean') squad.autoDispatch = true
       if (!isValidMapPoint(squad.routeFrom)) {
         const legacyTarget = squad.target
@@ -571,30 +575,89 @@ function migrateLegacyState(value: unknown) {
     for (const mission of migrated.missions) {
       if (!isRecord(mission)) continue
       if (!isFiniteNumber(mission.progress)) {
+        const legacyOwnerId = typeof mission.squadId === 'string'
+          ? mission.squadId
+          : Array.isArray(mission.squadIds) && typeof mission.squadIds[0] === 'string' ? mission.squadIds[0] : undefined
         const owner = Array.isArray(migrated.squads)
-          ? migrated.squads.find(squad => isRecord(squad) && squad.id === mission.squadId)
+          ? migrated.squads.find(squad => isRecord(squad) && squad.id === legacyOwnerId)
           : undefined
         mission.progress = isRecord(owner) && isFiniteNumber(owner.progress) ? owner.progress : 0
       }
       if (typeof mission.interruptionPolicy !== 'string') mission.interruptionPolicy = 'preserve_progress'
+      const assignedIds = Array.isArray(mission.squadIds)
+        ? mission.squadIds.filter(id => typeof id === 'string')
+        : typeof mission.squadId === 'string' ? [mission.squadId] : []
+      if (Array.isArray(migrated.squads)) {
+        for (const squad of migrated.squads) {
+          if (isRecord(squad) && squad.missionId === mission.id && typeof squad.id === 'string' && !assignedIds.includes(squad.id)) {
+            assignedIds.push(squad.id)
+          }
+        }
+      }
+      mission.squadIds = assignedIds
+      const legacyContributors = Array.isArray(migrated.squads)
+        ? migrated.squads.filter(squad => isRecord(squad) && squad.missionId === mission.id
+          && ['cleanup', 'assisting', 'incident'].includes(String(squad.phase)) && typeof squad.id === 'string')
+          .map(squad => String((squad as Record<string, unknown>).id))
+        : []
+      mission.contributorSquadIds = Array.isArray(mission.contributorSquadIds)
+        ? mission.contributorSquadIds.filter(id => typeof id === 'string')
+        : legacyContributors
+      delete mission.squadId
     }
   }
   if (Array.isArray(migrated.squads)) {
     for (const squad of migrated.squads) if (isRecord(squad)) delete squad.progress
   }
-  if (isRecord(migrated.incident) && !Array.isArray(migrated.incident.participantSquadIds)) {
-    migrated.incident.participantSquadIds = typeof migrated.incident.primarySquadId === 'string'
-      ? [migrated.incident.primarySquadId]
+  if (isRecord(migrated.incident)) {
+    const participants = Array.isArray(migrated.incident.participantSquadIds)
+      ? migrated.incident.participantSquadIds.filter(id => typeof id === 'string')
       : []
+    if (typeof migrated.incident.primarySquadId === 'string'
+      && !participants.includes(migrated.incident.primarySquadId)) participants.push(migrated.incident.primarySquadId)
+    migrated.incident.participantSquadIds = participants
+    delete migrated.incident.primarySquadId
+  }
+  if (isRecord(migrated.storyIncident)) {
+    migrated.storyIncident.participantSquadIds = Array.isArray(migrated.storyIncident.participantSquadIds)
+      ? migrated.storyIncident.participantSquadIds
+      : typeof migrated.storyIncident.foundBySquadId === 'string' ? [migrated.storyIncident.foundBySquadId] : []
+    delete migrated.storyIncident.foundBySquadId
+  }
+  if (removeLegacyEmptySquads && Array.isArray(migrated.squads)) {
+    const emptySquads = migrated.squads
+      .filter(squad => isRecord(squad) && Array.isArray(squad.members) && squad.members.length === 0 && squad.phase === 'base')
+    const emptyIds = new Set(emptySquads
+      .map(squad => isRecord(squad) ? squad.id : undefined)
+      .filter((id): id is string => typeof id === 'string'))
+    const archivedCleanups = emptySquads.reduce((total, squad) => total
+      + (isRecord(squad) && isFiniteNumber(squad.completed) ? squad.completed : 0), 0)
+    migrated.disbandedSquadCleanups = (isFiniteNumber(migrated.disbandedSquadCleanups)
+      ? migrated.disbandedSquadCleanups
+      : 0) + archivedCleanups
+    migrated.squads = migrated.squads.filter(squad => !isRecord(squad) || !emptyIds.has(String(squad.id)))
+    if (Array.isArray(migrated.cats)) {
+      for (const cat of migrated.cats) {
+        if (!isRecord(cat)) continue
+        if (typeof cat.assignedTo === 'string' && emptyIds.has(cat.assignedTo)) delete cat.assignedTo
+        if (typeof cat.pendingAssignment === 'string' && emptyIds.has(cat.pendingAssignment)) delete cat.pendingAssignment
+      }
+    }
   }
   if (!isFiniteNumber(migrated.disbandedSquadCleanups)) migrated.disbandedSquadCleanups = 0
+  if (!isFiniteNumber(migrated.completedMissionCount)) {
+    const squadTotal = Array.isArray(migrated.squads)
+      ? migrated.squads.reduce((total, squad) => total + (isRecord(squad) && isFiniteNumber(squad.completed) ? squad.completed : 0), 0)
+      : 0
+    migrated.completedMissionCount = migrated.disbandedSquadCleanups + squadTotal
+  }
   return migrated
 }
 
 function isValidState(value: unknown): value is State {
   if (!isRecord(value)) return false
   if (![0, 1, 5, 10].includes(value.speed as number)) return false
-  if (![value.fame, value.scrap, value.threat, value.time, value.squadSerial, value.disbandedSquadCleanups, value.missionSerial, value.rngSeed].every(isFiniteNumber)) return false
+  if (![value.fame, value.scrap, value.threat, value.time, value.squadSerial, value.disbandedSquadCleanups, value.completedMissionCount, value.missionSerial, value.rngSeed].every(isFiniteNumber)) return false
   if (![value.raidTriggered, value.storyTriggered, value.finalSummaryVisible, value.finalSummarySeen].every(flag => typeof flag === 'boolean')) return false
   if (!Array.isArray(value.cats) || !value.cats.every(isValidCat)) return false
   if (!Array.isArray(value.squads) || !value.squads.every(isValidSquad)) return false
@@ -602,6 +665,8 @@ function isValidState(value: unknown): value is State {
   if (!isFiniteNumber(value.squadSerial) || !Number.isInteger(value.squadSerial) || value.squadSerial < 0) return false
   if (!isFiniteNumber(value.disbandedSquadCleanups) || !Number.isInteger(value.disbandedSquadCleanups)
     || value.disbandedSquadCleanups < 0) return false
+  if (!isFiniteNumber(value.completedMissionCount) || !Number.isInteger(value.completedMissionCount)
+    || value.completedMissionCount < 0) return false
   const cats = value.cats as Cat[]
   const squads = value.squads as Squad[]
   const missions = value.missions as Mission[]
@@ -613,7 +678,7 @@ function isValidState(value: unknown): value is State {
   const rosterMembers = squads.flatMap(squad => squad.members.map(memberId => ({ memberId, squadId: squad.id })))
   if (new Set(rosterMembers.map(entry => entry.memberId)).size !== rosterMembers.length
     || rosterMembers.some(entry => !catIds.has(entry.memberId))) return false
-  if (missions.some(mission => mission.squadId && !squadIds.has(mission.squadId))) return false
+  if (missions.some(mission => mission.squadIds.some(id => !squadIds.has(id)))) return false
   if (squads.some(squad => squad.mergeTargetSquadId && !squadIds.has(squad.mergeTargetSquadId))) return false
   if (value.incident && isValidIncident(value.incident)
     && (value.incident as RaidIncident).participantSquadIds.some(id => !squadIds.has(id))) return false
@@ -647,9 +712,15 @@ export function serializeState(state: State, pretty = true) {
   state.cats.forEach(cat => { cat.pendingEquipment ??= {} })
   state.squadSerial ??= Math.max(2, state.squads.length)
   state.disbandedSquadCleanups ??= 0
+  state.completedMissionCount ??= state.disbandedSquadCleanups + state.squads.reduce((total, squad) => total + squad.completed, 0)
   state.missions.forEach(mission => {
+    const legacyMission = mission as Mission & { squadId?: string }
     mission.progress ??= 0
     mission.interruptionPolicy ??= 'preserve_progress'
+    mission.squadIds ??= []
+    mission.contributorSquadIds ??= []
+    if (legacyMission.squadId && !mission.squadIds.includes(legacyMission.squadId)) mission.squadIds.push(legacyMission.squadId)
+    delete legacyMission.squadId
   })
   const envelope: SaveEnvelope = {
     format: SAVE_FORMAT,
@@ -670,12 +741,12 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
   const legacyCandidate = envelope.version === 1 ? migrateV1State(envelope.state) : envelope.state
-  const candidate = migrateLegacyState(legacyCandidate)
+  const candidate = migrateLegacyState(legacyCandidate, envelope.version !== SAVE_VERSION)
   if (!isValidState(candidate)) throw new SaveError('save.error.corrupted')
 
   const restored = structuredClone(candidate)
@@ -707,14 +778,14 @@ export function deserializeCurrentSave(payload: string): State {
       version: String(isRecord(envelope) ? envelope.gameVersion ?? envelope.version : 'unknown'),
     })
   }
-  if (![10, 11, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![10, 11, 12, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   return deserializeState(payload)
 }
 
 export function successfulCleanups(state: State) {
-  return state.disbandedSquadCleanups + state.squads.reduce((total, squad) => total + squad.completed, 0)
+  return state.completedMissionCount
 }
 
 function catIsAtBase(state: State, cat: Cat) {
@@ -915,7 +986,7 @@ export function getCreateSquadBlockReason(state: State) {
 
 export function createSquad(state: State) {
   if (getCreateSquadBlockReason(state)) return false
-  const serial = Math.max(2, state.squadSerial) + 1
+  const serial = Math.max(0, state.squadSerial) + 1
   const squad: Squad = {
     id: `squad-${serial}`,
     name: squadNameForSerial(serial),
@@ -935,16 +1006,89 @@ export function createSquad(state: State) {
   return true
 }
 
+function createPersistentSquad(state: State, memberIds: string[]) {
+  const serial = Math.max(0, state.squadSerial) + 1
+  const squad: Squad = {
+    id: `squad-${serial}`,
+    name: squadNameForSerial(serial),
+    members: [...memberIds],
+    style: 'balanced',
+    autoDispatch: false,
+    phase: 'base',
+    travel: 0,
+    travelDuration: 0,
+    completed: 0,
+    routeFrom: { ...CONFIG.map.base },
+    restAfterReturn: false,
+  }
+  state.squadSerial = serial
+  state.squads.push(squad)
+  for (const cat of state.cats) if (memberIds.includes(cat.id)) cat.assignedTo = squad.id
+  note(state, 'log.squad_created', { squad: squad.name })
+  syncAchievements(state)
+  return squad
+}
+
+function removeEmptyBaseSquads(state: State, protectedSquadId?: string) {
+  for (const squad of [...state.squads]) {
+    if (squad.id === protectedSquadId || squad.phase !== 'base' || squad.members.length) continue
+    state.disbandedSquadCleanups += squad.completed
+    state.squads.splice(state.squads.indexOf(squad), 1)
+    note(state, 'log.squad_disbanded', { squad: squad.name })
+  }
+}
+
+export function getDeployCatsBlockReason(state: State, catIds: string[], order: DeployOrder) {
+  const ids = [...new Set(catIds)]
+  const cats = ids.map(id => state.cats.find(cat => cat.id === id)).filter((cat): cat is Cat => Boolean(cat))
+  if (!ids.length || cats.length !== ids.length || cats.some(cat => !catIsAtBase(state, cat))) return 'dispatch.reason.away'
+  if (cats.some(cat => cat.injuredRemaining > 0)) return 'dispatch.reason.injured'
+  if (cats.some(cat => !canReceiveWorkOrder(cat))) return 'dispatch.reason.tired'
+  const exactSquad = state.squads.find(squad => squad.phase === 'base' && squad.members.length === ids.length
+    && squad.members.every(id => ids.includes(id)))
+  const virtual: Squad = exactSquad ?? {
+    id: '__deployment__', name: 'squad.alpha', members: ids, style: 'balanced', autoDispatch: false,
+    phase: 'base', travel: 0, travelDuration: 0, completed: 0, routeFrom: { ...CONFIG.map.base }, restAfterReturn: false,
+  }
+  if (order.type === 'mission') {
+    const mission = state.missions.find(candidate => candidate.id === order.missionId)
+    if (!mission || mission.status === 'completed' || state.incident?.missionId === mission.id) return 'dispatch.reason.unavailable'
+    if (!hasEnergyForMissionFrom(state, virtual, CONFIG.map.base, mission)) return 'dispatch.reason.tired'
+    return undefined
+  }
+  return getMoveSquadBlockReason({ ...state, squads: exactSquad ? state.squads : [...state.squads, virtual] }, virtual.id, { x: order.x, y: order.y })
+}
+
+export function deployCats(state: State, catIds: string[], order: DeployOrder) {
+  const ids = [...new Set(catIds)]
+  if (getDeployCatsBlockReason(state, ids, order)) return false
+  let squad = state.squads.find(candidate => candidate.phase === 'base' && candidate.members.length === ids.length
+    && candidate.members.every(id => ids.includes(id)))
+  if (!squad) {
+    for (const cat of state.cats) {
+      if (!ids.includes(cat.id)) continue
+      const previous = state.squads.find(candidate => candidate.id === cat.assignedTo)
+      if (previous) previous.members = previous.members.filter(id => id !== cat.id)
+      cat.assignedTo = undefined
+      delete cat.pendingAssignment
+    }
+    squad = createPersistentSquad(state, ids)
+    removeEmptyBaseSquads(state, squad.id)
+  }
+  return order.type === 'mission'
+    ? assignSquadToMission(state, squad.id, order.missionId)
+    : moveSquadToPoint(state, squad.id, { x: order.x, y: order.y })
+}
+
 export function getDisbandSquadBlockReason(state: State, squadId: string) {
   const squad = state.squads.find(candidate => candidate.id === squadId)
   if (!squad) return 'squad.manage.reason.missing'
-  if (state.squads.length <= 1) return 'squad.manage.reason.last'
   if (squad.members.length || state.cats.some(cat => cat.assignedTo === squadId)) return 'squad.manage.reason.members'
   if (squad.phase !== 'base' || squad.missionId || squad.target || squad.destination
-    || state.missions.some(mission => mission.squadId === squadId)) return 'squad.manage.reason.away'
+    || state.missions.some(mission => mission.squadIds.includes(squadId))) return 'squad.manage.reason.away'
   if (state.cats.some(cat => cat.pendingAssignment === squadId)) return 'squad.manage.reason.pending'
-  if (state.incident?.primarySquadId === squadId || state.incident?.supportSquadId === squadId
-    || state.storyIncident?.foundBySquadId === squadId) return 'squad.manage.reason.incident'
+  if (state.incident?.supportSquadId === squadId || state.incident?.participantSquadIds.includes(squadId)
+    || state.storyIncident?.participantSquadIds.includes(squadId)) return 'squad.manage.reason.incident'
   return undefined
 }
 
@@ -1139,7 +1283,7 @@ function squadCurrentChanges(state: State, squad: Squad) {
 
 function energyRequiredForCurrentPlan(state: State, squad: Squad, origin: MapPoint) {
   const mission = state.missions.find(candidate => candidate.id === squad.missionId)
-  if (mission && ['outbound', 'cleanup', 'assisting'].includes(squad.phase)) {
+  if (mission && ['outbound', 'cleanup'].includes(squad.phase)) {
     return missionEnergyCostFrom(state, squad, origin, mission)
   }
   if (squad.phase === 'moving' && squad.destination) {
@@ -1176,7 +1320,7 @@ export function splitSquad(state: State, squadId: string, memberIds: string[]) {
   if (!squad) return false
   const selected = [...new Set(memberIds)]
   const position = getSquadMapPosition(squad)
-  const serial = Math.max(2, state.squadSerial) + 1
+  const serial = Math.max(0, state.squadSerial) + 1
   const newSquad: Squad = {
     id: `squad-${serial}`,
     name: squadNameForSerial(serial),
@@ -1292,17 +1436,19 @@ export function mergeSquads(state: State, sourceSquadId: string, targetSquadId: 
 }
 
 function startMission(state: State, squad: Squad, requestedMissionId?: string, origin: MapPoint = CONFIG.map.base) {
-  const availableMissions = state.missions
-    .filter(candidate => candidate.status === 'available' && hasEnergyForMissionFrom(state, squad, origin, candidate))
+  const assignableMissions = state.missions
+    .filter(candidate => candidate.status !== 'completed'
+      && (!requestedMissionId ? candidate.status === 'available' : candidate.id === requestedMissionId)
+      && hasEnergyForMissionFrom(state, squad, origin, candidate))
   const mission = requestedMissionId
-    ? availableMissions.find(candidate => candidate.id === requestedMissionId)
-    : availableMissions.sort((a, b) => b.priority - a.priority || distanceBetween(origin, a) - distanceBetween(origin, b))[0]
+    ? assignableMissions.find(candidate => candidate.id === requestedMissionId)
+    : assignableMissions.sort((a, b) => b.priority - a.priority || distanceBetween(origin, a) - distanceBetween(origin, b))[0]
   if (!mission) return false
   const members = membersOf(state, squad)
   if (!members.length || !members.every(cat => cat.injuredRemaining <= 0 && canReceiveWorkOrder(cat))) return false
   members.forEach(cat => wakeForWorkOrder(state, cat))
   mission.status = 'assigned'
-  mission.squadId = squad.id
+  if (!mission.squadIds.includes(squad.id)) mission.squadIds.push(squad.id)
   squad.missionId = mission.id
   squad.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
   delete squad.destination
@@ -1320,8 +1466,14 @@ function startMission(state: State, squad: Squad, requestedMissionId?: string, o
 }
 
 function missionSquads(state: State, missionId: string) {
-  return state.squads.filter(squad => squad.missionId === missionId
-    && ['cleanup', 'assisting', 'incident'].includes(squad.phase))
+  const mission = state.missions.find(candidate => candidate.id === missionId)
+  return mission ? mission.squadIds
+    .map(id => state.squads.find(squad => squad.id === id))
+    .filter((squad): squad is Squad => Boolean(squad)) : []
+}
+
+function missionWorkingSquads(state: State, missionId: string) {
+  return missionSquads(state, missionId).filter(squad => ['cleanup', 'incident'].includes(squad.phase))
 }
 
 function detachSquadMissionFields(squad: Squad) {
@@ -1334,28 +1486,20 @@ function releaseSquadFromMission(state: State, squad: Squad) {
   const missionId = squad.missionId
   if (!missionId) return
   const mission = state.missions.find(candidate => candidate.id === missionId)
-  const wasPrimary = mission?.squadId === squad.id
   detachSquadMissionFields(squad)
   if (!mission || mission.status === 'completed') return
-
-  const remaining = missionSquads(state, missionId)
-    .sort((a, b) => (a.missionArrivalTime ?? Number.POSITIVE_INFINITY)
-      - (b.missionArrivalTime ?? Number.POSITIVE_INFINITY) || a.id.localeCompare(b.id))
-  if (wasPrimary && remaining.length) {
-    const next = remaining[0]
-    next.phase = 'cleanup'
-    mission.squadId = next.id
-    emitEvent(state, { type: 'mission_primary_changed', squadId: next.id, missionId })
-  } else if (!remaining.length) {
+  mission.squadIds = mission.squadIds.filter(id => id !== squad.id)
+  if (!mission.squadIds.length) {
     mission.status = 'available'
-    mission.squadId = undefined
   }
 }
 
-export function getManualDispatchBlockReason(state: State, squadId: string, missionId: string) {
+export function getAssignMissionBlockReason(state: State, squadId: string, missionId: string) {
   const squad = state.squads.find(candidate => candidate.id === squadId)
   const mission = state.missions.find(candidate => candidate.id === missionId)
-  if (!squad || !mission || mission.status !== 'available') return 'dispatch.reason.unavailable'
+  if (!squad || !mission || mission.status === 'completed') return 'dispatch.reason.unavailable'
+  if (mission.squadIds.includes(squad.id)) return undefined
+  if (state.incident?.missionId === missionId) return 'dispatch.reason.away'
   if (state.incident && state.incident.participantSquadIds.includes(squad.id)) return 'dispatch.reason.away'
   if (['incident', 'support', 'merging', 'returning'].includes(squad.phase)) return 'dispatch.reason.away'
   if (squadHasPendingAssignment(state, squad)) return 'dispatch.reason.pending_assignment'
@@ -1369,53 +1513,17 @@ export function getManualDispatchBlockReason(state: State, squadId: string, miss
   return undefined
 }
 
-export function dispatchSquadToMission(state: State, squadId: string, missionId: string) {
-  if (getManualDispatchBlockReason(state, squadId, missionId)) return false
-  const squad = state.squads.find(candidate => candidate.id === squadId)
-  if (!squad) return false
-  const origin = squad.phase === 'base' ? CONFIG.map.base : getSquadMapPosition(squad)
-  releaseSquadFromMission(state, squad)
-  return startMission(state, squad, missionId, origin)
-}
-
-export function getAssistMissionBlockReason(state: State, squadId: string, missionId: string) {
-  const squad = state.squads.find(candidate => candidate.id === squadId)
-  const mission = state.missions.find(candidate => candidate.id === missionId)
-  if (!squad || !mission || mission.status !== 'assigned' || mission.squadId === squad.id) return 'dispatch.reason.unavailable'
-  if (state.incident?.missionId === missionId || ['incident', 'support', 'merging', 'returning'].includes(squad.phase)) return 'dispatch.reason.away'
-  if (squadHasPendingAssignment(state, squad)) return 'dispatch.reason.pending_assignment'
-  if (squadHasPendingEquipment(state, squad)) return 'dispatch.reason.pending_equipment'
-  const members = membersOf(state, squad)
-  if (!members.length) return 'dispatch.reason.empty'
-  if (members.some(cat => cat.injuredRemaining > 0)) return 'dispatch.reason.injured'
-  if (members.some(cat => !canReceiveWorkOrder(cat))) return 'dispatch.reason.tired'
-  const origin = squad.phase === 'base' ? CONFIG.map.base : getSquadMapPosition(squad)
-  if (!hasEnergyForMissionFrom(state, squad, origin, mission)) return 'dispatch.reason.tired'
-  return undefined
-}
-
-export function assistMission(state: State, squadId: string, missionId: string) {
-  if (getAssistMissionBlockReason(state, squadId, missionId)) return false
+export function assignSquadToMission(state: State, squadId: string, missionId: string) {
+  if (getAssignMissionBlockReason(state, squadId, missionId)) return false
   const squad = state.squads.find(candidate => candidate.id === squadId)
   const mission = state.missions.find(candidate => candidate.id === missionId)
   if (!squad || !mission) return false
+  if (mission.squadIds.includes(squad.id)) return true
   const origin = squad.phase === 'base' ? CONFIG.map.base : getSquadMapPosition(squad)
   releaseSquadFromMission(state, squad)
-  membersOf(state, squad).forEach(cat => wakeForWorkOrder(state, cat))
-  squad.missionId = mission.id
-  squad.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
-  squad.phase = 'outbound'
-  squad.routeFrom = origin
-  squad.travel = 0
-  squad.travelDuration = travelTimeBetween(origin, mission)
-  squad.restAfterReturn = false
-  delete squad.destination
-  delete squad.mergeTargetSquadId
-  delete squad.mergePoint
-  delete squad.missionArrivalTime
-  note(state, 'log.mission_assistance_started', { squad: squad.name, mission: mission.title })
-  emitEvent(state, { type: 'mission_assistance_started', squadId, missionId })
-  return true
+  const accepted = startMission(state, squad, missionId, origin)
+  if (accepted) emitEvent(state, { type: 'mission_squad_assigned', squadId, missionId })
+  return accepted
 }
 
 function isMapCommandPoint(point: MapPoint) {
@@ -1461,18 +1569,19 @@ export function moveSquadToPoint(state: State, squadId: string, destination: Map
   return true
 }
 
-function rewardMission(state: State, squad: Squad) {
-  const missionId = squad.missionId
-  const mission = state.missions.find(candidate => candidate.id === missionId)
-  if (mission) {
-    mission.status = 'completed'
-    mission.progress = CONFIG.mission.cleanupWork
-  }
-  squad.completed++
+function rewardMission(state: State, mission: Mission, contributors: Squad[]) {
+  mission.status = 'completed'
+  mission.progress = CONFIG.mission.cleanupWork
+  for (const squad of contributors) squad.completed++
+  state.completedMissionCount++
   state.scrap += CONFIG.mission.rewardScrap
   state.fame = Math.min(CONFIG.limits.fame, state.fame + CONFIG.mission.rewardFame)
-  note(state, 'log.cleanup_completed', { squad: squad.name, scrap: CONFIG.mission.rewardScrap, fame: CONFIG.mission.rewardFame })
-  if (missionId) emitEvent(state, { type: 'mission_completed', squadId: squad.id, missionId })
+  note(state, 'log.cleanup_completed', {
+    squad: contributors.map(squad => getSquadDisplayName(squad)).join(', '),
+    scrap: CONFIG.mission.rewardScrap,
+    fame: CONFIG.mission.rewardFame,
+  })
+  emitEvent(state, { type: 'mission_completed', squadIds: contributors.map(squad => squad.id), missionId: mission.id })
 }
 
 function dispatchNextMissionOrReturn(state: State, squad: Squad) {
@@ -1516,6 +1625,19 @@ function dispatchNextMissionOrReturn(state: State, squad: Squad) {
   note(state, 'log.squad_waiting_in_field', { squad: squad.name })
 }
 
+function continueAfterSharedMission(state: State, squad: Squad) {
+  if (squad.phase !== 'outbound') return dispatchNextMissionOrReturn(state, squad)
+  const origin = getSquadMapPosition(squad)
+  detachSquadMissionFields(squad)
+  squad.phase = 'field'
+  squad.routeFrom = origin
+  squad.travel = 0
+  squad.travelDuration = 0
+  if (squadHasPendingChanges(state, squad)) return sendHome(squad)
+  if (squad.autoDispatch && startMission(state, squad, undefined, origin)) return
+  sendHome(squad, squad.autoDispatch)
+}
+
 function maybeShowFinalSummary(state: State) {
   if (!state.storyResolution || state.fame < CONFIG.goal.fame || state.finalSummarySeen || state.finalSummaryVisible) return
   state.speed = 0
@@ -1524,22 +1646,22 @@ function maybeShowFinalSummary(state: State) {
   emitEvent(state, { type: 'final_summary_available' })
 }
 
-function startNinthLife(state: State, squad: Squad) {
+function startNinthLife(state: State, mission: Mission, participants: Squad[]) {
   if (state.storyTriggered || successfulCleanups(state) < CONFIG.story.successfulCleanupsBeforeTrigger) return
   state.storyTriggered = true
   state.speed = 0
   state.storyIncident = {
     kind: 'ninth_life',
-    foundBySquadId: squad.id,
-    x: squad.target?.x ?? 68,
-    y: squad.target?.y ?? 36,
+    participantSquadIds: participants.map(squad => squad.id),
+    x: mission.x,
+    y: mission.y,
   }
-  note(state, 'log.story_found', { squad: squad.name })
-  emitEvent(state, { type: 'story_started', story: 'ninth_life', squadId: squad.id })
+  note(state, 'log.story_found', { squad: participants.map(squad => getSquadDisplayName(squad)).join(', ') })
+  emitEvent(state, { type: 'story_started', story: 'ninth_life', squadIds: participants.map(squad => squad.id) })
 }
 
-function afterSuccessfulCleanup(state: State, squad: Squad) {
-  startNinthLife(state, squad)
+function afterSuccessfulCleanup(state: State, mission: Mission, participants: Squad[]) {
+  startNinthLife(state, mission, participants)
   maybeShowFinalSummary(state)
 }
 
@@ -1613,7 +1735,7 @@ function spawnMission(state: State): Mission {
     const x = generation.x.minimum + (serial * generation.x.multiplier) % generation.x.range
     const y = generation.y.minimum + (serial * generation.y.multiplier) % generation.y.range
     const clear = state.missions.every(mission => Math.hypot(mission.x - x, mission.y - y) > generation.minimumSeparation)
-    if (clear) return { id: `cleanup-${serial}`, title: label, x, y, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress' }
+    if (clear) return { id: `cleanup-${serial}`, title: label, x, y, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
   }
   const serial = ++state.missionSerial
   const fallbackCandidates: MapPoint[] = [{ ...generation.fallback }]
@@ -1627,7 +1749,7 @@ function spawnMission(state: State): Mission {
     const bestSeparation = Math.min(...state.missions.map(mission => Math.hypot(mission.x - best.x, mission.y - best.y)), Number.POSITIVE_INFINITY)
     return separation > bestSeparation ? candidate : best
   })
-  return { id: `cleanup-${serial}`, title: label, ...fallback, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress' }
+  return { id: `cleanup-${serial}`, title: label, ...fallback, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
 }
 
 function desiredMissionCount(time: number) {
@@ -1692,22 +1814,18 @@ export function getSquadCleanupEstimate(state: State, squad: Squad): CleanupEsti
   }
 }
 
-function assistingSquads(state: State, primary: Squad) {
-  return state.squads.filter(squad => squad.phase === 'assisting' && squad.target?.id === primary.target?.id)
+function cleanupParticipants(state: State, missionId: string) {
+  return missionWorkingSquads(state, missionId).filter(squad => squad.phase === 'cleanup')
 }
 
-function cleanupParticipants(state: State, primary: Squad) {
-  return [primary, ...assistingSquads(state, primary)]
-}
-
-function cleanupRate(state: State, primary: Squad) {
-  return cleanupParticipants(state, primary)
+function cleanupRate(state: State, missionId: string) {
+  return cleanupParticipants(state, missionId)
     .reduce((total, squad) => total + getSquadCleanupEstimate(state, squad).totalRate, 0)
 }
 
 export function getCleanupSecondsRemaining(state: State, squad: Squad) {
-  const rate = cleanupRate(state, squad)
   const mission = state.missions.find(candidate => candidate.id === squad.missionId)
+  const rate = mission ? cleanupRate(state, mission.id) : 0
   return rate > 0 && mission ? Math.max(0, CONFIG.mission.cleanupWork - (mission.progress ?? 0)) / rate : 0
 }
 
@@ -1725,14 +1843,23 @@ function actionChance(state: State, squad: Squad, action: 'support' | 'attack') 
   return baseTeamChance(members, baseChance, skillSum, styleBonus, traitBonus, equipmentBonus)
 }
 
-function incidentCombinedSquad(state: State, participantIds: string[], primary: Squad): Squad {
+function incidentCombinedSquad(state: State, participantIds: string[]): Squad {
   return {
-    ...primary,
+    id: '__incident__',
+    name: 'incident.participants',
     members: participantIds.flatMap(id => state.squads.find(squad => squad.id === id)?.members ?? []),
+    style: 'balanced',
+    autoDispatch: false,
+    phase: 'incident',
+    travel: 0,
+    travelDuration: 0,
+    completed: 0,
+    routeFrom: { ...CONFIG.map.base },
+    restAfterReturn: false,
   }
 }
 
-function eligibleSupportSquads(state: State, primarySquadId: string, excludedIds: string[] = [primarySquadId]) {
+function eligibleSupportSquads(state: State, excludedIds: string[]) {
   return state.squads
     .filter(squad => {
       const members = membersOf(state, squad)
@@ -1745,7 +1872,7 @@ function eligibleSupportSquads(state: State, primarySquadId: string, excludedIds
 
 export function getRaidSupportCandidates(state: State): RaidSupportCandidate[] {
   if (!state.incident || state.incident.stage !== 'decision') return []
-  return eligibleSupportSquads(state, state.incident.primarySquadId, state.incident.participantSquadIds).map(squad => ({
+  return eligibleSupportSquads(state, state.incident.participantSquadIds).map(squad => ({
     squadId: squad.id,
     squadName: getSquadDisplayName(squad),
     memberIds: [...squad.members],
@@ -1754,37 +1881,36 @@ export function getRaidSupportCandidates(state: State): RaidSupportCandidate[] {
   }))
 }
 
-function startRaidIncident(state: State, squad: Squad) {
-  if (!squad.missionId) return
+function startRaidIncident(state: State, mission: Mission) {
   state.raidTriggered = true
   state.speed = 0
-  const participants = missionSquads(state, squad.missionId)
-  const combined = incidentCombinedSquad(state, participants.map(participant => participant.id), squad)
+  const participants = cleanupParticipants(state, mission.id)
+  if (!participants.length) return
+  const participantIds = participants.map(participant => participant.id)
+  const combined = incidentCombinedSquad(state, participantIds)
   for (const participant of participants) participant.phase = 'incident'
   state.incident = {
     kind: 'raiders',
     stage: 'decision',
-    primarySquadId: squad.id,
-    missionId: squad.missionId,
+    missionId: mission.id,
     supportChance: actionChance(state, combined, 'support'),
     attackChance: actionChance(state, combined, 'attack'),
     supportRoll: randomPercent(state),
     attackRoll: randomPercent(state),
     injuryRoll: randomPercent(state),
     injuredMemberRoll: randomPercent(state),
-    participantSquadIds: participants.map(participant => participant.id),
+    participantSquadIds: participantIds,
   }
-  note(state, 'log.raid_started', { squad: squad.name })
-  emitEvent(state, { type: 'incident_started', incident: 'raiders', squadId: squad.id, missionId: squad.missionId })
+  note(state, 'log.raid_started', { squad: participants.map(squad => getSquadDisplayName(squad)).join(', ') })
+  emitEvent(state, { type: 'incident_started', incident: 'raiders', squadIds: participantIds, missionId: mission.id })
 }
 
 export function getRaidOptions(state: State) {
   if (!state.incident) return undefined
   const supportCandidates = getRaidSupportCandidates(state)
-  const primarySquad = state.squads.find(squad => squad.id === state.incident?.primarySquadId)
   const participantIds = state.incident.participantSquadIds
-  const hasWeapon = Boolean(primarySquad && membersOf(state, incidentCombinedSquad(state, participantIds, primarySquad))
-    .some(cat => hasEquipped(cat, 'nonlethal_weapon')))
+  const hasWeapon = membersOf(state, incidentCombinedSquad(state, participantIds))
+    .some(cat => hasEquipped(cat, 'nonlethal_weapon'))
   const defenseReady = state.research.nodes.improvised_defense.completed
   return {
     escape: { available: true, chance: CONFIG.chance.maximum } satisfies RaidOption,
@@ -1849,6 +1975,10 @@ function completeSquadMerge(state: State, source: Squad, target: Squad) {
   for (const follower of state.squads) {
     if (follower.mergeTargetSquadId === source.id) follower.mergeTargetSquadId = target.id
   }
+  for (const mission of state.missions) {
+    mission.squadIds = [...new Set(mission.squadIds.map(id => id === source.id ? target.id : id))]
+    mission.contributorSquadIds = [...new Set(mission.contributorSquadIds.map(id => id === source.id ? target.id : id))]
+  }
   state.squads.splice(state.squads.indexOf(source), 1)
   note(state, 'log.squad_merged', { source: source.name, target: target.name })
   emitEvent(state, { type: 'squad_merged', sourceSquadId: source.id, targetSquadId: target.id })
@@ -1895,8 +2025,18 @@ function maybeInjureCat(state: State, squad: Squad, incident: RaidIncident) {
   emitEvent(state, { type: 'cat_injured', catId: cat.id, seconds: cat.injuredRemaining })
 }
 
-function failRaid(state: State, squad: Squad, incident: RaidIncident, messageKey: string) {
-  const combined = incidentCombinedSquad(state, incident.participantSquadIds, squad)
+function incidentSquads(state: State, incident: RaidIncident) {
+  return incident.participantSquadIds
+    .map(id => state.squads.find(squad => squad.id === id))
+    .filter((squad): squad is Squad => Boolean(squad))
+}
+
+function incidentSquadLabel(state: State, incident: RaidIncident) {
+  return incidentSquads(state, incident).map(squad => getSquadDisplayName(squad)).join(', ')
+}
+
+function failRaid(state: State, incident: RaidIncident, messageKey: string) {
+  const combined = incidentCombinedSquad(state, incident.participantSquadIds)
   maybeInjureCat(state, combined, incident)
   for (const participantId of incident.participantSquadIds) {
     const participant = state.squads.find(candidate => candidate.id === participantId)
@@ -1905,10 +2045,10 @@ function failRaid(state: State, squad: Squad, incident: RaidIncident, messageKey
     sendHome(participant)
   }
   state.incident = undefined
-  note(state, messageKey, { squad: squad.name })
+  note(state, messageKey, { squad: incidentSquadLabel(state, incident) })
   emitEvent(state, {
     type: 'mission_failed',
-    squadId: squad.id,
+    squadIds: [...incident.participantSquadIds],
     missionId: incident.missionId,
     reason: messageKey === 'log.raid_attack_failed' ? 'attack' : 'support',
   })
@@ -1917,8 +2057,10 @@ function failRaid(state: State, squad: Squad, incident: RaidIncident, messageKey
 export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 'support', supportSquadId?: string) {
   const incident = state.incident
   if (!incident || incident.stage !== 'decision') return false
-  const primary = state.squads.find(squad => squad.id === incident.primarySquadId)
-  if (!primary) return false
+  const participants = incidentSquads(state, incident)
+  if (!participants.length) return false
+  const mission = state.missions.find(candidate => candidate.id === incident.missionId)
+  if (!mission) return false
 
   if (action === 'escape') {
     for (const participantId of incident.participantSquadIds) {
@@ -1928,37 +2070,33 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
       sendHome(participant)
     }
     state.incident = undefined
-    note(state, 'log.raid_escape', { squad: primary.name })
-    emitEvent(state, { type: 'mission_failed', squadId: primary.id, missionId: incident.missionId, reason: 'escape' })
+    note(state, 'log.raid_escape', { squad: incidentSquadLabel(state, incident) })
+    emitEvent(state, { type: 'mission_failed', squadIds: [...incident.participantSquadIds], missionId: incident.missionId, reason: 'escape' })
     syncAchievements(state)
     return true
   }
   if (action === 'attack') {
     const attackAvailable = state.research.nodes.improvised_defense.completed
-      && membersOf(state, incidentCombinedSquad(state, incident.participantSquadIds, primary))
+      && membersOf(state, incidentCombinedSquad(state, incident.participantSquadIds))
         .some(cat => hasEquipped(cat, 'nonlethal_weapon'))
     if (!attackAvailable) return false
     if (incident.attackRoll > incident.attackChance) {
-      failRaid(state, primary, incident, 'log.raid_attack_failed')
+      failRaid(state, incident, 'log.raid_attack_failed')
       syncAchievements(state)
       return true
     }
-    primary.phase = 'cleanup'
-    for (const participantId of incident.participantSquadIds) {
-      const participant = state.squads.find(squad => squad.id === participantId)
-      if (participant && participant.id !== primary.id) participant.phase = 'assisting'
-    }
+    for (const participant of participants) participant.phase = 'cleanup'
     state.incident = undefined
-    note(state, 'log.raid_attack_won', { squad: primary.name })
+    note(state, 'log.raid_attack_won', { squad: incidentSquadLabel(state, incident) })
     syncAchievements(state)
     return true
   }
 
   if (!supportSquadId) return false
-  const support = eligibleSupportSquads(state, primary.id, incident.participantSquadIds).find(squad => squad.id === supportSquadId)
+  const support = eligibleSupportSquads(state, incident.participantSquadIds).find(squad => squad.id === supportSquadId)
   if (!support) return false
   if (incident.supportRoll > actionChance(state, support, 'support')) {
-    failRaid(state, primary, incident, 'log.raid_support_failed')
+    failRaid(state, incident, 'log.raid_support_failed')
     syncAchievements(state)
     return true
   }
@@ -1970,35 +2108,36 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
   support.phase = 'support'
   support.routeFrom = supportOrigin
   support.restAfterReturn = false
-  support.target = primary.target ? { ...primary.target } : undefined
+  support.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
   support.travel = 0
   support.travelDuration = state.research.nodes.emergency_dispatch.completed
     ? CONFIG.raid.researchedSupportTravelTime
     : CONFIG.raid.supportTravelTime
   state.speed = 1
   note(state, 'log.support_dispatched', { squad: support.name, seconds: support.travelDuration })
-  emitEvent(state, { type: 'support_requested', squadId: support.id, primarySquadId: primary.id, seconds: support.travelDuration })
+  emitEvent(state, { type: 'support_requested', squadId: support.id, missionId: mission.id, seconds: support.travelDuration })
   return true
 }
 
 export function resolveRaidFollowup(state: State, action: 'retreat' | 'continue') {
   const incident = state.incident
   if (!incident || incident.stage !== 'support_decision') return false
-  const primary = state.squads.find(squad => squad.id === incident.primarySquadId)
   const support = state.squads.find(squad => squad.id === incident.supportSquadId)
-  if (!primary || !support) return false
+  const mission = state.missions.find(candidate => candidate.id === incident.missionId)
+  if (!support || !mission) return false
 
   if (action === 'continue') {
     support.missionId = incident.missionId
     support.missionArrivalTime = state.time
-    support.target = primary.target ? { ...primary.target } : undefined
+    support.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
     if (!incident.participantSquadIds.includes(support.id)) incident.participantSquadIds.push(support.id)
+    if (!mission.squadIds.includes(support.id)) mission.squadIds.push(support.id)
     for (const participantId of incident.participantSquadIds) {
       const participant = state.squads.find(squad => squad.id === participantId)
       if (!participant) continue
-      participant.phase = participant.id === primary.id ? 'cleanup' : 'assisting'
+      participant.phase = 'cleanup'
       participant.missionId = incident.missionId
-      participant.target = primary.target ? { ...primary.target } : undefined
+      participant.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
       participant.missionArrivalTime ??= state.time
     }
     note(state, 'log.raid_support_won')
@@ -2010,7 +2149,7 @@ export function resolveRaidFollowup(state: State, action: 'retreat' | 'continue'
       sendHome(participant)
     }
     note(state, 'log.raid_retreat')
-    emitEvent(state, { type: 'mission_failed', squadId: primary.id, missionId: incident.missionId, reason: 'retreat' })
+    emitEvent(state, { type: 'mission_failed', squadIds: [...incident.participantSquadIds], missionId: incident.missionId, reason: 'retreat' })
   }
   state.incident = undefined
   syncAchievements(state)
@@ -2124,6 +2263,10 @@ function spendTravelEnergy(state: State, squad: Squad, elapsed: number) {
 
 export function tick(state: State, seconds: number) {
   if (!state.speed) return
+  for (const mission of state.missions) {
+    mission.squadIds ??= []
+    mission.contributorSquadIds ??= []
+  }
   const elapsed = seconds * state.speed
   state.time += elapsed
   reconcileMissionFlow(state)
@@ -2159,7 +2302,6 @@ export function tick(state: State, seconds: number) {
       continue
     }
     if (squad.phase === 'incident') continue
-    if (squad.phase === 'assisting') continue
     if (squad.phase === 'merging') {
       const target = state.squads.find(candidate => candidate.id === squad.mergeTargetSquadId)
       if (!target) {
@@ -2209,7 +2351,7 @@ export function tick(state: State, seconds: number) {
         if (!state.incident.participantSquadIds.includes(squad.id)) state.incident.participantSquadIds.push(squad.id)
         state.speed = 0
         note(state, 'log.support_arrived', { squad: squad.name })
-        emitEvent(state, { type: 'support_arrived', squadId: squad.id, primarySquadId: state.incident.primarySquadId })
+        emitEvent(state, { type: 'support_arrived', squadId: squad.id, missionId: state.incident.missionId })
         break
       }
       continue
@@ -2220,14 +2362,8 @@ export function tick(state: State, seconds: number) {
       if (squad.travel >= squad.travelDuration) {
         if (squad.phase === 'outbound') {
           const mission = state.missions.find(candidate => candidate.id === squad.missionId)
-          if (mission && mission.status === 'available') {
-            mission.status = 'assigned'
-            mission.squadId = squad.id
+          if (mission?.status === 'assigned' && mission.squadIds.includes(squad.id)) {
             squad.phase = 'cleanup'
-          } else if (mission?.squadId === squad.id) {
-            squad.phase = 'cleanup'
-          } else if (mission?.status === 'assigned') {
-            squad.phase = 'assisting'
           } else {
             detachSquadMissionFields(squad)
             squad.phase = 'field'
@@ -2243,46 +2379,43 @@ export function tick(state: State, seconds: number) {
       continue
     }
 
-    const mission = state.missions.find(candidate => candidate.id === squad.missionId)
-    if (!mission || mission.squadId !== squad.id) {
-      squad.phase = mission ? 'assisting' : 'field'
-      continue
-    }
+    if (squad.phase === 'cleanup') continue
+  }
+
+  for (const mission of [...state.missions]) {
+    if (mission.status !== 'assigned' || state.incident?.missionId === mission.id) continue
+    const participants = cleanupParticipants(state, mission.id)
+    if (!participants.length) continue
     const raidIsPending = !state.raidTriggered
       && successfulCleanups(state) >= CONFIG.raid.successfulCleanupsBeforeTrigger
     const workLimit = raidIsPending ? CONFIG.mission.raidTriggerWork : CONFIG.mission.cleanupWork
     mission.progress ??= 0
-    const rate = cleanupRate(state, squad)
+    const rate = cleanupRate(state, mission.id)
     const workDone = Math.min(Math.max(0, workLimit - mission.progress), elapsed * rate)
     const workSeconds = rate > 0 ? workDone / rate : 0
-    for (const participant of cleanupParticipants(state, squad)) {
+    for (const participant of participants) {
       for (const cat of membersOf(state, participant)) {
         cat.energy = Math.max(0, cat.energy - workSeconds * CONFIG.mission.energyCostPerBaseCleanup / CONFIG.mission.cleanupWork)
       }
+      if (workDone > 0 && !mission.contributorSquadIds.includes(participant.id)) mission.contributorSquadIds.push(participant.id)
     }
     mission.progress += workDone
     if (raidIsPending && mission.progress >= CONFIG.mission.raidTriggerWork) {
       mission.progress = CONFIG.mission.raidTriggerWork
-      startRaidIncident(state, squad)
+      startRaidIncident(state, mission)
       break
     }
     if (mission.progress >= CONFIG.mission.cleanupWork) {
-      const assistants = assistingSquads(state, squad)
-      rewardMission(state, squad)
-      afterSuccessfulCleanup(state, squad)
-      const origin = squad.target ? { x: squad.target.x, y: squad.target.y } : getSquadMapPosition(squad)
-      for (const assistant of assistants) {
-        detachSquadMissionFields(assistant)
-        assistant.phase = 'field'
-        assistant.routeFrom = origin
-        assistant.travel = 0
-        assistant.travelDuration = 0
-        if (squadHasPendingChanges(state, assistant)) sendHome(assistant)
-        else if (assistant.autoDispatch) {
-          if (!startMission(state, assistant, undefined, origin)) sendHome(assistant, true)
-        }
+      const contributors = mission.contributorSquadIds
+        .map(id => state.squads.find(squad => squad.id === id))
+        .filter((squad): squad is Squad => Boolean(squad))
+      const assignedSquads = missionSquads(state, mission.id)
+      rewardMission(state, mission, contributors)
+      afterSuccessfulCleanup(state, mission, contributors)
+      for (const assigned of assignedSquads) {
+        if (assigned.phase === 'incident' || assigned.phase === 'support') continue
+        continueAfterSharedMission(state, assigned)
       }
-      dispatchNextMissionOrReturn(state, squad)
     }
   }
   syncAchievements(state)
@@ -2297,8 +2430,8 @@ export type GameCommand =
   | { type: 'equip_item'; catId: string; slot: EquipmentSlot; itemId?: ItemId }
   | { type: 'set_squad_style'; squadId: string; style: SquadStyle }
   | { type: 'set_auto_dispatch'; squadId: string; enabled: boolean }
-  | { type: 'dispatch_squad'; squadId: string; missionId: string }
-  | { type: 'assist_mission'; squadId: string; missionId: string }
+  | { type: 'assign_squad_to_mission'; squadId: string; missionId: string }
+  | { type: 'deploy_cats'; catIds: string[]; order: DeployOrder }
   | { type: 'split_squad'; squadId: string; memberIds: string[] }
   | { type: 'merge_squads'; sourceSquadId: string; targetSquadId: string }
   | { type: 'move_squad'; squadId: string; x: number; y: number }
@@ -2337,8 +2470,8 @@ export class GameCore {
       case 'equip_item': return equipItem(this.world, command.catId, command.slot, command.itemId)
       case 'set_squad_style': return setSquadStyle(this.world, command.squadId, command.style)
       case 'set_auto_dispatch': return setSquadAutoDispatch(this.world, command.squadId, command.enabled)
-      case 'dispatch_squad': return dispatchSquadToMission(this.world, command.squadId, command.missionId)
-      case 'assist_mission': return assistMission(this.world, command.squadId, command.missionId)
+      case 'assign_squad_to_mission': return assignSquadToMission(this.world, command.squadId, command.missionId)
+      case 'deploy_cats': return deployCats(this.world, command.catIds, command.order)
       case 'split_squad': return splitSquad(this.world, command.squadId, command.memberIds)
       case 'merge_squads': return mergeSquads(this.world, command.sourceSquadId, command.targetSquadId)
       case 'move_squad': return moveSquadToPoint(this.world, command.squadId, { x: command.x, y: command.y })

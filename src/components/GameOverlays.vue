@@ -23,10 +23,13 @@ const emit = defineEmits<{
 
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
 const raidOptions = computed(() => getRaidOptions(props.state))
-const primarySquad = computed(() => props.state.squads.find(squad => squad.id === props.state.incident?.primarySquadId))
+const incidentSquads = computed(() => props.state.incident?.participantSquadIds
+  .map(id => props.state.squads.find(squad => squad.id === id)).filter(Boolean) ?? [])
 const supportSquad = computed(() => props.state.squads.find(squad => squad.id === props.state.incident?.supportSquadId))
-const storySquad = computed(() => props.state.squads.find(squad => squad.id === props.state.storyIncident?.foundBySquadId))
+const storySquads = computed(() => props.state.storyIncident?.participantSquadIds
+  .map(id => props.state.squads.find(squad => squad.id === id)).filter(Boolean) ?? [])
 const squadName = (squad?: State['squads'][number]) => squad ? squadDisplayName(props.locale, squad) : ''
+const squadNames = (squads: (State['squads'][number] | undefined)[]) => squads.filter(Boolean).map(squad => squadName(squad)).join(', ')
 
 function supportMembers(memberIds: string[]) {
   return memberIds
@@ -58,8 +61,8 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
     <section class="incident-card" role="dialog" aria-modal="true" aria-labelledby="incident-title">
       <div class="incident-kicker"><span></span> {{ tr('НЕШТАТНАЯ СИТУАЦИЯ · ВРЕМЯ ОСТАНОВЛЕНО') }}</div>
       <template v-if="state.incident.stage === 'decision'">
-        <h1 id="incident-title">{{ tr('Встреча с рейдерами') }}</h1><p>{{ tr('raid.description', { squad: squadName(primarySquad) }) }}</p>
-        <div class="incident-facts"><span>{{ tr('ОТРЯД') }} <b>{{ tr('cats.count', { count: primarySquad?.members.length ?? 0 }) }}</b></span><span>{{ tr('ПРОГРЕСС') }} <b>{{ Math.round(GAME_RULES.raidTriggerWork / GAME_RULES.cleanupWork * 100) }}%</b></span><span>{{ tr('НАГРАДА ПОД УГРОЗОЙ') }} <b>{{ tr('scrap.count', { count: GAME_RULES.cleanupRewardScrap }) }}</b></span></div>
+        <h1 id="incident-title">{{ tr('Встреча с рейдерами') }}</h1><p>{{ tr('raid.description', { squad: squadNames(incidentSquads) }) }}</p>
+        <div class="incident-facts"><span>{{ tr('ОТРЯДЫ') }} <b>{{ tr('cats.count', { count: incidentSquads.reduce((total, squad) => total + (squad?.members.length ?? 0), 0) }) }}</b></span><span>{{ tr('ПРОГРЕСС') }} <b>{{ Math.round(GAME_RULES.raidTriggerWork / GAME_RULES.cleanupWork * 100) }}%</b></span><span>{{ tr('НАГРАДА ПОД УГРОЗОЙ') }} <b>{{ tr('scrap.count', { count: GAME_RULES.cleanupRewardScrap }) }}</b></span></div>
         <div class="incident-actions">
           <button class="choice safe" @click="emit('raidDecision', 'escape')"><span><b>{{ tr('Сбежать') }}</b><small>{{ tr('Миссия отменится без добычи и ранений.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong></button>
           <button class="choice" :disabled="!raidOptions?.attack.available" @click="emit('raidDecision', 'attack')"><span><b>{{ tr('Напасть') }}</b><small>{{ tr(raidOptions?.attack.available ? 'Использовать нелетальное оружие и вытеснить рейдеров.' : raidOptions?.attack.reason ?? '') }}</small></span><strong>{{ raidOptions?.attack.chance ? `${raidOptions.attack.chance}%` : tr('ЗАКРЫТО') }}</strong></button>
@@ -83,7 +86,7 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
   <div v-if="!newGameConfirmOpen && state.storyIncident && !state.incident" class="story-overlay">
     <section class="story-card" role="dialog" aria-modal="true" aria-labelledby="story-title">
       <div class="case-number"><span>{{ tr('РАССЛЕДОВАНИЕ') }}</span><strong>09</strong></div>
-      <div class="story-heading"><div class="story-kicker">{{ tr('ВХОДЯЩЕЕ ДЕЛО · ВРЕМЯ ОСТАНОВЛЕНО') }}</div><h1 id="story-title">{{ tr('Девятая жизнь') }}</h1><p>{{ tr('story.description', { squad: squadName(storySquad) }) }}</p><div class="witness-line"><span>{{ tr('СВИДЕТЕЛЬ') }}</span><b>{{ tr('Позывной «Игла»') }}</b><i>{{ tr('показания не подтверждены') }}</i></div></div>
+      <div class="story-heading"><div class="story-kicker">{{ tr('ВХОДЯЩЕЕ ДЕЛО · ВРЕМЯ ОСТАНОВЛЕНО') }}</div><h1 id="story-title">{{ tr('Девятая жизнь') }}</h1><p>{{ tr('story.description', { squad: squadNames(storySquads) }) }}</p><div class="witness-line"><span>{{ tr('СВИДЕТЕЛЬ') }}</span><b>{{ tr('Позывной «Игла»') }}</b><i>{{ tr('показания не подтверждены') }}</i></div></div>
       <div class="story-choices"><button v-for="(choice, index) in storyChoices" :key="choice.id" class="story-choice" :class="choice.tone" @click="emit('storyDecision', choice.id)"><span class="choice-index">0{{ index + 1 }}</span><span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(choice.description) }}</em></span><span class="choice-impact"><b>+{{ choice.fame }}</b><small>{{ tr('известность') }}</small><strong :class="{ quiet: !choice.threat }">{{ choice.threat ? `+${choice.threat}` : '±0' }}</strong><small>{{ tr('угроза') }}</small></span></button></div>
       <footer><span>{{ tr('Решение нельзя отменить') }}</span><span>{{ tr('Каждый вариант открывает отдельную будущую ветку') }}</span><button class="story-reset" @click="emit('newGame')">{{ tr('reset.open') }}</button></footer>
     </section>

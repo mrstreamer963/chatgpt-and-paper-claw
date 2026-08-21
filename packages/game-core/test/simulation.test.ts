@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
-  assistMission,
+  assignSquadToMission,
   assignCat,
   continueAfterFinale,
   createSquad,
-  createState,
+  createState as createFreshState,
   disbandSquad,
   deserializeCurrentSave,
   deserializeState,
-  dispatchSquadToMission,
   drainEvents,
   equipItem,
   getAchievements,
@@ -41,6 +40,22 @@ import {
   tick,
 } from '../src/simulation.ts'
 
+// Most legacy regression cases exercise established squad behavior. Seed their
+// fixture explicitly now that production starts without empty squad templates.
+function createState() {
+  const state = createFreshState()
+  createSquad(state)
+  createSquad(state)
+  state.squads[0].id = 'alpha'
+  state.squads[0].name = 'squad.alpha'
+  state.squads[0].autoDispatch = true
+  state.squads[1].id = 'bravo'
+  state.squads[1].name = 'squad.bravo'
+  state.squads[1].style = 'careful'
+  state.squads[1].autoDispatch = true
+  return state
+}
+
 test('GameCore owns the live state and exposes isolated snapshots', () => {
   const core = new GameCore()
   const snapshot = core.snapshot()
@@ -54,12 +69,16 @@ test('GameCore owns the live state and exposes isolated snapshots', () => {
   assert.equal(core.snapshot().speed, 5)
 })
 
-test('GameCore accepts a fresh-game cat assignment command', () => {
+test('GameCore forms a persistent squad from map-selected cats on first order', () => {
   const core = new GameCore()
-  assert.equal(core.dispatch({ type: 'assign_cat', catId: 'pixel', squadId: 'alpha' }), true)
+  const missionId = core.snapshot().missions[0].id
+  assert.equal(core.snapshot().squads.length, 0)
+  assert.equal(core.dispatch({ type: 'deploy_cats', catIds: ['pixel', 'rust'], order: { type: 'mission', missionId } }), true)
   const snapshot = core.snapshot()
-  assert.equal(snapshot.cats.find(cat => cat.id === 'pixel')?.assignedTo, 'alpha')
-  assert.deepEqual(snapshot.squads.find(squad => squad.id === 'alpha')?.members, ['pixel'])
+  assert.equal(snapshot.squads.length, 1)
+  assert.deepEqual(snapshot.squads[0].members, ['pixel', 'rust'])
+  assert.equal(snapshot.squads[0].autoDispatch, false)
+  assert.deepEqual(snapshot.missions[0].squadIds, [snapshot.squads[0].id])
 })
 
 test('squads can be created up to the staff count with stable non-reused ids', () => {
@@ -91,10 +110,10 @@ test('disbanding only accepts an empty idle non-final squad', () => {
   assignCat(state, 'pixel', '')
   state.squads[0].completed = 2
   assert.equal(disbandSquad(state, 'alpha'), true)
-  assert.equal(successfulCleanups(state), 2)
+  assert.equal(successfulCleanups(state), 0)
   assert.equal(state.disbandedSquadCleanups, 2)
-  assert.equal(getDisbandSquadBlockReason(state, 'bravo'), 'squad.manage.reason.last')
-  assert.equal(disbandSquad(state, 'bravo'), false)
+  assert.equal(getDisbandSquadBlockReason(state, 'bravo'), undefined)
+  assert.equal(disbandSquad(state, 'bravo'), true)
 })
 
 test('squads can be renamed in any phase with trimmed unique names', () => {
@@ -170,7 +189,7 @@ test('five equally productive cats clean five times faster, split fatigue and co
   squad.missionId = 'a'
   squad.target = { id: 'a', title: 'mission.a', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
-  state.missions[0].squadId = squad.id
+  state.missions[0].squadIds = [squad.id]
   state.raidTriggered = true
   state.speed = 1
 
@@ -208,9 +227,9 @@ test('an auto squad chains a priority mission nearest to its current position', 
   state.raidTriggered = true
   assignCat(state, 'pixel', 'alpha')
   const squad = state.squads[0]
-  const current = { id: 'current', title: 'mission.a', x: 20, y: 20, priority: 1, status: 'assigned' as const, squadId: squad.id, progress: 29, interruptionPolicy: 'preserve_progress' as const }
-  const farther = { id: 'farther', title: 'mission.b', x: 80, y: 80, priority: 2, status: 'available' as const, progress: 0, interruptionPolicy: 'preserve_progress' as const }
-  const nearby = { id: 'nearby', title: 'mission.c', x: 24, y: 20, priority: 2, status: 'available' as const, progress: 0, interruptionPolicy: 'preserve_progress' as const }
+  const current = { id: 'current', title: 'mission.a', x: 20, y: 20, priority: 1, status: 'assigned' as const, squadIds: [squad.id], contributorSquadIds: [], progress: 29, interruptionPolicy: 'preserve_progress' as const }
+  const farther = { id: 'farther', title: 'mission.b', x: 80, y: 80, priority: 2, status: 'available' as const, squadIds: [], contributorSquadIds: [], progress: 0, interruptionPolicy: 'preserve_progress' as const }
+  const nearby = { id: 'nearby', title: 'mission.c', x: 24, y: 20, priority: 2, status: 'available' as const, squadIds: [], contributorSquadIds: [], progress: 0, interruptionPolicy: 'preserve_progress' as const }
   state.missions = [current, farther, nearby]
   squad.phase = 'cleanup'
   squad.missionId = current.id
@@ -236,7 +255,7 @@ test('a tired field squad preserves the trip home and sleeps after returning', (
   const squad = state.squads[0]
   const current = state.missions[0]
   current.status = 'assigned'
-  current.squadId = squad.id
+  current.squadIds = [squad.id]
   squad.phase = 'cleanup'
   squad.missionId = current.id
   squad.target = { id: current.id, title: current.title, x: current.x, y: current.y, priority: current.priority }
@@ -276,11 +295,11 @@ test('manual dispatch assigns the selected mission to a ready manual squad', () 
   setSquadAutoDispatch(state, 'alpha', false)
   const selectedMission = state.missions[1]
 
-  assert.equal(dispatchSquadToMission(state, 'alpha', selectedMission.id), true)
+  assert.equal(assignSquadToMission(state, 'alpha', selectedMission.id), true)
   assert.equal(state.squads[0].phase, 'outbound')
   assert.equal(state.squads[0].missionId, selectedMission.id)
   assert.equal(selectedMission.status, 'assigned')
-  assert.equal(dispatchSquadToMission(state, 'bravo', state.missions[0].id), false)
+  assert.equal(assignSquadToMission(state, 'bravo', state.missions[0].id), false)
 })
 
 test('a manual squad waits in the field and accepts its next mission there', () => {
@@ -291,7 +310,7 @@ test('a manual squad waits in the field and accepts its next mission there', () 
   const squad = state.squads[0]
   const completedMission = state.missions[0]
   completedMission.status = 'assigned'
-  completedMission.squadId = squad.id
+  completedMission.squadIds = [squad.id]
   squad.phase = 'cleanup'
   squad.missionId = completedMission.id
   squad.target = { ...completedMission }
@@ -307,7 +326,7 @@ test('a manual squad waits in the field and accepts its next mission there', () 
   assert.equal(state.missions.includes(completedMission), false)
 
   const nextMission = state.missions.find(mission => mission.status === 'available')!
-  assert.equal(dispatchSquadToMission(state, squad.id, nextMission.id), true)
+  assert.equal(assignSquadToMission(state, squad.id, nextMission.id), true)
   assert.equal(squad.phase, 'outbound')
   assert.equal(squad.missionId, nextMission.id)
   assert.deepEqual(squad.routeFrom, { x: completedMission.x, y: completedMission.y })
@@ -409,8 +428,7 @@ test('the application migrates version ten saves after adding squad lifecycle st
   delete envelope.state.disbandedSquadCleanups
 
   const restored = deserializeCurrentSave(JSON.stringify(envelope))
-  assert.equal(restored.squads[0].phase, 'base')
-  assert.equal(restored.squads[0].destination, undefined)
+  assert.equal(restored.squads.length, 0)
   assert.equal(restored.squadSerial, 2)
   assert.equal(restored.disbandedSquadCleanups, 0)
 })
@@ -458,13 +476,15 @@ function openRaid() {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'marlowe', 'bravo')
+  state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
   const squad = state.squads[0]
   squad.completed = 2
+  state.completedMissionCount = 2
   squad.phase = 'cleanup'
   squad.missionId = 'a'
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
-  state.missions[0].squadId = squad.id
+  state.missions[0].squadIds = [squad.id]
   state.missions[0].progress = 14
   state.speed = 1
   tick(state, 1)
@@ -479,11 +499,12 @@ function finishThirdCleanup() {
   state.fame = 30
   const squad = state.squads[0]
   squad.completed = 2
+  state.completedMissionCount = 2
   squad.phase = 'cleanup'
   squad.missionId = 'a'
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
-  state.missions[0].squadId = squad.id
+  state.missions[0].squadIds = [squad.id]
   state.missions[0].progress = 29
   state.speed = 1
   tick(state, 1)
@@ -620,7 +641,7 @@ test('field equipment is reserved and applied after the squad returns', () => {
   const squad = state.squads[0]
   const mission = state.missions[0]
   mission.status = 'assigned'
-  mission.squadId = squad.id
+  mission.squadIds = [squad.id]
   squad.phase = 'cleanup'
   squad.missionId = mission.id
   squad.target = { ...mission }
@@ -654,7 +675,7 @@ test('equipment queued during outbound travel is shown immediately and waits for
   const squad = state.squads[0]
   const mission = state.missions[0]
   mission.status = 'assigned'
-  mission.squadId = squad.id
+  mission.squadIds = [squad.id]
   squad.phase = 'outbound'
   squad.missionId = mission.id
   squad.target = { ...mission }
@@ -775,7 +796,7 @@ test('save envelopes expose saveVersion and autosave can be compact', () => {
 
 test('GameCore refuses to resume time while story or final overlays are blocking', () => {
   const storyState = createState()
-  storyState.storyIncident = { kind: 'ninth_life', foundBySquadId: 'alpha', x: 50, y: 20 }
+  storyState.storyIncident = { kind: 'ninth_life', participantSquadIds: ['alpha'], x: 50, y: 20 }
   const storyCore = new GameCore(storyState)
   assert.equal(storyCore.dispatch({ type: 'set_speed', speed: 1 }), false)
   assert.equal(storyCore.snapshot().speed, 0)
@@ -848,6 +869,8 @@ test('version two saves migrate presentation text and discard the saved view', (
   envelope.state.cats[0].name = 'Марлоу'
   envelope.state.cats[0].role = 'переговорщик'
   envelope.state.squads[0].name = 'Отряд «Альфа»'
+  envelope.state.squads[0].members = ['marlowe']
+  envelope.state.cats[0].assignedTo = 'alpha'
   envelope.state.missions[0].title = 'Свалка у эстакады'
   envelope.state.log = [{ time: 0, key: 'log.cat_assigned', params: { cat: 'Марлоу', squad: 'Отряд «Альфа»' } }]
 
@@ -909,8 +932,8 @@ test('version six saves migrate field route state', () => {
   const restored = deserializeState(JSON.stringify(envelope))
 
   assert.deepEqual(restored.squads[0].routeFrom, { x: 23, y: 25 })
-  assert.deepEqual(restored.squads[1].routeFrom, { x: 46, y: 51 })
   assert.equal(restored.squads[0].restAfterReturn, false)
+  assert.equal(restored.squads.length, 1)
 })
 
 test('version eight saves migrate an empty deferred equipment queue', () => {
@@ -942,7 +965,7 @@ test('removing a deployed cat is deferred until the current cleanup and return f
   alpha.target = { ...state.missions[0] }
   state.missions[0].progress = 29
   state.missions[0].status = 'assigned'
-  state.missions[0].squadId = alpha.id
+  state.missions[0].squadIds = [alpha.id]
   state.raidTriggered = true
   state.speed = 1
 
@@ -1026,6 +1049,7 @@ test('escaping cancels the raid mission without a reward', () => {
   const state = createState()
   for (const catId of ['pixel', 'rust', 'bastion']) assignCat(state, catId, 'alpha')
   state.squads[0].completed = 2
+  state.completedMissionCount = 2
   state.speed = 10
   for (let step = 0; step < 100 && !state.incident; step++) tick(state, 0.25)
   const fame = state.fame
@@ -1044,6 +1068,7 @@ test('successful support arrives after eight seconds and can complete the cleanu
   for (const catId of ['marlowe', 'shorokh', 'myata']) assignCat(state, catId, 'bravo')
   state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
   state.squads[0].completed = 2
+  state.completedMissionCount = 2
   state.speed = 10
   for (let step = 0; step < 100 && !state.incident; step++) tick(state, 0.25)
   assert.ok(state.incident)
@@ -1063,13 +1088,13 @@ test('successful support arrives after eight seconds and can complete the cleanu
   assert.equal(resolveRaidFollowup(state, 'continue'), true)
   assert.equal(state.fame, fame)
   assert.equal(state.scrap, scrap)
-  assert.equal(support?.phase, 'assisting')
+  assert.equal(support?.phase, 'cleanup')
   state.speed = 1
   tick(state, 3)
   assert.equal(state.fame, fame + 5)
   assert.equal(state.scrap, scrap + 10)
   assert.equal(state.incident, undefined)
-  assert.notEqual(support?.phase, 'assisting')
+  assert.notEqual(support?.phase, 'cleanup')
 })
 
 test('retasking a working squad preserves cleanup progress on the old mission', () => {
@@ -1079,21 +1104,21 @@ test('retasking a working squad preserves cleanup progress on the old mission', 
   const squad = state.squads[0]
   const first = state.missions[0]
   const second = state.missions[1]
-  assert.equal(dispatchSquadToMission(state, squad.id, first.id), true)
+  assert.equal(assignSquadToMission(state, squad.id, first.id), true)
   state.speed = 1
   tick(state, squad.travelDuration)
   tick(state, 4)
   const savedProgress = first.progress
   assert.ok(savedProgress > 0)
 
-  assert.equal(dispatchSquadToMission(state, squad.id, second.id), true)
+  assert.equal(assignSquadToMission(state, squad.id, second.id), true)
   assert.equal(first.status, 'available')
-  assert.equal(first.squadId, undefined)
+  assert.deepEqual(first.squadIds, [])
   assert.equal(first.progress, savedProgress)
   assert.equal(squad.missionId, second.id)
 })
 
-test('an occupied cleanup accepts a separate assisting squad', () => {
+test('an occupied cleanup accepts a second equal squad', () => {
   const state = createState()
   state.raidTriggered = true
   assignCat(state, 'pixel', 'alpha')
@@ -1101,20 +1126,73 @@ test('an occupied cleanup accepts a separate assisting squad', () => {
   const mission = state.missions[0]
   const primary = state.squads[0]
   const assistant = state.squads[1]
-  assert.equal(dispatchSquadToMission(state, primary.id, mission.id), true)
+  assert.equal(assignSquadToMission(state, primary.id, mission.id), true)
   state.speed = 1
   tick(state, primary.travelDuration)
-  assert.equal(assistMission(state, assistant.id, mission.id), true)
+  assert.equal(assignSquadToMission(state, assistant.id, mission.id), true)
   tick(state, assistant.travelDuration)
   assert.equal(primary.phase, 'cleanup')
-  assert.equal(assistant.phase, 'assisting')
-  assert.equal(mission.squadId, primary.id)
+  assert.equal(assistant.phase, 'cleanup')
+  assert.deepEqual(mission.squadIds, [primary.id, assistant.id])
   const before = mission.progress
   tick(state, 1)
   assert.ok(mission.progress - before > 1.9)
   assert.equal(returnSquadToBase(state, primary.id), true)
-  assert.equal(mission.squadId, assistant.id)
+  assert.deepEqual(mission.squadIds, [assistant.id])
   assert.equal(assistant.phase, 'cleanup')
+})
+
+test('every equal squad with positive work receives credit while the world reward is granted once', () => {
+  const state = createState()
+  state.raidTriggered = true
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  const mission = state.missions[0]
+  const first = state.squads[0]
+  const second = state.squads[1]
+  setSquadAutoDispatch(state, first.id, false)
+  setSquadAutoDispatch(state, second.id, false)
+  assert.equal(assignSquadToMission(state, first.id, mission.id), true)
+  assert.equal(assignSquadToMission(state, second.id, mission.id), true)
+  state.speed = 1
+  tick(state, Math.max(first.travelDuration, second.travelDuration))
+  assert.equal(first.phase, 'cleanup')
+  assert.equal(second.phase, 'cleanup')
+  mission.progress = 29
+  const { scrap, fame, completedMissionCount } = state
+
+  tick(state, 1)
+
+  assert.equal(state.scrap, scrap + 10)
+  assert.equal(state.fame, fame + 5)
+  assert.equal(state.completedMissionCount, completedMissionCount + 1)
+  assert.equal(first.completed, 1)
+  assert.equal(second.completed, 1)
+})
+
+test('a squad that has not arrived when equal peers finish gets no credit and leaves independently', () => {
+  const state = createState()
+  state.raidTriggered = true
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  const mission = state.missions[0]
+  const arrived = state.squads[0]
+  const late = state.squads[1]
+  setSquadAutoDispatch(state, arrived.id, false)
+  setSquadAutoDispatch(state, late.id, false)
+  assert.equal(assignSquadToMission(state, arrived.id, mission.id), true)
+  state.speed = 1
+  tick(state, arrived.travelDuration)
+  assert.equal(arrived.phase, 'cleanup')
+  mission.progress = 29.5
+  assert.equal(assignSquadToMission(state, late.id, mission.id), true)
+
+  tick(state, 1)
+
+  assert.equal(arrived.completed, 1)
+  assert.equal(late.completed, 0)
+  assert.equal(late.phase, 'returning')
+  assert.equal(state.missions.some(candidate => candidate.id === mission.id), false)
 })
 
 test('a safe field split creates a normal manual squad at the same position', () => {
@@ -1183,6 +1261,7 @@ test('a merge chain follows the final absorbing squad', () => {
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'marlowe', 'bravo')
   assignCat(state, 'rust', 'squad-3')
+  state.squads.find(squad => squad.id === 'squad-3')!.autoDispatch = false
   const alpha = state.squads[0]
   const bravo = state.squads[1]
   const charlie = state.squads[2]
@@ -1209,7 +1288,7 @@ test('version eleven mission work migrates from the assigned squad', () => {
   const mission = state.missions[0]
   const squad = state.squads[0]
   mission.status = 'assigned'
-  mission.squadId = squad.id
+  mission.squadIds = [squad.id]
   squad.missionId = mission.id
   const envelope = JSON.parse(serializeState(state))
   envelope.version = 11
@@ -1220,6 +1299,55 @@ test('version eleven mission work migrates from the assigned squad', () => {
   const restored = deserializeCurrentSave(JSON.stringify(envelope))
   assert.equal(restored.missions[0].progress, 7)
   assert.equal(restored.missions[0].interruptionPolicy, 'preserve_progress')
+})
+
+test('version twelve migrates equal mission squads, incident participants, and empty templates', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  const mission = state.missions[0]
+  const alpha = state.squads[0]
+  const bravo = state.squads[1]
+  mission.status = 'assigned'
+  mission.squadIds = [alpha.id, bravo.id]
+  alpha.phase = 'incident'
+  alpha.missionId = mission.id
+  bravo.phase = 'cleanup'
+  bravo.missionId = mission.id
+  state.incident = {
+    kind: 'raiders',
+    missionId: mission.id,
+    participantSquadIds: [bravo.id],
+    stage: 'decision',
+    supportChance: 50,
+    attackChance: 50,
+    attackRoll: 0.5,
+    supportRoll: 0.5,
+    injuryRoll: 0.5,
+    injuredMemberRoll: 0.5,
+  }
+  const envelope = JSON.parse(serializeState(state))
+  envelope.version = 12
+  envelope.saveVersion = 12
+  const legacyMission = envelope.state.missions[0]
+  legacyMission.squadId = alpha.id
+  delete legacyMission.squadIds
+  delete legacyMission.contributorSquadIds
+  envelope.state.squads[1].phase = 'assisting'
+  envelope.state.incident.primarySquadId = alpha.id
+  envelope.state.squads.push({
+    id: 'legacy-empty', name: 'squad.charlie', members: [], style: 'balanced', autoDispatch: true,
+    phase: 'base', travel: 0, travelDuration: 0, completed: 4, routeFrom: { x: 46, y: 51 }, restAfterReturn: false,
+  })
+
+  const restored = deserializeCurrentSave(JSON.stringify(envelope))
+  const restoredMission = restored.missions.find(candidate => candidate.id === mission.id)!
+  assert.deepEqual(restoredMission.squadIds.sort(), [alpha.id, bravo.id].sort())
+  assert.deepEqual(restoredMission.contributorSquadIds.sort(), [alpha.id, bravo.id].sort())
+  assert.deepEqual(restored.incident?.participantSquadIds.sort(), [alpha.id, bravo.id].sort())
+  assert.equal('primarySquadId' in (restored.incident ?? {}), false)
+  assert.equal(restored.squads.some(squad => squad.id === 'legacy-empty'), false)
+  assert.equal(restored.disbandedSquadCleanups, 4)
 })
 
 test('a raid exposes every candidate and dispatches the squad selected by id', () => {
@@ -1246,7 +1374,7 @@ test('a squad already assigned to a mission cannot be recalled as raid support',
   support.missionId = mission.id
   support.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
   mission.status = 'assigned'
-  mission.squadId = support.id
+  mission.squadIds = [support.id]
 
   assert.deepEqual(getRaidOptions(state)?.support.candidates, [])
   assert.equal(resolveRaidDecision(state, 'support', support.id), false)
@@ -1259,12 +1387,14 @@ test('a raid captures every squad that has arrived at the cleanup', () => {
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'marlowe', 'bravo')
   assignCat(state, 'rust', 'squad-3')
+  state.squads.find(squad => squad.id === 'squad-3')!.autoDispatch = false
   const primary = state.squads[0]
   const assistant = state.squads[1]
   const mission = state.missions[0]
   primary.completed = 2
+  state.completedMissionCount = 2
   primary.phase = 'cleanup'
-  assistant.phase = 'assisting'
+  assistant.phase = 'cleanup'
   primary.missionId = mission.id
   assistant.missionId = mission.id
   primary.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
@@ -1272,7 +1402,7 @@ test('a raid captures every squad that has arrived at the cleanup', () => {
   primary.missionArrivalTime = 1
   assistant.missionArrivalTime = 2
   mission.status = 'assigned'
-  mission.squadId = primary.id
+  mission.squadIds = [primary.id, assistant.id]
   mission.progress = 14
   state.speed = 1
 
@@ -1287,8 +1417,8 @@ test('a raid captures every squad that has arrived at the cleanup', () => {
   tick(state, 8)
   assert.equal(resolveRaidFollowup(state, 'continue'), true)
   assert.equal(primary.phase, 'cleanup')
-  assert.equal(assistant.phase, 'assisting')
-  assert.equal(state.squads.find(squad => squad.id === 'squad-3')?.phase, 'assisting')
+  assert.equal(assistant.phase, 'cleanup')
+  assert.equal(state.squads.find(squad => squad.id === 'squad-3')?.phase, 'cleanup')
 })
 
 test('the ninth life investigation opens immediately after the third successful cleanup', () => {
@@ -1371,13 +1501,15 @@ test('equipped headset adds fifteen points to the support chance', () => {
   assert.equal(equipItem(equipped, 'marlowe', 'belt', 'headset'), true)
   assignCat(equipped, 'pixel', 'alpha')
   assignCat(equipped, 'marlowe', 'bravo')
+  equipped.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
   const squad = equipped.squads[0]
   squad.completed = 2
+  equipped.completedMissionCount = 2
   squad.phase = 'cleanup'
   squad.missionId = 'a'
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   equipped.missions[0].status = 'assigned'
-  equipped.missions[0].squadId = squad.id
+  equipped.missions[0].squadIds = [squad.id]
   equipped.missions[0].progress = 14
   equipped.speed = 1
   tick(equipped, 1)
@@ -1391,13 +1523,15 @@ test('completed defense research and an equipped weapon unlock a successful atta
   assert.equal(equipItem(state, 'pixel', 'hands', 'nonlethal_weapon'), true)
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'marlowe', 'bravo')
+  state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
   const squad = state.squads[0]
   squad.completed = 2
+  state.completedMissionCount = 2
   squad.phase = 'cleanup'
   squad.missionId = 'a'
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
-  state.missions[0].squadId = squad.id
+  state.missions[0].squadIds = [squad.id]
   state.missions[0].progress = 14
   state.speed = 1
   tick(state, 1)
@@ -1431,13 +1565,15 @@ test('a medkit shortens the recovery time of its injured wearer', () => {
   assert.equal(equipItem(state, 'pixel', 'belt', 'medkit'), true)
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'marlowe', 'bravo')
+  state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
   const squad = state.squads[0]
   squad.completed = 2
+  state.completedMissionCount = 2
   squad.phase = 'cleanup'
   squad.missionId = 'a'
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
-  state.missions[0].squadId = squad.id
+  state.missions[0].squadIds = [squad.id]
   state.missions[0].progress = 14
   state.speed = 1
   tick(state, 1)
@@ -1456,13 +1592,15 @@ test('an armor vest reduces injury chance and returns to the warehouse when remo
   assert.equal(state.inventory.armor_vest, 1)
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'marlowe', 'bravo')
+  state.squads.find(squad => squad.id === 'bravo')!.autoDispatch = false
   const squad = state.squads[0]
   squad.completed = 2
+  state.completedMissionCount = 2
   squad.phase = 'cleanup'
   squad.missionId = 'a'
   squad.target = { id: 'a', title: 'Свалка у эстакады', x: 23, y: 25, priority: 1 }
   state.missions[0].status = 'assigned'
-  state.missions[0].squadId = squad.id
+  state.missions[0].squadIds = [squad.id]
   state.missions[0].progress = 14
   state.speed = 1
   tick(state, 1)

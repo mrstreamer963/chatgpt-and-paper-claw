@@ -31,7 +31,7 @@ test('unchanged worlds do not publish a patch or advance a revision', () => {
 
 test('top-level optional fields are represented as removals', () => {
   const previous = createState()
-  previous.storyIncident = { kind: 'ninth_life', foundBySquadId: 'alpha', x: 1, y: 2 }
+  previous.storyIncident = { kind: 'ninth_life', participantSquadIds: ['alpha'], x: 1, y: 2 }
   const next = structuredClone(previous)
   delete next.storyIncident
 
