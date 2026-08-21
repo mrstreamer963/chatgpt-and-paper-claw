@@ -29,6 +29,7 @@ export interface SquadFormationLayout {
 
 export interface MissionSquadPoint extends SquadMarkerPoint {
   missionId: string
+  slot?: number
 }
 
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value))
@@ -81,19 +82,19 @@ export function layoutSquadsAroundMission(
   const sorted = [...points].sort((a, b) => a.id.localeCompare(b.id))
   const missionWidth = mission.width ?? 70
   const missionHeight = mission.height ?? 70
-  const maxWidth = Math.max(56, ...sorted.map(point => point.width ?? 56))
-  const maxHeight = Math.max(56, ...sorted.map(point => point.height ?? 56))
-  const radiusX = missionWidth / 2 + maxWidth / 2 + 12
-  const radiusY = missionHeight / 2 + maxHeight / 2 + 12
-  // Start diagonally so two squads never form the conspicuous horizontal row
-  // produced by the generic collision resolver.
-  const startAngle = sorted.length === 1 ? Math.PI : -Math.PI * .75
+  // A squad owns the same angular slot for its whole lifetime. Adding another
+  // squad to the mission therefore cannot rearrange one that is already there.
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5))
 
   return new Map(sorted.map((point, index) => {
-    const angle = startAngle + index * Math.PI * 2 / sorted.length
+    const pointWidth = point.width ?? 56
+    const pointHeight = point.height ?? 56
+    const radiusX = missionWidth / 2 + pointWidth / 2 + 12
+    const radiusY = missionHeight / 2 + pointHeight / 2 + 12
+    const angle = Math.PI + (point.slot ?? index) * goldenAngle
     return [point.id, {
-      x: clamp(mission.x + Math.cos(angle) * radiusX / viewport.width * 100, maxWidth / 2 / viewport.width * 100, 100 - maxWidth / 2 / viewport.width * 100),
-      y: clamp(mission.y + Math.sin(angle) * radiusY / viewport.height * 100, maxHeight / 2 / viewport.height * 100, 100 - maxHeight / 2 / viewport.height * 100),
+      x: clamp(mission.x + Math.cos(angle) * radiusX / viewport.width * 100, pointWidth / 2 / viewport.width * 100, 100 - pointWidth / 2 / viewport.width * 100),
+      y: clamp(mission.y + Math.sin(angle) * radiusY / viewport.height * 100, pointHeight / 2 / viewport.height * 100, 100 - pointHeight / 2 / viewport.height * 100),
     }]
   }))
 }

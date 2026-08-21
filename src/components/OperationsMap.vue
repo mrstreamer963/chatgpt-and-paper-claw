@@ -58,7 +58,7 @@ const missionSquadSlots = computed(() => {
     const squads = props.state.squads.filter(squad => squad.missionId === mission.id && squad.target && ['outbound', 'support', 'cleanup', 'incident'].includes(squad.phase))
     const missionSlots = layoutSquadsAroundMission(squads.map(squad => {
       const formation = squadFormation(squad)
-      return { id: squad.id, missionId: mission.id, ...squadPosition(squad), width: formation.width, height: formation.height }
+      return { id: squad.id, missionId: mission.id, slot: squadIndex(squad), ...squadPosition(squad), width: formation.width, height: formation.height }
     }), mission, mapSize.value)
     for (const [id, position] of missionSlots) slots.set(id, position)
   }

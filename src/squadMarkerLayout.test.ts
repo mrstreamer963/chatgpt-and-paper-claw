@@ -62,13 +62,24 @@ test('squad marker layout treats a mission as a fixed repelling center', () => {
 })
 
 test('mission slots arrange squads around the objective instead of in one row', () => {
-  const points = ['charlie', 'alpha', 'bravo'].map(id => ({ id, missionId: 'mission-a', x: 50, y: 50, width: 56, height: 56 }))
+  const points = ['charlie', 'alpha', 'bravo'].map((id, slot) => ({ id, missionId: 'mission-a', slot, x: 50, y: 50, width: 56, height: 56 }))
   const first = layoutSquadsAroundMission(points, { x: 50, y: 50 }, viewport)
   const second = layoutSquadsAroundMission([...points].reverse(), { x: 50, y: 50 }, viewport)
 
   assert.deepEqual(first, second)
   assert.equal(new Set([...first.values()].map(point => point.y.toFixed(3))).size, 3)
   for (const point of first.values()) assert.notDeepEqual(point, { x: 50, y: 50 })
+})
+
+test('an arriving squad does not move a squad already parked at the mission', () => {
+  const alpha = { id: 'alpha', missionId: 'mission-a', slot: 2, x: 50, y: 50, width: 56, height: 56 }
+  const alone = layoutSquadsAroundMission([alpha], { x: 50, y: 50 }, viewport)
+  const reinforced = layoutSquadsAroundMission([
+    alpha,
+    { id: 'bravo', missionId: 'mission-a', slot: 4, x: 35, y: 40, width: 90, height: 70 },
+  ], { x: 50, y: 50 }, viewport)
+
+  assert.deepEqual(reinforced.get('alpha'), alone.get('alpha'))
 })
 
 test('squad marker layout stays separated at map edges and is deterministic', () => {
