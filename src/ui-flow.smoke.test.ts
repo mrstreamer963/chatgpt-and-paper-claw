@@ -138,6 +138,7 @@ test('completed mission disappears while its squad route continues from the squa
   const html = await render(OperationsMap, { state, locale: 'ru' })
   assert.doesNotMatch(html, /cleanup-pin/)
   assert.match(html, new RegExp(`<line[^>]*x1="${mission.x}"[^>]*y1="${mission.y}"[^>]*x2="46"[^>]*y2="51"`))
+  assert.doesNotMatch(html, new RegExp(`class="squad-formation[^"]*"[^>]*style="left:${mission.x}%;top:${mission.y}%`))
 
   mission.status = 'assigned'
   const legacyHtml = await render(OperationsMap, { state, locale: 'ru' })

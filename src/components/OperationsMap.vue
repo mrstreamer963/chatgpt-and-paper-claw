@@ -54,8 +54,8 @@ const squadFormations = computed(() => new Map(props.state.squads.filter(squad =
 function squadFormation(squad: Squad): SquadFormationLayout { return squadFormations.value.get(squad.id) ?? layoutSquadFormation(squad.members) }
 const missionSquadSlots = computed(() => {
   const slots = new Map<string, { x: number; y: number }>()
-  for (const mission of props.state.missions.filter(candidate => candidate.status !== 'completed')) {
-    const squads = props.state.squads.filter(squad => squad.missionId === mission.id && squad.target && ['outbound', 'support', 'cleanup', 'incident'].includes(squad.phase))
+  for (const mission of props.state.missions) {
+    const squads = props.state.squads.filter(squad => squad.missionId === mission.id && squad.target && ['outbound', 'support', 'cleanup', 'incident', 'returning'].includes(squad.phase))
     const missionSlots = layoutSquadsAroundMission(squads.map(squad => {
       const formation = squadFormation(squad)
       return { id: squad.id, missionId: mission.id, slot: squadIndex(squad), ...squadPosition(squad), width: formation.width, height: formation.height }
@@ -68,6 +68,11 @@ function squadPreferredPosition(squad: Squad) {
   const logical = squadPosition(squad)
   const slot = missionSquadSlots.value.get(squad.id)
   if (!slot) return logical
+  if (squad.phase === 'returning') {
+    const progress = squad.travelDuration > 0 ? Math.max(0, Math.min(1, squad.travel / squad.travelDuration)) : 1
+    const blend = 1 - progress * progress * (3 - 2 * progress)
+    return { x: logical.x + (slot.x - (squad.target?.x ?? squad.routeFrom.x)) * blend, y: logical.y + (slot.y - (squad.target?.y ?? squad.routeFrom.y)) * blend }
+  }
   if (!['outbound', 'support'].includes(squad.phase)) return slot
   const progress = squad.travelDuration > 0 ? Math.max(0, Math.min(1, squad.travel / squad.travelDuration)) : 1
   const blend = progress * progress * (3 - 2 * progress)
