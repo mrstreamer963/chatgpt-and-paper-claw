@@ -19,12 +19,19 @@ test('click, Shift, Escape and drag rectangle control RTS selection', async ({ p
   await page.keyboard.press('Escape')
   await expect(page.locator('.base-cat-marker.selected')).toHaveCount(0)
 
-  const map = page.locator('.map-grid')
-  const bounds = await map.boundingBox()
-  if (!bounds) throw new Error('Map has no bounds')
-  await page.mouse.move(bounds.x + bounds.width * 0.35, bounds.y + bounds.height * 0.38)
+  const tokenBounds = await page.locator('.base-cat-marker').evaluateAll(elements => elements.map(element => {
+    const bounds = element.getBoundingClientRect()
+    return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom }
+  }))
+  const selectionBounds = {
+    left: Math.min(...tokenBounds.map(bounds => bounds.left)) - 12,
+    right: Math.max(...tokenBounds.map(bounds => bounds.right)) + 12,
+    top: Math.min(...tokenBounds.map(bounds => bounds.top)) - 12,
+    bottom: Math.max(...tokenBounds.map(bounds => bounds.bottom)) + 12,
+  }
+  await page.mouse.move(selectionBounds.left, selectionBounds.top)
   await page.mouse.down()
-  await page.mouse.move(bounds.x + bounds.width * 0.58, bounds.y + bounds.height * 0.68)
+  await page.mouse.move(selectionBounds.right, selectionBounds.bottom)
   await page.mouse.up()
   await expect(page.locator('.base-cat-marker.selected')).toHaveCount(6)
 

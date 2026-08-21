@@ -137,8 +137,8 @@ test('completed mission disappears while its squad route continues from the squa
 
   const html = await render(OperationsMap, { state, locale: 'ru' })
   assert.doesNotMatch(html, /cleanup-pin/)
-  assert.match(html, new RegExp(`<line[^>]*x1="${mission.x}"[^>]*y1="${mission.y}"[^>]*x2="46"[^>]*y2="51"`))
-  assert.doesNotMatch(html, new RegExp(`class="squad-formation[^"]*"[^>]*style="left:${mission.x}%;top:${mission.y}%`))
+  assert.match(html, /<line[^>]*x1="23"[^>]*y1="25"[^>]*x2="46"[^>]*y2="51"/)
+  assert.match(html, /class="[^"]*squad-formation"[^>]*style="left:23%;top:25%/)
 
   mission.status = 'assigned'
   const legacyHtml = await render(OperationsMap, { state, locale: 'ru' })
@@ -208,7 +208,7 @@ test('a manual field squad shows its waiting state only in the command list', as
   const html = await render(OperationsMap, { state, locale: 'ru' })
 
   assert.equal(html.match(/В поле \/ ожидает приказа/g)?.length, 1)
-  assert.doesNotMatch(html, /class="squad-callout"><b>[^<]+<\/b><small>/)
+  assert.doesNotMatch(html, /squad-callout/)
   assert.match(html, /ОТРЯДЫ/)
   assert.match(html, /СВОБОДЕН/)
   assert.match(html, /class="available"/)

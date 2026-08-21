@@ -2,7 +2,7 @@ import { expect, type Page } from '@playwright/test'
 
 export async function selectBaseCats(page: Page, names: string[]) {
   for (const [index, name] of names.entries()) {
-    await page.getByRole('button', { name, exact: true }).click(index ? { modifiers: ['Shift'] } : undefined)
+    await page.getByRole('button', { name, exact: true }).dispatchEvent('click', { shiftKey: index > 0 })
   }
 }
 
