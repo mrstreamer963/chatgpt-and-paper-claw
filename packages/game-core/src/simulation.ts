@@ -1984,8 +1984,7 @@ function completeSquadMerge(state: State, source: Squad, target: Squad) {
   emitEvent(state, { type: 'squad_merged', sourceSquadId: source.id, targetSquadId: target.id })
 }
 
-function sendHome(squad: Squad, restAfterReturn = false) {
-  const origin = getSquadMapPosition(squad)
+function sendHome(squad: Squad, restAfterReturn = false, origin = getSquadMapPosition(squad)) {
   squad.phase = 'returning'
   delete squad.destination
   squad.routeFrom = origin
@@ -2002,8 +2001,9 @@ export function returnSquadToBase(state: State, squadId: string) {
   const squad = state.squads.find(candidate => candidate.id === squadId)
   if (!squad || squad.phase === 'base' || squad.phase === 'incident' || squad.phase === 'support'
     || state.incident?.participantSquadIds.includes(squad.id)) return false
+  const origin = getSquadMapPosition(squad)
   releaseSquadFromMission(state, squad)
-  sendHome(squad)
+  sendHome(squad, false, origin)
   note(state, 'log.squad_ordered_home', { squad: squad.name })
   return true
 }

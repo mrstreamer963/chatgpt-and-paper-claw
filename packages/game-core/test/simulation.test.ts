@@ -453,6 +453,22 @@ test('a manual field squad returns automatically when no available mission is sa
   assert.equal(pixel.sleeping, true)
 })
 
+test('a recalled cleanup squad returns from its current map position', () => {
+  const state = createState()
+  const squad = state.squads[0]
+  const mission = state.missions[0]
+  squad.phase = 'cleanup'
+  squad.missionId = mission.id
+  squad.target = { ...mission }
+  mission.status = 'assigned'
+  mission.squadIds = [squad.id]
+
+  assert.equal(returnSquadToBase(state, squad.id), true)
+  assert.equal(squad.phase, 'returning')
+  assert.deepEqual(squad.routeFrom, { x: mission.x, y: mission.y })
+  assert.deepEqual(getSquadMapPosition(squad), { x: mission.x, y: mission.y })
+})
+
 test('disabling auto-deploy in the field holds the squad after it returns', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
