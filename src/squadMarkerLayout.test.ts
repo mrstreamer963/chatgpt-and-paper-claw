@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { layoutSquadFormation, layoutSquadMarkers } from './components/squadMarkerLayout.ts'
+import { layoutSquadFormation, layoutSquadMarkers, layoutSquadsAroundMission } from './components/squadMarkerLayout.ts'
 
 const viewport = { width: 800, height: 600, markerSize: 56, gap: 6 }
 
@@ -59,6 +59,16 @@ test('squad marker layout treats a mission as a fixed repelling center', () => {
     assert.ok(Math.abs(position.x - mission.x) >= 56 || Math.abs(position.y - mission.y) >= 56)
   }
   assertSeparated([...result.values()])
+})
+
+test('mission slots arrange squads around the objective instead of in one row', () => {
+  const points = ['charlie', 'alpha', 'bravo'].map(id => ({ id, missionId: 'mission-a', x: 50, y: 50, width: 56, height: 56 }))
+  const first = layoutSquadsAroundMission(points, { x: 50, y: 50 }, viewport)
+  const second = layoutSquadsAroundMission([...points].reverse(), { x: 50, y: 50 }, viewport)
+
+  assert.deepEqual(first, second)
+  assert.equal(new Set([...first.values()].map(point => point.y.toFixed(3))).size, 3)
+  for (const point of first.values()) assert.notDeepEqual(point, { x: 50, y: 50 })
 })
 
 test('squad marker layout stays separated at map edges and is deterministic', () => {

@@ -4,7 +4,7 @@ import { GAME_RULES, getAssignMissionBlockReason, getCleanupSecondsRemaining, ge
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
-import { layoutSquadFormation, layoutSquadMarkers, type SquadFormationLayout } from './squadMarkerLayout'
+import { layoutSquadFormation, layoutSquadMarkers, layoutSquadsAroundMission, type SquadFormationLayout } from './squadMarkerLayout'
 
 const props = defineProps<{ state: State; locale: Locale }>()
 const emit = defineEmits<{
@@ -52,17 +52,37 @@ function squadFormationDirection(squad: Squad) {
 }
 const squadFormations = computed(() => new Map(props.state.squads.filter(squad => squad.phase !== 'base').map(squad => [squad.id, layoutSquadFormation(squad.members, squadFormationDirection(squad))])))
 function squadFormation(squad: Squad): SquadFormationLayout { return squadFormations.value.get(squad.id) ?? layoutSquadFormation(squad.members) }
+const missionSquadSlots = computed(() => {
+  const slots = new Map<string, { x: number; y: number }>()
+  for (const mission of props.state.missions.filter(candidate => candidate.status !== 'completed')) {
+    const squads = props.state.squads.filter(squad => squad.missionId === mission.id && squad.target && ['outbound', 'support', 'cleanup', 'incident'].includes(squad.phase))
+    const missionSlots = layoutSquadsAroundMission(squads.map(squad => {
+      const formation = squadFormation(squad)
+      return { id: squad.id, missionId: mission.id, ...squadPosition(squad), width: formation.width, height: formation.height }
+    }), mission, mapSize.value)
+    for (const [id, position] of missionSlots) slots.set(id, position)
+  }
+  return slots
+})
+function squadPreferredPosition(squad: Squad) {
+  const logical = squadPosition(squad)
+  const slot = missionSquadSlots.value.get(squad.id)
+  if (!slot) return logical
+  if (!['outbound', 'support'].includes(squad.phase)) return slot
+  const progress = squad.travelDuration > 0 ? Math.max(0, Math.min(1, squad.travel / squad.travelDuration)) : 1
+  const blend = progress * progress * (3 - 2 * progress)
+  return { x: logical.x + (slot.x - (squad.target?.x ?? logical.x)) * blend, y: logical.y + (slot.y - (squad.target?.y ?? logical.y)) * blend }
+}
 const separatedSquadPositions = computed(() => layoutSquadMarkers(
   props.state.squads.filter(squad => squad.phase !== 'base').map(squad => {
     const formation = squadFormation(squad)
-    return { id: squad.id, ...squadPosition(squad), width: formation.width, height: formation.height }
+    return { id: squad.id, ...squadPreferredPosition(squad), width: formation.width, height: formation.height }
   }),
   {
     ...mapSize.value,
     gap: 8,
     obstacles: [
       { id: 'base', ...base, width: 74, height: 92 },
-      ...props.state.missions.filter(mission => mission.status !== 'completed').map(mission => ({ id: mission.id, x: mission.x, y: mission.y, width: 70, height: 70 })),
     ],
   },
 ))

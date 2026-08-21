@@ -27,6 +27,10 @@ export interface SquadFormationLayout {
   height: number
 }
 
+export interface MissionSquadPoint extends SquadMarkerPoint {
+  missionId: string
+}
+
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value))
 
 const formationPatterns: Record<number, Array<[number, number]>> = {
@@ -65,6 +69,33 @@ export function layoutSquadFormation(memberIds: string[], direction = { x: 0, y:
   const width = members.length ? Math.max(...members.map(member => member.x + halfUnitWidth)) - Math.min(...members.map(member => member.x - halfUnitWidth)) + 8 : 0
   const height = members.length ? Math.max(...members.map(member => member.y + halfUnitHeight)) - Math.min(...members.map(member => member.y - halfUnitHeight)) + 8 : 0
   return { members, width, height }
+}
+
+/** Stable visual parking slots around a mission. These coordinates are only
+ * presentation offsets; simulation positions and arrival checks stay intact. */
+export function layoutSquadsAroundMission(
+  points: MissionSquadPoint[],
+  mission: { x: number; y: number; width?: number; height?: number },
+  viewport: { width: number; height: number },
+) {
+  const sorted = [...points].sort((a, b) => a.id.localeCompare(b.id))
+  const missionWidth = mission.width ?? 70
+  const missionHeight = mission.height ?? 70
+  const maxWidth = Math.max(56, ...sorted.map(point => point.width ?? 56))
+  const maxHeight = Math.max(56, ...sorted.map(point => point.height ?? 56))
+  const radiusX = missionWidth / 2 + maxWidth / 2 + 12
+  const radiusY = missionHeight / 2 + maxHeight / 2 + 12
+  // Start diagonally so two squads never form the conspicuous horizontal row
+  // produced by the generic collision resolver.
+  const startAngle = sorted.length === 1 ? Math.PI : -Math.PI * .75
+
+  return new Map(sorted.map((point, index) => {
+    const angle = startAngle + index * Math.PI * 2 / sorted.length
+    return [point.id, {
+      x: clamp(mission.x + Math.cos(angle) * radiusX / viewport.width * 100, maxWidth / 2 / viewport.width * 100, 100 - maxWidth / 2 / viewport.width * 100),
+      y: clamp(mission.y + Math.sin(angle) * radiusY / viewport.height * 100, maxHeight / 2 / viewport.height * 100, 100 - maxHeight / 2 / viewport.height * 100),
+    }]
+  }))
 }
 
 export function layoutSquadMarkers(points: SquadMarkerPoint[], options: SquadMarkerLayoutOptions) {
