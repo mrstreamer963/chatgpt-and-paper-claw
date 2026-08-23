@@ -18,6 +18,7 @@ import {
 } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import EquipmentSlotSelect from './EquipmentSlotSelect.vue'
+import CatAssignmentSelect from './CatAssignmentSelect.vue'
 import SquadStyleSelect from './SquadStyleSelect.vue'
 import baseCutawayUrl from '../../assets/art/base-cutaway-v1.webp?url'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
@@ -203,8 +204,8 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
       <div v-for="cat in state.cats" :key="cat.id" class="cat-card" :class="{ injured: cat.injuredRemaining > 0, sleeping: cat.sleeping }">
         <div class="cat-header"><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else-if="cat.sleeping" class="sleeping-label">{{ tr('cat.sleeping', { energy: Math.round(cat.energy) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span></div>
         <details>
-          <label v-if="state.squads.some(squad => squad.phase === 'base')" class="cat-squad-assignment"><span>{{ tr('Отряд на базе') }}</span><select :value="cat.assignedTo ?? ''" @change="props.assignCat(cat.id, ($event.target as HTMLSelectElement).value)"><option value="">{{ tr('Без отряда') }}</option><option v-for="squad in state.squads.filter(squad => squad.phase === 'base')" :key="squad.id" :value="squad.id">{{ squadDisplayName(locale, squad) }}</option></select></label>
           <summary>{{ tr('Досье и экипировка') }}</summary>
+          <label class="cat-squad-assignment"><span>{{ tr('Назначение в отряд') }}</span><CatAssignmentSelect :state="state" :cat="cat" :locale="locale" :assign="assignCat" /></label>
           <div class="cat-trait"><span>{{ catTraitText(cat) }}</span><small>{{ tr('cat.stats', { combat: cat.combat, tech: cat.tech, perception: cat.perception, scouting: cat.scouting }) }}</small></div>
           <div class="equipment-grid"><EquipmentSlotSelect v-for="slot in EQUIPMENT_SLOTS" :key="slot.id" :state="state" :cat="cat" :slot="slot.id" :locale="locale" :equip="equipItem" /></div>
         </details>
