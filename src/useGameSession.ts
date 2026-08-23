@@ -358,8 +358,6 @@ export async function createGameSession() {
     setSquadAutoDispatch: (squadId: string, enabled: boolean) => runCommand({ type: 'set_auto_dispatch', squadId, enabled }),
     assignSquadToMission: (squadId: string, missionId: string) => runCommand({ type: 'assign_squad_to_mission', squadId, missionId }),
     deployCats: (catIds: string[], order: DeployOrder) => runCommand({ type: 'deploy_cats', catIds, order }),
-    splitSquad: (squadId: string, memberIds: string[]) => runCommand({ type: 'split_squad', squadId, memberIds }),
-    mergeSquads: (sourceSquadId: string, targetSquadId: string) => runCommand({ type: 'merge_squads', sourceSquadId, targetSquadId }),
     moveSquadToPoint: (squadId: string, x: number, y: number) => runCommand({ type: 'move_squad', squadId, x, y }),
     returnSquadToBase: (squadId: string) => runCommand({ type: 'return_squad', squadId }),
     selectResearch: (researchId?: ResearchId) => runCommand({ type: 'select_research', researchId }),

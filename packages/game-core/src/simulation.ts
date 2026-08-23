@@ -1443,7 +1443,9 @@ export function getSplitSquadBlockReason(state: State, squadId: string, memberId
 }
 
 export function splitSquad(state: State, squadId: string, memberIds: string[]) {
-  if (getSplitSquadBlockReason(state, squadId, memberIds)) return false
+  // Field regrouping is intentionally unavailable: squads are configured at base.
+  return false
+  /*
   const squad = state.squads.find(candidate => candidate.id === squadId)
   if (!squad) return false
   const selected = [...new Set(memberIds)]
@@ -1469,6 +1471,7 @@ export function splitSquad(state: State, squadId: string, memberIds: string[]) {
   note(state, 'log.squad_split', { squad: squad.name, created: newSquad.name })
   emitEvent(state, { type: 'squad_split', squadId, newSquadId: newSquad.id, memberIds: selected })
   return true
+  */
 }
 
 function targetRouteEndpoint(squad: Squad): MapPoint {
@@ -1544,7 +1547,9 @@ export function getMergeSquadsBlockReason(state: State, sourceSquadId: string, t
 }
 
 export function mergeSquads(state: State, sourceSquadId: string, targetSquadId: string) {
-  if (getMergeSquadsBlockReason(state, sourceSquadId, targetSquadId)) return false
+  // Field regrouping is intentionally unavailable: multiple squads may share a mission.
+  return false
+  /*
   const source = state.squads.find(candidate => candidate.id === sourceSquadId)
   const target = state.squads.find(candidate => candidate.id === targetSquadId)
   if (!source || !target) return false
@@ -1561,6 +1566,7 @@ export function mergeSquads(state: State, sourceSquadId: string, targetSquadId: 
   note(state, 'log.squad_merge_started', { source: source.name, target: target.name })
   emitEvent(state, { type: 'squad_merge_started', sourceSquadId, targetSquadId })
   return true
+  */
 }
 
 function startMission(state: State, squad: Squad, requestedMissionId?: string, origin: MapPoint = CONFIG.map.base) {

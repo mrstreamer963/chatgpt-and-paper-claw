@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { GAME_RULES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getDeployCatsBlockReason, getMergeSquadsBlockReason, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getSplitSquadBlockReason, getSquadMapPosition, getWaterFiltersDispatchBlockReason, type Cat, type DeployOrder, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
+import { GAME_RULES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getDeployCatsBlockReason, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getSquadMapPosition, getWaterFiltersDispatchBlockReason, type Cat, type DeployOrder, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
@@ -15,8 +15,6 @@ const props = defineProps<{ state: State; locale: Locale }>()
 const emit = defineEmits<{
   assign: [squadId: string, missionId: string]
   deploy: [catIds: string[], order: DeployOrder]
-  split: [squadId: string, memberIds: string[]]
-  merge: [sourceSquadId: string, targetSquadId: string]
   move: [squadId: string, x: number, y: number]
   returnHome: [squadId: string]
   dispatchStory: [squadId: string]
@@ -24,9 +22,7 @@ const emit = defineEmits<{
 }>()
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
 const base = { x: 46, y: 51 }
-const { selectedSquadIds, selectedCatIds, selectedTarget, commandMessage, mergeSourceSquadId, selectedCount, clearCommand, handleEscape } = useMapSelection()
-const splitSquadId = ref<string>()
-const splitMemberIds = ref<string[]>([])
+const { selectedSquadIds, selectedCatIds, selectedTarget, commandMessage, selectedCount, clearCommand, handleEscape } = useMapSelection()
 const mapGrid = ref<HTMLElement>()
 const mapSize = ref({ width: 1000, height: 700 })
 const selectionBox = ref<{ startX: number; startY: number; x: number; y: number; additive: boolean; pointerId: number; dragging: boolean }>()
@@ -132,7 +128,6 @@ function issueReturn() {
 }
 function selectSquad(squad: Squad, event?: MouseEvent) {
   commandMessage.value = undefined
-  if (mergeSourceSquadId.value && mergeSourceSquadId.value !== squad.id) { const reason = getMergeSquadsBlockReason(props.state, mergeSourceSquadId.value, squad.id); if (reason) return setFailure(reason); emit('merge', mergeSourceSquadId.value, squad.id); clearCommand(); return }
   const target = selectedTarget.value
   if (target?.type === 'mission') { const mission = props.state.missions.find(candidate => candidate.id === target.missionId); if (squad.phase === 'base') selectedCatIds.value = [...new Set([...selectedCatIds.value, ...squad.members])]; else selectedSquadIds.value = [...new Set([...selectedSquadIds.value, squad.id])]; if (mission) issueMission(mission); return }
   if (selectedTarget.value?.type === 'base') { if (squad.phase !== 'base') selectedSquadIds.value = [...new Set([...selectedSquadIds.value, squad.id])]; issueReturn(); return }
@@ -148,10 +143,6 @@ function selectCat(cat: Cat, event: MouseEvent) {
   else { selectedCatIds.value = [cat.id]; selectedSquadIds.value = [] }
 }
 
-function openSplit(squad: Squad) { splitSquadId.value = squad.id; splitMemberIds.value = [squad.members[0]].filter(Boolean) }
-function toggleSplitMember(memberId: string) { splitMemberIds.value = splitMemberIds.value.includes(memberId) ? splitMemberIds.value.filter(id => id !== memberId) : [...splitMemberIds.value, memberId] }
-function confirmSplit() { const squadId = splitSquadId.value; if (!squadId) return; const reason = getSplitSquadBlockReason(props.state, squadId, splitMemberIds.value); if (reason) return setFailure(reason); emit('split', squadId, [...splitMemberIds.value]); splitSquadId.value = undefined; splitMemberIds.value = []; clearCommand() }
-function armMerge() { if (selectedSquadIds.value.length === 1) { mergeSourceSquadId.value = selectedSquadIds.value[0]; commandMessage.value = undefined } }
 function selectMission(mission: Mission) { commandMessage.value = undefined; if (selectedCount.value) return issueMission(mission); selectedTarget.value = selectedTarget.value?.type === 'mission' && selectedTarget.value.missionId === mission.id ? undefined : { type: 'mission', missionId: mission.id } }
 function selectBase() { commandMessage.value = undefined; if (selectedCount.value) return issueReturn(); selectedTarget.value = selectedTarget.value?.type === 'base' ? undefined : { type: 'base' } }
 
@@ -210,7 +201,7 @@ function beginSelection(event: PointerEvent) { if (event.button !== 0 || (event.
 function updateSelection(event: PointerEvent) { const box = selectionBox.value; if (!box || box.pointerId !== event.pointerId) return; const point = pointerPoint(event, event.currentTarget as HTMLElement); box.x = point.x; box.y = point.y; if (Math.hypot(box.x - box.startX, box.y - box.startY) > 0.8) box.dragging = true }
 function finishSelection(event: PointerEvent) {
   const box = selectionBox.value; if (!box || box.pointerId !== event.pointerId) return
-  if (box.dragging) { const left = Math.min(box.startX, box.x), right = Math.max(box.startX, box.x), top = Math.min(box.startY, box.y), bottom = Math.max(box.startY, box.y); const squadIds = props.state.squads.filter(squad => squad.phase !== 'base').filter(squad => formationIntersectsBox(squad, left, right, top, bottom)).map(squad => squad.id); const catIds = props.state.cats.filter(catIsAtBase).filter(cat => { const point = baseCatPosition(cat); return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom }).map(cat => cat.id); selectedSquadIds.value = box.additive ? [...new Set([...selectedSquadIds.value, ...squadIds])] : squadIds; selectedCatIds.value = box.additive ? [...new Set([...selectedCatIds.value, ...catIds])] : catIds; suppressMapClick = true }
+  if (box.dragging) { const left = Math.min(box.startX, box.x), right = Math.max(box.startX, box.x), top = Math.min(box.startY, box.y), bottom = Math.max(box.startY, box.y); const squadIds = props.state.squads.filter(squad => squad.phase !== 'base').filter(squad => formationIntersectsBox(squad, left, right, top, bottom)).map(squad => squad.id); selectedSquadIds.value = box.additive ? [...new Set([...selectedSquadIds.value, ...squadIds])] : squadIds; selectedCatIds.value = []; suppressMapClick = true }
   selectionBox.value = undefined
 }
 onMounted(() => { window.addEventListener('keydown', handleEscape); if (mapGrid.value) { const updateMapSize = () => { if (mapGrid.value) mapSize.value = { width: mapGrid.value.clientWidth, height: mapGrid.value.clientHeight } }; updateMapSize(); mapResizeObserver = new ResizeObserver(updateMapSize); mapResizeObserver.observe(mapGrid.value) } })
@@ -220,22 +211,20 @@ function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.tim
 
 <template>
   <section class="map-view">
-    <div ref="mapGrid" class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedCount || selectedTarget, 'return-command-active': selectedSquadIds.length > 0, 'merge-active': mergeSourceSquadId }" @click="selectMapPoint" @pointerdown="beginSelection" @pointermove="updateSelection" @pointerup="finishSelection" @pointercancel="selectionBox = undefined">
+    <div ref="mapGrid" class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedCount || selectedTarget, 'return-command-active': selectedSquadIds.length > 0 }" @click="selectMapPoint" @pointerdown="beginSelection" @pointermove="updateSelection" @pointerup="finishSelection" @pointercancel="selectionBox = undefined">
       <MapRouteLayer :state="state" :base="base" :squad-color="squadColor" :squad-index="squadIndex" />
       <MapSquadLayer :state="state" :selected-squad-ids="selectedSquadIds" :squad-style="squadStyle" :squad-is-available="squadIsAvailable" :field-cat-tooltip="fieldCatTooltip" :squad-color="squadColor" :field-cat="fieldCat" :cat-tokens-url="catTokensUrl" :squad-palette="squadPalette" @select="selectSquad" />
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <button type="button" class="base-pin" :class="{ selected: selectedTarget?.type === 'base' }" :aria-label="tr('БАЗА')" @click.stop="selectBase"><strong>NL</strong></button>
-      <button v-for="cat in state.cats.filter(catIsAtBase)" :key="`map-cat-${cat.id}`" type="button" class="base-cat-marker" :class="{ selected: selectedCatIds.includes(cat.id), sleeping: cat.sleeping, injured: cat.injuredRemaining > 0 }" :style="baseCatStyle(cat)" :aria-label="tr(cat.name)" :title="baseCatTooltip(cat)" @click.stop="selectCat(cat, $event)"><svg viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg></button>
+      <div v-for="cat in state.cats.filter(catIsAtBase)" :key="`map-cat-${cat.id}`" class="base-cat-marker" :class="{ sleeping: cat.sleeping, injured: cat.injuredRemaining > 0 }" :style="baseCatStyle(cat)" :aria-label="tr(cat.name)" :title="baseCatTooltip(cat)"><svg viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg></div>
       <button v-if="state.storyIncident" type="button" class="story-pin" :class="{ dispatching: state.storyIncident.stage === 'dispatch' }" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }" :aria-label="tr('Дезертир ждёт решения')" @click.stop="dispatchStory"><span>!</span></button><div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span></div>
       <div v-if="state.storyObserver && state.storyObserver.status !== 'hidden' && state.storyObserver.status !== 'gone'" class="observer-pin" :class="state.storyObserver.status" :style="{ left: `${state.storyObserver.x}%`, top: `${state.storyObserver.y}%` }" :title="tr('story.observer.title')"><span>◉</span></div>
       <div v-if="state.storyAftermath?.status === 'completed'" class="aftermath-pin" :class="state.storyAftermath.kind" :style="{ left: `${state.storyAftermath.x}%`, top: `${state.storyAftermath.y}%` }" :title="tr(`story.aftermath.${state.storyAftermath.kind}.title`)"><span>◆</span></div>
       <button v-if="state.urgentOperation && !['pending', 'completed', 'failed'].includes(state.urgentOperation.status)" type="button" class="urgent-pin" :class="state.urgentOperation.status" :style="{ left: `${state.urgentOperation.x}%`, top: `${state.urgentOperation.y}%` }" :aria-label="tr('urgent.water_filters.title')" @click.stop="dispatchUrgent"><span>F</span></button>
       <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id, 'enhanced-alert': mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
       <button v-for="mission in state.missions.filter(isActiveAssignedMission)" :key="`assigned-${mission.id}`" type="button" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id, selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
-      <div v-if="selectedCount || selectedTarget || commandMessage" class="command-hint"><span>{{ tr(mergeSourceSquadId ? 'squad.merge.choose_target' : selectedCount ? 'dispatch.command.choose_target_count' : 'dispatch.command.choose_squad', { count: selectedCount }) }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
-      <div v-if="selectedSquadIds.length === 1" class="single-squad-actions"><button v-if="state.squads.find(squad => squad.id === selectedSquadIds[0])?.phase !== 'base' && (state.squads.find(squad => squad.id === selectedSquadIds[0])?.members.length ?? 0) > 1" type="button" @click.stop="openSplit(state.squads.find(squad => squad.id === selectedSquadIds[0])!)">{{ tr('squad.split.action') }}</button><button type="button" @click.stop="armMerge">{{ tr('squad.merge.action') }}</button></div>
+      <div v-if="selectedCount || selectedTarget || commandMessage" class="command-hint"><span>{{ tr(selectedCount ? 'dispatch.command.choose_target_count' : 'dispatch.command.choose_squad', { count: selectedCount }) }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
       <div v-if="selectionBox?.dragging" class="selection-box" :style="selectionBoxStyle()"></div>
-      <section v-if="splitSquadId" class="split-panel" @click.stop><header><b>{{ tr('squad.split.title') }}</b><button type="button" @click="splitSquadId = undefined">×</button></header><p>{{ tr('squad.split.description') }}</p><label v-for="memberId in state.squads.find(squad => squad.id === splitSquadId)?.members ?? []" :key="memberId"><input type="checkbox" :checked="splitMemberIds.includes(memberId)" @change="toggleSplitMember(memberId)">{{ tr(state.cats.find(cat => cat.id === memberId)?.name ?? memberId) }}</label><small v-if="getSplitSquadBlockReason(state, splitSquadId, splitMemberIds)">{{ tr(getSplitSquadBlockReason(state, splitSquadId, splitMemberIds)!) }}</small><button type="button" :disabled="Boolean(getSplitSquadBlockReason(state, splitSquadId, splitMemberIds))" @click="confirmSplit">{{ tr('squad.split.confirm') }}</button></section>
     </div>
     <MapSidePanel :state="state" :locale="locale" :selected-squad-ids="selectedSquadIds" :selected-cat-ids="selectedCatIds" :squad-is-available="squadIsAvailable" :squad-command-reason="squadCommandReason" :squad-energy="squadEnergy" :squad-label="squadLabel" @select="selectSquad" />
   </section>

@@ -1296,25 +1296,19 @@ test('a squad that has not arrived when equal peers finish gets no credit and le
   assert.equal(state.missions.some(candidate => candidate.id === mission.id), false)
 })
 
-test('a safe field split creates a normal manual squad at the same position', () => {
+test('field split is unavailable because squads are formed at base', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'rust', 'alpha')
   const source = state.squads[0]
   source.phase = 'field'
   source.routeFrom = { x: 42, y: 44 }
-  assert.equal(getSplitSquadBlockReason(state, source.id, ['pixel']), undefined)
-  assert.equal(splitSquad(state, source.id, ['pixel']), true)
-  const created = state.squads.at(-1)!
-  assert.deepEqual(source.members, ['rust'])
-  assert.deepEqual(created.members, ['pixel'])
-  assert.equal(created.phase, 'field')
-  assert.equal(created.autoDispatch, false)
-  assert.deepEqual(getSquadMapPosition(created), { x: 42, y: 44 })
-  assert.equal(state.cats.find(cat => cat.id === 'pixel')?.assignedTo, created.id)
+  assert.equal(splitSquad(state, source.id, ['pixel']), false)
+  assert.deepEqual(source.members, ['pixel', 'rust'])
+  assert.equal(state.squads.length, 2)
 })
 
-test('a field squad physically merges into the clicked target squad', () => {
+test('field squads never merge', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'marlowe', 'bravo')
@@ -1324,16 +1318,12 @@ test('a field squad physically merges into the clicked target squad', () => {
   target.phase = 'field'
   source.routeFrom = { x: 40, y: 40 }
   target.routeFrom = { x: 40, y: 40 }
-  assert.equal(mergeSquads(state, source.id, target.id), true)
-  assert.equal(source.phase, 'merging')
-  state.speed = 1
-  tick(state, 2)
-  assert.equal(state.squads.some(squad => squad.id === source.id), false)
-  assert.deepEqual(target.members.sort(), ['marlowe', 'pixel'])
-  assert.equal(state.cats.find(cat => cat.id === 'pixel')?.assignedTo, target.id)
+  assert.equal(mergeSquads(state, source.id, target.id), false)
+  assert.equal(source.phase, 'field')
+  assert.deepEqual(target.members, ['marlowe'])
 })
 
-test('a merge intercepts a moving target on its route', () => {
+test('a moving field squad cannot merge into another squad', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'marlowe', 'bravo')
@@ -1348,15 +1338,11 @@ test('a merge intercepts a moving target on its route', () => {
   target.travel = 0
   target.travelDuration = 5
 
-  assert.equal(mergeSquads(state, source.id, target.id), true)
-  state.speed = 1
-  for (let step = 0; step < 100 && state.squads.some(squad => squad.id === source.id); step++) tick(state, 0.25)
-
-  assert.equal(state.squads.some(squad => squad.id === source.id), false)
-  assert.deepEqual(target.members.sort(), ['marlowe', 'pixel'])
+  assert.equal(mergeSquads(state, source.id, target.id), false)
+  assert.equal(state.squads.length, 2)
 })
 
-test('a merge chain follows the final absorbing squad', () => {
+test('merge chains are unavailable', () => {
   const state = createState()
   assert.equal(createSquad(state), true)
   assignCat(state, 'pixel', 'alpha')
@@ -1372,15 +1358,9 @@ test('a merge chain follows the final absorbing squad', () => {
   }
   alpha.routeFrom = { x: 20, y: 20 }
 
-  assert.equal(mergeSquads(state, bravo.id, charlie.id), true)
-  assert.equal(mergeSquads(state, alpha.id, bravo.id), true)
-  state.speed = 1
-  tick(state, 0.25)
-  assert.equal(alpha.mergeTargetSquadId, charlie.id)
-  for (let step = 0; step < 100 && state.squads.length > 1; step++) tick(state, 0.25)
-
-  assert.deepEqual(state.squads.map(squad => squad.id), [charlie.id])
-  assert.deepEqual(charlie.members.sort(), ['marlowe', 'pixel', 'rust'])
+  assert.equal(mergeSquads(state, bravo.id, charlie.id), false)
+  assert.equal(mergeSquads(state, alpha.id, bravo.id), false)
+  assert.equal(state.squads.length, 3)
 })
 
 test('version eleven mission work migrates from the assigned squad', () => {
