@@ -4,8 +4,13 @@ import {
   GAME_RULES,
   RESEARCH_RULES,
   STORY_DECISION_BALANCE,
+  getNinthLifeVerificationOptions,
+  getNinthLifeIntervention,
+  getNinthLifeDecisionOptions,
   getRaidOptions,
   type NinthLifeDecision,
+  type NinthLifeFactId,
+  type NinthLifeVerification,
   type State,
 } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
@@ -18,6 +23,7 @@ const emit = defineEmits<{
   raidDecision: [action: 'escape' | 'attack' | 'support', supportSquadId?: string]
   raidFollowup: [action: 'retreat' | 'continue']
   storyDecision: [decision: NinthLifeDecision]
+  storyVerify: [verification: NinthLifeVerification]
   continueFinale: []
 }>()
 
@@ -46,6 +52,18 @@ const storyChoicePresentation: { id: NinthLifeDecision; title: string; tag: stri
   { id: 'exploit', title: 'Использовать данные сразу', tag: 'Инициатива', description: 'Не теряя времени, отправить разведку по координатам. Получим новую точку, но раскроем интерес к базе.', tone: 'action' },
 ]
 const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STORY_DECISION_BALANCE[choice.id] }))
+const storyInterventions = computed(() => Object.fromEntries(storyChoices.map(choice => [choice.id, getNinthLifeIntervention(props.state, choice.id)])))
+const verificationOptions = computed(() => getNinthLifeVerificationOptions(props.state))
+const decisionOptions = computed(() => getNinthLifeDecisionOptions(props.state))
+const factLabels: Record<NinthLifeFactId, string> = {
+  deserter_identity: 'story.fact.deserter_identity',
+  pursuit: 'story.fact.pursuit',
+  base_coordinates: 'story.fact.base_coordinates',
+  border_route: 'story.fact.border_route',
+}
+const finalParticipants = computed(() => props.state.storyResolution?.participantCatIds?.map(id => props.state.cats.find(cat => cat.id === id)).filter(Boolean).map(cat => tr(cat!.name)).join(', ') || tr('final.story.unknown_participants'))
+const finalConfirmedFacts = computed(() => props.state.storyResolution?.facts?.filter(fact => fact.quality === 'confirmed').length ?? 0)
+const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.filter(fact => ['confirmed', 'estimate'].includes(fact.quality)).length ?? 0)
 </script>
 
 <template>
@@ -83,11 +101,13 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
     </section>
   </div>
 
-  <div v-if="!newGameConfirmOpen && state.storyIncident && !state.incident" class="story-overlay">
+  <div v-if="!newGameConfirmOpen && state.storyIncident?.stage === 'contact' && !state.incident" class="story-overlay">
     <section class="story-card" role="dialog" aria-modal="true" aria-labelledby="story-title">
       <div class="case-number"><span>{{ tr('РАССЛЕДОВАНИЕ') }}</span><strong>09</strong></div>
       <div class="story-heading"><div class="story-kicker">{{ tr('ВХОДЯЩЕЕ ДЕЛО · ВРЕМЯ ОСТАНОВЛЕНО') }}</div><h1 id="story-title">{{ tr('Девятая жизнь') }}</h1><p>{{ tr('story.description', { squad: squadNames(storySquads) }) }}</p><div class="witness-line"><span>{{ tr('СВИДЕТЕЛЬ') }}</span><b>{{ tr('Позывной «Игла»') }}</b><i>{{ tr('показания не подтверждены') }}</i></div></div>
-      <div class="story-choices"><button v-for="(choice, index) in storyChoices" :key="choice.id" class="story-choice" :class="choice.tone" @click="emit('storyDecision', choice.id)"><span class="choice-index">0{{ index + 1 }}</span><span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(choice.description) }}</em></span><span class="choice-impact"><b>+{{ choice.fame }}</b><small>{{ tr('известность') }}</small><strong :class="{ quiet: !choice.threat }">{{ choice.threat ? `+${choice.threat}` : '±0' }}</strong><small>{{ tr('угроза') }}</small></span></button></div>
+      <div class="story-intel"><div v-for="fact in state.storyIncident.facts" :key="fact.id"><span>{{ tr(factLabels[fact.id]) }}</span><b>{{ tr(`intel.quality.${fact.quality}`) }}</b><small>{{ tr(`intel.source.${fact.source}`) }}</small></div></div>
+      <div class="story-verification"><button :disabled="!verificationOptions.interview.available" @click="emit('storyVerify', 'interview')"><b>{{ tr('story.verify.interview') }}</b><small>{{ tr(verificationOptions.interview.available ? 'story.verify.interview.description' : verificationOptions.interview.reason ?? '') }}</small></button><button :disabled="!verificationOptions.recon.available" @click="emit('storyVerify', 'recon')"><b>{{ tr('story.verify.recon') }}</b><small>{{ tr(verificationOptions.recon.available ? 'story.verify.recon.description' : verificationOptions.recon.reason ?? '') }}</small></button><button :disabled="!verificationOptions.deescalation.available" @click="emit('storyVerify', 'deescalation')"><b>{{ tr('story.verify.deescalation') }}</b><small>{{ tr(verificationOptions.deescalation.available ? 'story.verify.deescalation.description' : verificationOptions.deescalation.reason ?? '') }}</small></button></div>
+      <div class="story-choices"><button v-for="(choice, index) in storyChoices" :key="choice.id" class="story-choice" :class="[choice.tone, { intervention: storyInterventions[choice.id] }]" :disabled="!decisionOptions[choice.id].available" @click="emit('storyDecision', choice.id)"><span class="choice-index">0{{ index + 1 }}</span><span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(decisionOptions[choice.id].available ? choice.description : decisionOptions[choice.id].reason ?? choice.description) }}</em><mark v-if="storyInterventions[choice.id]">{{ tr(storyInterventions[choice.id]!.reason) }}</mark></span><span class="choice-impact"><b>+{{ choice.fame }}</b><small>{{ tr('известность') }}</small><strong :class="{ quiet: !(choice.threat + decisionOptions[choice.id].threatAdjustment + (storyInterventions[choice.id]?.threatDelta ?? 0)) }">{{ choice.threat + decisionOptions[choice.id].threatAdjustment + (storyInterventions[choice.id]?.threatDelta ?? 0) ? `+${choice.threat + decisionOptions[choice.id].threatAdjustment + (storyInterventions[choice.id]?.threatDelta ?? 0)}` : '±0' }}</strong><small>{{ tr('угроза') }}</small></span></button></div>
       <footer><span>{{ tr('Решение нельзя отменить') }}</span><span>{{ tr('Каждый вариант открывает отдельную будущую ветку') }}</span><button class="story-reset" @click="emit('newGame')">{{ tr('reset.open') }}</button></footer>
     </section>
   </div>
@@ -96,7 +116,14 @@ const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STOR
     <section class="final-card" role="dialog" aria-modal="true" aria-labelledby="final-title">
       <div class="final-stamp">{{ tr('ДЕЛО ЗАКРЫТО') }}</div><div class="final-kicker">NINE LIVES CORP · {{ tr('ОПЕРАТИВНАЯ СВОДКА 09') }}</div><h1 id="final-title">{{ tr('Девятая жизнь') }}</h1><p class="final-lead">{{ tr(state.storyResolution.outcome) }}</p>
       <div class="final-metrics"><div><small>{{ tr('ИЗВЕСТНОСТЬ') }}</small><b>{{ state.fame }}</b><span>{{ tr('final.goal_complete', { fame: GAME_RULES.fameGoal }) }}</span></div><div><small>{{ tr('ЛОКАЛЬНАЯ УГРОЗА') }}</small><b>{{ state.threat }}</b><span>{{ tr(state.threat >= GAME_RULES.severeThreat ? 'ВЫСОКАЯ' : state.threat >= GAME_RULES.elevatedThreat ? 'ПОВЫШЕННАЯ' : 'СТАБИЛЬНАЯ') }}</span></div><div><small>{{ tr('УСПЕШНЫЕ УБОРКИ') }}</small><b>{{ totalRuns }}</b><span>{{ tr('АВТОНОМНЫЙ ЦИКЛ РАБОТАЕТ') }}</span></div></div>
-      <div class="final-result"><span>{{ tr('ПРИНЯТОЕ РЕШЕНИЕ') }}</span><h2>{{ tr(state.storyResolution.title) }}</h2><p>{{ tr('Открыта будущая ветка:') }} <b>{{ tr(state.storyResolution.branch) }}</b></p><div><i>{{ tr('fame.delta', { fame: state.storyResolution.fameDelta }) }}</i><i :class="{ calm: !state.storyResolution.threatDelta }">{{ tr(state.storyResolution.threatDelta ? 'threat.delta' : 'угроза без изменений', { threat: state.storyResolution.threatDelta }) }}</i></div></div>
+      <div class="final-timeline">
+        <article><span>01</span><small>{{ tr('final.story.contact') }}</small><h2>{{ finalParticipants }}</h2><p>{{ tr(state.storyResolution.inaction ? `final.story.inaction.${state.storyResolution.inaction}` : 'final.story.arrived_in_time') }}</p></article>
+        <article><span>02</span><small>{{ tr('final.story.intel') }}</small><h2>{{ tr('final.story.intel_result', { confirmed: finalConfirmedFacts, verified: finalVerifiedFacts }) }}</h2><p>{{ tr(state.storyResolution.deescalated ? 'final.story.deescalated' : 'final.story.not_deescalated') }}</p></article>
+        <article><span>03</span><small>{{ tr('final.story.behavior') }}</small><h2>{{ tr(state.storyResolution.intervention ? `story.intervention.${state.storyResolution.intervention}.result` : 'final.story.no_intervention') }}</h2></article>
+        <article class="decision"><span>04</span><small>{{ tr('ПРИНЯТОЕ РЕШЕНИЕ') }}</small><h2>{{ tr(state.storyResolution.title) }}</h2><p>{{ tr('Открыта будущая ветка:') }} <b>{{ tr(state.storyResolution.branch) }}</b></p><div><i>{{ tr('fame.delta', { fame: state.storyResolution.fameDelta }) }}</i><i :class="{ calm: !state.storyResolution.threatDelta }">{{ tr(state.storyResolution.threatDelta ? 'threat.delta' : 'угроза без изменений', { threat: state.storyResolution.threatDelta }) }}</i></div></article>
+        <article><span>05</span><small>{{ tr('final.story.aftermath') }}</small><h2>{{ tr(`story.aftermath.${state.storyAftermath?.kind}.title`) }}</h2><p>{{ tr(`final.story.aftermath.${state.storyAftermath?.kind}`) }}</p></article>
+        <article><span>06</span><small>{{ tr('final.story.south_junction') }}</small><h2>{{ tr(`final.story.urgent_status.${state.urgentOperation?.status}`) }}</h2><p>{{ tr(state.urgentOperation?.status === 'completed' ? state.urgentOperation.fullReward ? 'final.story.urgent.full' : 'final.story.urgent.partial' : 'final.story.urgent.failed') }}</p></article>
+      </div>
       <button class="continue-button" @click="emit('continueFinale')">{{ tr('Продолжить в песочнице') }} <span>→</span></button>
     </section>
   </div>

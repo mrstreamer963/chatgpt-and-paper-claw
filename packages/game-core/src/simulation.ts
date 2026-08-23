@@ -44,7 +44,7 @@ export type Mission = {
 }
 export type MapPoint = { x: number; y: number }
 export type DeployOrder = { type: 'mission'; missionId: string } | { type: 'move'; x: number; y: number }
-export type Phase = 'base' | 'field' | 'moving' | 'outbound' | 'cleanup' | 'incident' | 'support' | 'returning' | 'merging'
+export type Phase = 'base' | 'field' | 'moving' | 'outbound' | 'cleanup' | 'incident' | 'support' | 'returning' | 'merging' | 'urgent'
 export type Squad = {
   id: string
   name: string
@@ -80,11 +80,30 @@ export type RaidIncident = {
   participantSquadIds: string[]
 }
 export type NinthLifeDecision = 'shelter' | 'interrogate' | 'escort' | 'exploit'
+export type NinthLifeStage = 'signal' | 'dispatch' | 'contact' | 'verification' | 'intervention'
+export type NinthLifeInaction = 'self_evacuating' | 'pursued'
+export type NinthLifeFactId = 'deserter_identity' | 'pursuit' | 'base_coordinates' | 'border_route'
+export type IntelQuality = 'confirmed' | 'estimate' | 'reported' | 'stale' | 'lost_contact'
+export type IntelSource = 'needle' | 'dispatch' | 'marlowe' | 'shorokh' | 'field_scan'
+export type NinthLifeVerification = 'interview' | 'recon' | 'deescalation'
+export type NinthLifeIntervention = 'myata_retreat' | 'bastion_intercept' | 'shorokh_false_alarm'
+export type NinthLifeInterventionPreview = { kind: NinthLifeIntervention; catId: 'myata' | 'bastion' | 'shorokh'; reason: string; threatDelta: number; delay: number }
+export type StoryFact = { id: NinthLifeFactId; quality: IntelQuality; source: IntelSource }
 export type StoryIncident = {
   kind: 'ninth_life'
+  stage: NinthLifeStage
   participantSquadIds: string[]
   x: number
   y: number
+  stageStartedAt: number
+  deadline?: number
+  dispatchedSquadId?: string
+  inaction?: NinthLifeInaction
+  facts: StoryFact[]
+  verification?: NinthLifeVerification
+  pendingDecision?: NinthLifeDecision
+  intervention?: NinthLifeIntervention
+  deescalated?: boolean
 }
 export type StoryResolution = {
   decision: NinthLifeDecision
@@ -94,6 +113,39 @@ export type StoryResolution = {
   branch: string
   outcome: string
   unlockedLocation: boolean
+  intervention?: NinthLifeIntervention
+  participantCatIds?: string[]
+  facts?: StoryFact[]
+  deescalated?: boolean
+  inaction?: NinthLifeInaction
+}
+export type StoryObserver = {
+  status: 'hidden' | 'revealed' | 'tracking' | 'gone'
+  x: number; y: number; fromX: number; fromY: number; targetX: number; targetY: number
+  movementStartedAt: number; movementEndsAt: number
+}
+export type StoryAftermathKind = 'base_marked' | 'safe_route' | 'intercepted_transmission' | 'false_entrance'
+export type StoryAftermath = { kind: StoryAftermathKind; status: 'pending' | 'completed'; dueAt: number; x: number; y: number }
+export type UrgentOperationStatus = 'pending' | 'available' | 'dispatch' | 'active' | 'completed' | 'failed'
+export type UrgentOperation = {
+  kind: 'water_filters'
+  status: UrgentOperationStatus
+  x: number
+  y: number
+  availableAt: number
+  deadline: number
+  dispatchedSquadId?: string
+  workRemaining?: number
+  fullReward?: boolean
+}
+
+function initialNinthLifeFacts(): StoryFact[] {
+  return [
+    { id: 'deserter_identity', quality: 'reported', source: 'needle' },
+    { id: 'pursuit', quality: 'estimate', source: 'dispatch' },
+    { id: 'base_coordinates', quality: 'reported', source: 'needle' },
+    { id: 'border_route', quality: 'stale', source: 'dispatch' },
+  ]
 }
 export type LogEntry = { time: number; key: string; params?: Record<string, string | number> }
 export type GameEvent =
@@ -108,6 +160,11 @@ export type GameEvent =
   | { type: 'research_completed'; researchId: ResearchId }
   | { type: 'achievement_unlocked'; achievementId: AchievementId }
   | { type: 'story_started'; story: 'ninth_life'; squadIds: string[] }
+  | { type: 'story_dispatched'; story: 'ninth_life'; squadId: string; seconds: number }
+  | { type: 'story_stage_changed'; story: 'ninth_life'; stage: NinthLifeStage; reason: 'arrival' | 'deadline' }
+  | { type: 'urgent_operation_started'; operation: 'water_filters'; deadline: number }
+  | { type: 'urgent_operation_dispatched'; operation: 'water_filters'; squadId: string }
+  | { type: 'urgent_operation_resolved'; operation: 'water_filters'; outcome: 'completed' | 'failed' }
   | { type: 'story_resolved'; story: 'ninth_life'; decision: NinthLifeDecision }
   | { type: 'final_summary_available' }
   | { type: 'squad_split'; squadId: string; newSquadId: string; memberIds: string[] }
@@ -120,6 +177,7 @@ export type State = {
   threat: number
   speed: Speed
   time: number
+  simulationRemainder: number
   cats: Cat[]
   squads: Squad[]
   squadSerial: number
@@ -133,6 +191,9 @@ export type State = {
   storyTriggered: boolean
   storyIncident?: StoryIncident
   storyResolution?: StoryResolution
+  storyObserver?: StoryObserver
+  storyAftermath?: StoryAftermath
+  urgentOperation?: UrgentOperation
   finalSummaryVisible: boolean
   finalSummarySeen: boolean
   inventory: Record<ItemId, number>
@@ -170,8 +231,9 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 13
+export const SAVE_VERSION = 22
 export const GAME_VERSION = '0.1.0'
+export const SIMULATION_STEP_SECONDS = 0.25
 export type SaveErrorKey =
   | 'save.error.invalid_json'
   | 'save.error.unknown_format'
@@ -268,6 +330,7 @@ export function createState(): State {
     threat: CONFIG.initial.threat,
     speed: 0,
     time: 0,
+    simulationRemainder: 0,
     cats: CONFIG.cats.map(cat => ({ ...cat, sleeping: false, injuredRemaining: 0, equipment: emptyEquipment(), pendingEquipment: {} })),
     squadSerial: 0,
     disbandedSquadCleanups: 0,
@@ -376,7 +439,7 @@ function isValidSquad(value: unknown) {
   if (value.customName !== undefined && (typeof value.customName !== 'string' || value.customName.length < 1 || value.customName.length > 32)) return false
   if (!Array.isArray(value.members) || !value.members.every(member => typeof member === 'string')) return false
   if (!['careful', 'balanced', 'risky'].includes(value.style as string)
-    || !['base', 'field', 'moving', 'outbound', 'cleanup', 'incident', 'support', 'returning', 'merging'].includes(value.phase as string)) return false
+    || !['base', 'field', 'moving', 'outbound', 'cleanup', 'incident', 'support', 'returning', 'merging', 'urgent'].includes(value.phase as string)) return false
   if (typeof value.autoDispatch !== 'boolean') return false
   if (!isValidMapPoint(value.routeFrom) || typeof value.restAfterReturn !== 'boolean') return false
   if (![value.travel, value.travelDuration, value.completed].every(isFiniteNumber)) return false
@@ -412,14 +475,54 @@ function isValidIncident(value: unknown) {
 
 function isValidStoryIncident(value: unknown) {
   return isRecord(value) && value.kind === 'ninth_life'
+    && ['signal', 'dispatch', 'contact', 'verification', 'intervention'].includes(value.stage as string)
     && Array.isArray(value.participantSquadIds) && value.participantSquadIds.every(id => typeof id === 'string')
     && isFiniteNumber(value.x) && isFiniteNumber(value.y)
+    && isFiniteNumber(value.stageStartedAt)
+    && (value.deadline === undefined || isFiniteNumber(value.deadline))
+    && (value.dispatchedSquadId === undefined || typeof value.dispatchedSquadId === 'string')
+    && (value.inaction === undefined || ['self_evacuating', 'pursued'].includes(value.inaction as string))
+    && Array.isArray(value.facts) && value.facts.every(fact => isRecord(fact)
+      && ['deserter_identity', 'pursuit', 'base_coordinates', 'border_route'].includes(fact.id as string)
+      && ['confirmed', 'estimate', 'reported', 'stale', 'lost_contact'].includes(fact.quality as string)
+      && ['needle', 'dispatch', 'marlowe', 'shorokh', 'field_scan'].includes(fact.source as string))
+    && (value.verification === undefined || ['interview', 'recon', 'deescalation'].includes(value.verification as string))
+    && (value.pendingDecision === undefined || ['shelter', 'interrogate', 'escort', 'exploit'].includes(value.pendingDecision as string))
+    && (value.intervention === undefined || ['myata_retreat', 'bastion_intercept', 'shorokh_false_alarm'].includes(value.intervention as string))
+    && (value.deescalated === undefined || typeof value.deescalated === 'boolean')
 }
 
 function isValidStoryResolution(value: unknown) {
   return isRecord(value) && ['shelter', 'interrogate', 'escort', 'exploit'].includes(value.decision as string)
     && typeof value.title === 'string' && isFiniteNumber(value.fameDelta) && isFiniteNumber(value.threatDelta)
     && typeof value.branch === 'string' && typeof value.outcome === 'string' && typeof value.unlockedLocation === 'boolean'
+    && (value.intervention === undefined || ['myata_retreat', 'bastion_intercept', 'shorokh_false_alarm'].includes(value.intervention as string))
+    && (value.participantCatIds === undefined || (Array.isArray(value.participantCatIds) && value.participantCatIds.every(id => typeof id === 'string')))
+    && (value.facts === undefined || (Array.isArray(value.facts) && value.facts.every(fact => isRecord(fact)
+      && ['deserter_identity', 'pursuit', 'base_coordinates', 'border_route'].includes(fact.id as string)
+      && ['confirmed', 'estimate', 'reported', 'stale', 'lost_contact'].includes(fact.quality as string)
+      && ['needle', 'dispatch', 'marlowe', 'shorokh', 'field_scan'].includes(fact.source as string))))
+    && (value.deescalated === undefined || typeof value.deescalated === 'boolean')
+    && (value.inaction === undefined || ['self_evacuating', 'pursued'].includes(value.inaction as string))
+}
+
+function isValidStoryObserver(value: unknown) {
+  return isRecord(value) && ['hidden', 'revealed', 'tracking', 'gone'].includes(value.status as string)
+    && [value.x, value.y, value.fromX, value.fromY, value.targetX, value.targetY, value.movementStartedAt, value.movementEndsAt].every(isFiniteNumber)
+}
+
+function isValidStoryAftermath(value: unknown) {
+  return isRecord(value) && ['base_marked', 'safe_route', 'intercepted_transmission', 'false_entrance'].includes(value.kind as string)
+    && ['pending', 'completed'].includes(value.status as string) && [value.dueAt, value.x, value.y].every(isFiniteNumber)
+}
+
+function isValidUrgentOperation(value: unknown) {
+  return isRecord(value) && value.kind === 'water_filters'
+    && ['pending', 'available', 'dispatch', 'active', 'completed', 'failed'].includes(value.status as string)
+    && [value.x, value.y, value.availableAt, value.deadline].every(isFiniteNumber)
+    && (value.dispatchedSquadId === undefined || typeof value.dispatchedSquadId === 'string')
+    && (value.workRemaining === undefined || isFiniteNumber(value.workRemaining))
+    && (value.fullReward === undefined || typeof value.fullReward === 'boolean')
 }
 
 function isValidLogEntry(value: unknown) {
@@ -541,6 +644,7 @@ function migrateLegacyState(value: unknown, removeLegacyEmptySquads = false) {
   const migrated = replaceLegacyText(value)
   if (!isRecord(migrated)) return undefined
   delete migrated.activeView
+  if (!isFiniteNumber(migrated.simulationRemainder)) migrated.simulationRemainder = 0
   if (Array.isArray(migrated.cats)) {
     for (const cat of migrated.cats) {
       if (isRecord(cat) && !isRecord(cat.pendingEquipment)) cat.pendingEquipment = {}
@@ -623,6 +727,18 @@ function migrateLegacyState(value: unknown, removeLegacyEmptySquads = false) {
       ? migrated.storyIncident.participantSquadIds
       : typeof migrated.storyIncident.foundBySquadId === 'string' ? [migrated.storyIncident.foundBySquadId] : []
     delete migrated.storyIncident.foundBySquadId
+    if (!['signal', 'dispatch', 'contact', 'verification', 'intervention'].includes(String(migrated.storyIncident.stage))) {
+      migrated.storyIncident.stage = 'contact'
+    }
+    if (!isFiniteNumber(migrated.storyIncident.stageStartedAt)) {
+      migrated.storyIncident.stageStartedAt = isFiniteNumber(migrated.time) ? migrated.time : 0
+    }
+    if (!Array.isArray(migrated.storyIncident.facts)) migrated.storyIncident.facts = initialNinthLifeFacts()
+    if (migrated.storyIncident.stage === 'verification'
+      && !['interview', 'recon', 'deescalation'].includes(String(migrated.storyIncident.verification))) {
+      migrated.storyIncident.stage = 'contact'
+      delete migrated.storyIncident.deadline
+    }
   }
   if (removeLegacyEmptySquads && Array.isArray(migrated.squads)) {
     const emptySquads = migrated.squads
@@ -658,6 +774,8 @@ function isValidState(value: unknown): value is State {
   if (!isRecord(value)) return false
   if (![0, 1, 5, 10].includes(value.speed as number)) return false
   if (![value.fame, value.scrap, value.threat, value.time, value.squadSerial, value.disbandedSquadCleanups, value.completedMissionCount, value.missionSerial, value.rngSeed].every(isFiniteNumber)) return false
+  if (!isFiniteNumber(value.simulationRemainder)
+    || value.simulationRemainder < 0 || value.simulationRemainder >= SIMULATION_STEP_SECONDS) return false
   if (![value.raidTriggered, value.storyTriggered, value.finalSummaryVisible, value.finalSummarySeen].every(flag => typeof flag === 'boolean')) return false
   if (!Array.isArray(value.cats) || !value.cats.every(isValidCat)) return false
   if (!Array.isArray(value.squads) || !value.squads.every(isValidSquad)) return false
@@ -682,6 +800,9 @@ function isValidState(value: unknown): value is State {
   if (squads.some(squad => squad.mergeTargetSquadId && !squadIds.has(squad.mergeTargetSquadId))) return false
   if (value.incident && isValidIncident(value.incident)
     && (value.incident as RaidIncident).participantSquadIds.some(id => !squadIds.has(id))) return false
+  if (value.urgentOperation && isValidUrgentOperation(value.urgentOperation)
+    && (value.urgentOperation as UrgentOperation).dispatchedSquadId
+    && !squadIds.has((value.urgentOperation as UrgentOperation).dispatchedSquadId!)) return false
   if (!isRecord(value.inventory)) return false
   const inventory = value.inventory
   if (!ITEM_DEFINITIONS.every(item => isFiniteNumber(inventory[item.id]))) return false
@@ -703,6 +824,9 @@ function isValidState(value: unknown): value is State {
   if (value.incident !== undefined && !isValidIncident(value.incident)) return false
   if (value.storyIncident !== undefined && !isValidStoryIncident(value.storyIncident)) return false
   if (value.storyResolution !== undefined && !isValidStoryResolution(value.storyResolution)) return false
+  if (value.storyObserver !== undefined && !isValidStoryObserver(value.storyObserver)) return false
+  if (value.storyAftermath !== undefined && !isValidStoryAftermath(value.storyAftermath)) return false
+  if (value.urgentOperation !== undefined && !isValidUrgentOperation(value.urgentOperation)) return false
   return true
 }
 
@@ -713,6 +837,8 @@ export function serializeState(state: State, pretty = true) {
   state.squadSerial ??= Math.max(2, state.squads.length)
   state.disbandedSquadCleanups ??= 0
   state.completedMissionCount ??= state.disbandedSquadCleanups + state.squads.reduce((total, squad) => total + squad.completed, 0)
+  state.simulationRemainder ??= 0
+  if (state.storyIncident) state.storyIncident.facts ??= initialNinthLifeFacts()
   state.missions.forEach(mission => {
     const legacyMission = mission as Mission & { squadId?: string }
     mission.progress ??= 0
@@ -741,7 +867,7 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
@@ -778,7 +904,7 @@ export function deserializeCurrentSave(payload: string): State {
       version: String(isRecord(envelope) ? envelope.gameVersion ?? envelope.version : 'unknown'),
     })
   }
-  if (![10, 11, 12, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   return deserializeState(payload)
@@ -810,7 +936,7 @@ function wakeCat(state: State, cat: Cat) {
 
 export function canReceiveWorkOrder(cat: Cat) {
   return cat.sleeping
-    ? cat.energy >= CONFIG.sleep.wakeForOrderEnergy
+    ? cat.energy + 1e-9 >= CONFIG.sleep.wakeForOrderEnergy
     : cat.energy > CONFIG.sleep.sleepAtEnergy
 }
 
@@ -1088,7 +1214,9 @@ export function getDisbandSquadBlockReason(state: State, squadId: string) {
     || state.missions.some(mission => mission.squadIds.includes(squadId))) return 'squad.manage.reason.away'
   if (state.cats.some(cat => cat.pendingAssignment === squadId)) return 'squad.manage.reason.pending'
   if (state.incident?.supportSquadId === squadId || state.incident?.participantSquadIds.includes(squadId)
-    || state.storyIncident?.participantSquadIds.includes(squadId)) return 'squad.manage.reason.incident'
+    || state.storyIncident?.participantSquadIds.includes(squadId)
+    || state.storyIncident?.dispatchedSquadId === squadId
+    || state.urgentOperation?.dispatchedSquadId === squadId) return 'squad.manage.reason.incident'
   return undefined
 }
 
@@ -1639,7 +1767,9 @@ function continueAfterSharedMission(state: State, squad: Squad) {
 }
 
 function maybeShowFinalSummary(state: State) {
-  if (!state.storyResolution || state.fame < CONFIG.goal.fame || state.finalSummarySeen || state.finalSummaryVisible) return
+  const urgentSettled = !state.urgentOperation || ['completed', 'failed'].includes(state.urgentOperation.status)
+  if (!state.storyResolution || state.storyAftermath?.status !== 'completed' || !urgentSettled
+    || state.fame < CONFIG.goal.fame || state.finalSummarySeen || state.finalSummaryVisible) return
   state.speed = 0
   state.finalSummaryVisible = true
   note(state, 'log.goal_reached')
@@ -1649,12 +1779,16 @@ function maybeShowFinalSummary(state: State) {
 function startNinthLife(state: State, mission: Mission, participants: Squad[]) {
   if (state.storyTriggered || successfulCleanups(state) < CONFIG.story.successfulCleanupsBeforeTrigger) return
   state.storyTriggered = true
-  state.speed = 0
+  if (state.speed > 1) state.speed = 1
   state.storyIncident = {
     kind: 'ninth_life',
-    participantSquadIds: participants.map(squad => squad.id),
+    stage: 'signal',
+    participantSquadIds: [],
     x: mission.x,
     y: mission.y,
+    stageStartedAt: state.time,
+    deadline: state.time + CONFIG.story.signalDeadline,
+    facts: initialNinthLifeFacts(),
   }
   note(state, 'log.story_found', { squad: participants.map(squad => getSquadDisplayName(squad)).join(', ') })
   emitEvent(state, { type: 'story_started', story: 'ninth_life', squadIds: participants.map(squad => squad.id) })
@@ -1692,28 +1826,398 @@ const STORY_OUTCOMES: Record<NinthLifeDecision, Omit<StoryResolution, 'decision'
   },
 }
 
+export function getNinthLifeDispatchBlockReason(state: State, squadId: string) {
+  const story = state.storyIncident
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!story || story.stage !== 'signal') return 'story.dispatch.reason.unavailable'
+  if (!squad || !squad.members.length) return 'story.dispatch.reason.empty'
+  if (squad.members.some(id => {
+    const cat = state.cats.find(candidate => candidate.id === id)
+    return !cat || cat.injuredRemaining > 0 || !canReceiveWorkOrder(cat)
+  })) return 'story.dispatch.reason.unready'
+  if (['incident', 'support', 'merging', 'returning'].includes(squad.phase)) return 'story.dispatch.reason.away'
+  return undefined
+}
+
+export function dispatchNinthLife(state: State, squadId: string) {
+  if (getNinthLifeDispatchBlockReason(state, squadId)) return false
+  const story = state.storyIncident!
+  const squad = state.squads.find(candidate => candidate.id === squadId)!
+  const origin = getSquadMapPosition(squad)
+  releaseSquadFromMission(state, squad)
+  squad.routeFrom = origin
+  squad.phase = 'moving'
+  squad.travel = 0
+  squad.travelDuration = travelTimeBetween(origin, story)
+  squad.destination = { x: story.x, y: story.y }
+  delete squad.mergeTargetSquadId
+  delete squad.mergePoint
+  delete squad.missionArrivalTime
+  story.stage = 'dispatch'
+  story.stageStartedAt = state.time
+  story.deadline = state.time + CONFIG.story.arrivalDeadline
+  story.dispatchedSquadId = squad.id
+  story.participantSquadIds = []
+  note(state, 'log.story_dispatched', { squad: squad.name, seconds: Math.ceil(squad.travelDuration) })
+  emitEvent(state, { type: 'story_dispatched', story: 'ninth_life', squadId: squad.id, seconds: squad.travelDuration })
+  return true
+}
+
+function ninthLifeParticipantCats(state: State) {
+  const participantIds = new Set(state.storyIncident?.participantSquadIds ?? [])
+  return state.squads
+    .filter(squad => participantIds.has(squad.id))
+    .flatMap(squad => membersOf(state, squad))
+}
+
+export function getNinthLifeVerificationOptions(state: State) {
+  const story = state.storyIncident
+  const members = ninthLifeParticipantCats(state)
+  const atContact = story?.stage === 'contact'
+  const hasMarlowe = members.some(cat => cat.id === 'marlowe')
+  const hasShorokh = members.some(cat => cat.id === 'shorokh')
+  const hasScanner = members.some(cat => hasEquipped(cat, 'scanner'))
+  const interviewDone = story?.facts.some(fact => fact.id === 'deserter_identity' && fact.source === 'marlowe') ?? false
+  const reconDone = story?.facts.some(fact => fact.id === 'border_route' && ['shorokh', 'field_scan'].includes(fact.source)) ?? false
+  return {
+    interview: {
+      available: Boolean(atContact && hasMarlowe && !interviewDone),
+      reason: interviewDone ? 'story.verify.reason.complete' : hasMarlowe ? undefined : 'story.verify.reason.marlowe',
+    },
+    recon: {
+      available: Boolean(atContact && (hasShorokh || hasScanner) && !reconDone),
+      reason: reconDone ? 'story.verify.reason.complete' : hasShorokh || hasScanner ? undefined : 'story.verify.reason.recon',
+    },
+    deescalation: {
+      available: Boolean(atContact && hasMarlowe && !story?.deescalated),
+      reason: story?.deescalated ? 'story.verify.reason.deescalated' : hasMarlowe ? undefined : 'story.verify.reason.marlowe',
+    },
+  }
+}
+
+export function verifyNinthLife(state: State, verification: NinthLifeVerification) {
+  const story = state.storyIncident
+  if (!story || !getNinthLifeVerificationOptions(state)[verification].available) return false
+  story.stage = 'verification'
+  story.stageStartedAt = state.time
+  story.deadline = state.time + (verification === 'deescalation' ? CONFIG.story.deescalationDuration : CONFIG.story.verificationDuration)
+  story.verification = verification
+  state.speed = 1
+  note(state, verification === 'interview' ? 'log.story_verification_interview'
+    : verification === 'recon' ? 'log.story_verification_recon' : 'log.story_deescalation')
+  emitEvent(state, { type: 'story_stage_changed', story: 'ninth_life', stage: 'verification', reason: 'arrival' })
+  return true
+}
+
+function setNinthLifeFact(story: StoryIncident, id: NinthLifeFactId, quality: IntelQuality, source: IntelSource) {
+  const fact = story.facts.find(candidate => candidate.id === id)
+  if (fact) Object.assign(fact, { quality, source })
+  else story.facts.push({ id, quality, source })
+}
+
+function completeNinthLifeVerification(state: State, story: StoryIncident) {
+  if (story.verification === 'interview') {
+    setNinthLifeFact(story, 'deserter_identity', 'confirmed', 'marlowe')
+    setNinthLifeFact(story, 'base_coordinates', 'estimate', 'marlowe')
+  } else if (story.verification === 'recon') {
+    const source: IntelSource = ninthLifeParticipantCats(state).some(cat => cat.id === 'shorokh') ? 'shorokh' : 'field_scan'
+    setNinthLifeFact(story, 'pursuit', 'confirmed', source)
+    setNinthLifeFact(story, 'base_coordinates', 'stale', source)
+    setNinthLifeFact(story, 'border_route', 'confirmed', source)
+    if (state.storyObserver) state.storyObserver.status = 'revealed'
+  } else {
+    story.deescalated = true
+  }
+  const verification = story.verification
+  story.stage = 'contact'
+  story.stageStartedAt = state.time
+  delete story.deadline
+  delete story.verification
+  state.speed = 0
+  note(state, verification === 'interview' ? 'log.story_verification_interview_done'
+    : verification === 'recon' ? 'log.story_verification_recon_done' : 'log.story_deescalation_done')
+  emitEvent(state, { type: 'story_stage_changed', story: 'ninth_life', stage: 'contact', reason: 'deadline' })
+}
+
+function reachNinthLifeContact(state: State, squad?: Squad, reason: 'arrival' | 'deadline' = 'arrival') {
+  const story = state.storyIncident
+  if (!story || story.stage === 'contact') return
+  story.stage = 'contact'
+  story.stageStartedAt = state.time
+  delete story.deadline
+  if (squad && !story.participantSquadIds.includes(squad.id)) story.participantSquadIds.push(squad.id)
+  if (!state.storyObserver) {
+    const pursuitConfirmed = story.inaction === 'pursued' || story.facts.some(fact => fact.id === 'pursuit' && fact.quality === 'confirmed')
+    const x = Math.min(94, story.x + CONFIG.story.observerOffset.x)
+    const y = Math.max(6, story.y + CONFIG.story.observerOffset.y)
+    state.storyObserver = { status: pursuitConfirmed ? 'revealed' : 'hidden', x, y, fromX: x, fromY: y, targetX: story.x, targetY: story.y, movementStartedAt: state.time, movementEndsAt: state.time }
+  }
+  if (!state.urgentOperation) {
+    const rules = CONFIG.urgentOperations.waterFilters
+    state.urgentOperation = {
+      kind: 'water_filters',
+      status: 'pending',
+      x: rules.x,
+      y: rules.y,
+      availableAt: state.time + rules.appearanceDelay,
+      deadline: state.time + rules.appearanceDelay + rules.assignmentDeadline,
+    }
+  }
+  state.speed = 0
+  note(state, squad ? 'log.story_contact' : 'log.story_pursued', squad ? { squad: squad.name } : undefined)
+  emitEvent(state, { type: 'story_stage_changed', story: 'ninth_life', stage: 'contact', reason })
+}
+
+function updateNinthLife(state: State) {
+  const story = state.storyIncident
+  if (!story?.deadline || state.time + 1e-9 < story.deadline) return
+  if (story.stage === 'verification') {
+    completeNinthLifeVerification(state, story)
+    return
+  }
+  if (story.stage === 'intervention' && story.pendingDecision) {
+    const decision = story.pendingDecision
+    const intervention = story.intervention
+    story.stage = 'contact'
+    delete story.deadline
+    delete story.pendingDecision
+    delete story.intervention
+    finishNinthLifeResolution(state, decision, intervention)
+    return
+  }
+  if (story.stage === 'signal') {
+    story.stage = 'dispatch'
+    story.stageStartedAt = state.time
+    story.deadline = state.time + CONFIG.story.arrivalDeadline
+    story.inaction = 'self_evacuating'
+    state.threat = Math.min(CONFIG.limits.threat, state.threat + CONFIG.story.unansweredThreat)
+    note(state, 'log.story_unanswered', { threat: CONFIG.story.unansweredThreat })
+    emitEvent(state, { type: 'story_stage_changed', story: 'ninth_life', stage: 'dispatch', reason: 'deadline' })
+    return
+  }
+  if (story.stage === 'dispatch') {
+    story.inaction = 'pursued'
+    state.threat = Math.min(CONFIG.limits.threat, state.threat + CONFIG.story.pursuedThreat)
+    reachNinthLifeContact(state, undefined, 'deadline')
+  }
+}
+
+export function getWaterFiltersDispatchBlockReason(state: State, squadId: string) {
+  const operation = state.urgentOperation
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!operation || operation.status !== 'available') return 'urgent.water_filters.reason.unavailable'
+  if (!squad || !squad.members.length) return 'urgent.water_filters.reason.empty'
+  if (squad.members.some(id => {
+    const cat = state.cats.find(candidate => candidate.id === id)
+    return !cat || cat.injuredRemaining > 0 || !canReceiveWorkOrder(cat)
+  })) return 'urgent.water_filters.reason.unready'
+  if (['incident', 'support', 'merging', 'returning', 'urgent'].includes(squad.phase)) return 'urgent.water_filters.reason.away'
+  return undefined
+}
+
+export function dispatchWaterFilters(state: State, squadId: string) {
+  if (getWaterFiltersDispatchBlockReason(state, squadId)) return false
+  const operation = state.urgentOperation!
+  const squad = state.squads.find(candidate => candidate.id === squadId)!
+  const origin = getSquadMapPosition(squad)
+  const members = membersOf(state, squad)
+  const hasSpecialist = members.some(cat => ['pixel', 'rust'].includes(cat.id))
+  const hasToolkit = members.some(cat => hasEquipped(cat, 'toolkit'))
+  releaseSquadFromMission(state, squad)
+  squad.routeFrom = origin
+  squad.phase = 'moving'
+  squad.travel = 0
+  squad.travelDuration = travelTimeBetween(origin, operation)
+  squad.destination = { x: operation.x, y: operation.y }
+  delete squad.mergeTargetSquadId
+  delete squad.mergePoint
+  delete squad.missionArrivalTime
+  operation.status = 'dispatch'
+  operation.dispatchedSquadId = squad.id
+  operation.fullReward = hasSpecialist && hasToolkit
+  note(state, 'log.water_filters_dispatched', { squad: squad.name, seconds: Math.ceil(squad.travelDuration) })
+  emitEvent(state, { type: 'urgent_operation_dispatched', operation: 'water_filters', squadId: squad.id })
+  return true
+}
+
+function startWaterFiltersWork(state: State, squad: Squad) {
+  const operation = state.urgentOperation
+  if (!operation || operation.status !== 'dispatch' || operation.dispatchedSquadId !== squad.id) return false
+  const rules = CONFIG.urgentOperations.waterFilters
+  operation.status = 'active'
+  operation.workRemaining = operation.fullReward ? rules.specialistWorkDuration : rules.standardWorkDuration
+  squad.phase = 'urgent'
+  note(state, 'log.water_filters_arrived', { squad: squad.name, seconds: operation.workRemaining })
+  return true
+}
+
+function completeWaterFilters(state: State, squad: Squad) {
+  const operation = state.urgentOperation
+  if (!operation || operation.status !== 'active') return
+  const rules = CONFIG.urgentOperations.waterFilters
+  const fame = operation.fullReward ? rules.fullRewardFame : rules.partialRewardFame
+  const scrap = operation.fullReward ? rules.fullRewardScrap : rules.partialRewardScrap
+  state.fame = Math.min(CONFIG.limits.fame, state.fame + fame)
+  state.scrap += scrap
+  operation.status = 'completed'
+  operation.workRemaining = 0
+  squad.phase = 'field'
+  squad.routeFrom = { x: operation.x, y: operation.y }
+  note(state, operation.fullReward ? 'log.water_filters_completed_full' : 'log.water_filters_completed_partial', { squad: squad.name, fame, scrap })
+  emitEvent(state, { type: 'urgent_operation_resolved', operation: 'water_filters', outcome: 'completed' })
+  maybeShowFinalSummary(state)
+}
+
+function updateUrgentOperation(state: State) {
+  const operation = state.urgentOperation
+  if (!operation) return
+  if (operation.status === 'pending' && state.time + 1e-9 >= operation.availableAt) {
+    operation.status = 'available'
+    note(state, 'log.water_filters_started', { seconds: Math.ceil(operation.deadline - state.time) })
+    emitEvent(state, { type: 'urgent_operation_started', operation: 'water_filters', deadline: operation.deadline })
+  }
+  if (operation.status === 'available' && state.time + 1e-9 >= operation.deadline) {
+    operation.status = 'failed'
+    note(state, 'log.water_filters_failed')
+    emitEvent(state, { type: 'urgent_operation_resolved', operation: 'water_filters', outcome: 'failed' })
+    maybeShowFinalSummary(state)
+  }
+}
+
 export function resolveNinthLife(state: State, decision: NinthLifeDecision) {
+  if (!state.storyIncident || state.storyIncident.stage !== 'contact' || state.storyResolution
+    || !getNinthLifeDecisionOptions(state)[decision].available) return false
+  const intervention = getNinthLifeIntervention(state, decision)
+  if (intervention?.kind === 'shorokh_false_alarm') {
+    state.storyIncident.stage = 'intervention'
+    state.storyIncident.stageStartedAt = state.time
+    state.storyIncident.deadline = state.time + intervention.delay
+    state.storyIncident.pendingDecision = decision
+    state.storyIncident.intervention = intervention.kind
+    state.speed = 1
+    note(state, 'log.story_intervention.shorokh_false_alarm_started', { cat: state.cats.find(cat => cat.id === intervention.catId)?.name ?? intervention.catId, seconds: intervention.delay })
+    return true
+  }
+  return finishNinthLifeResolution(state, decision, intervention?.kind)
+}
+
+function finishNinthLifeResolution(state: State, decision: NinthLifeDecision, forcedIntervention?: NinthLifeIntervention) {
   if (!state.storyIncident || state.storyResolution) return false
   const balance = CONFIG.story.decisions[decision]
+  const decisionOption = getNinthLifeDecisionOptions(state)[decision]
+  const decisionThreat = Math.max(0, balance.threat + decisionOption.threatAdjustment)
   const outcome = STORY_OUTCOMES[decision]
+  const preview = forcedIntervention ? undefined : getNinthLifeIntervention(state, decision)
+  const intervention = forcedIntervention ?? preview?.kind
+  const interventionThreat = intervention === 'bastion_intercept' ? CONFIG.story.bastionInterventionThreat : 0
+  const participantCatIds = ninthLifeParticipantCats(state).map(cat => cat.id)
   state.fame = Math.min(CONFIG.limits.fame, state.fame + balance.fame)
-  state.threat = Math.min(CONFIG.limits.threat, state.threat + balance.threat)
+  state.threat = Math.min(CONFIG.limits.threat, state.threat + decisionThreat + interventionThreat)
   state.storyResolution = {
     decision,
     title: outcome.title,
     fameDelta: balance.fame,
-    threatDelta: balance.threat,
+    threatDelta: decisionThreat + interventionThreat,
     branch: outcome.branch,
     outcome: outcome.outcome,
-    unlockedLocation: outcome.unlockedLocation,
+    unlockedLocation: false,
+    intervention,
+    participantCatIds,
+    facts: structuredClone(state.storyIncident.facts),
+    deescalated: state.storyIncident.deescalated,
+    inaction: state.storyIncident.inaction,
   }
   state.storyIncident = undefined
-  note(state, balance.threat ? 'log.story_closed_threat' : 'log.story_closed', { decision: outcome.title, fame: balance.fame, threat: balance.threat })
+  scheduleStoryAftermath(state, decision, outcome.unlockedLocation && intervention !== 'myata_retreat')
+  if (intervention) {
+    const catId = intervention === 'myata_retreat' ? 'myata' : intervention === 'bastion_intercept' ? 'bastion' : 'shorokh'
+    note(state, `log.story_intervention.${intervention}`, { cat: state.cats.find(cat => cat.id === catId)?.name ?? catId })
+  }
+  const totalThreat = decisionThreat + interventionThreat
+  note(state, totalThreat ? 'log.story_closed_threat' : 'log.story_closed', { decision: outcome.title, fame: balance.fame, threat: totalThreat })
   emitEvent(state, { type: 'story_resolved', story: 'ninth_life', decision })
   if (state.fame < CONFIG.goal.fame) note(state, 'log.fame_needed', { fame: CONFIG.goal.fame - state.fame })
-  maybeShowFinalSummary(state)
+  state.speed = 1
   syncAchievements(state)
   return true
+}
+
+function scheduleStoryAftermath(state: State, decision: NinthLifeDecision, canUnlockLocation: boolean) {
+  const rules = CONFIG.story.aftermath
+  const kindByDecision: Record<NinthLifeDecision, StoryAftermathKind> = {
+    shelter: 'base_marked', interrogate: 'intercepted_transmission', escort: 'safe_route', exploit: 'false_entrance',
+  }
+  const targetByDecision: Record<NinthLifeDecision, MapPoint> = {
+    shelter: CONFIG.map.base, interrogate: rules.interceptPoint, escort: rules.borderPoint, exploit: rules.falseEntrancePoint,
+  }
+  const delay = decision === 'interrogate' ? rules.interrogationDelay : rules.defaultDelay
+  const target = targetByDecision[decision]
+  const kind = decision === 'exploit' && !canUnlockLocation ? 'intercepted_transmission' : kindByDecision[decision]
+  state.storyAftermath = { kind, status: 'pending', dueAt: state.time + delay, x: target.x, y: target.y }
+  const observer = state.storyObserver
+  if (observer) Object.assign(observer, {
+    status: 'tracking', fromX: observer.x, fromY: observer.y, targetX: target.x, targetY: target.y,
+    movementStartedAt: state.time, movementEndsAt: state.time + delay,
+  })
+  note(state, 'log.story_aftermath_scheduled', { seconds: delay })
+}
+
+function updateStoryAftermath(state: State) {
+  const aftermath = state.storyAftermath
+  if (!aftermath || aftermath.status === 'completed') return
+  const observer = state.storyObserver
+  if (observer?.status === 'tracking') {
+    const duration = Math.max(SIMULATION_STEP_SECONDS, observer.movementEndsAt - observer.movementStartedAt)
+    const progress = Math.max(0, Math.min(1, (state.time - observer.movementStartedAt) / duration))
+    observer.x = observer.fromX + (observer.targetX - observer.fromX) * progress
+    observer.y = observer.fromY + (observer.targetY - observer.fromY) * progress
+  }
+  if (state.time + 1e-9 < aftermath.dueAt) return
+  aftermath.status = 'completed'
+  if (observer) {
+    observer.x = observer.targetX
+    observer.y = observer.targetY
+    observer.status = aftermath.kind === 'base_marked' ? 'revealed' : 'gone'
+  }
+  if (aftermath.kind === 'false_entrance' && state.storyResolution) state.storyResolution.unlockedLocation = true
+  note(state, `log.story_aftermath.${aftermath.kind}`)
+  maybeShowFinalSummary(state)
+}
+
+export function getNinthLifeDecisionOptions(state: State) {
+  const story = state.storyIncident
+  const atContact = story?.stage === 'contact'
+  return {
+    shelter: { available: Boolean(atContact), reason: undefined, threatAdjustment: story?.deescalated ? -CONFIG.story.deescalationShelterThreatReduction : 0 },
+    interrogate: { available: Boolean(atContact), reason: undefined, threatAdjustment: 0 },
+    escort: { available: Boolean(atContact), reason: undefined, threatAdjustment: 0 },
+    exploit: {
+      available: Boolean(atContact && !story?.deescalated),
+      reason: story?.deescalated ? 'story.decision.reason.deescalated' : undefined,
+      threatAdjustment: 0,
+    },
+  }
+}
+
+export function getNinthLifeIntervention(state: State, decision: NinthLifeDecision): NinthLifeInterventionPreview | undefined {
+  if (state.storyIncident?.stage !== 'contact') return undefined
+  const squads = state.storyIncident.participantSquadIds
+    .map(id => state.squads.find(squad => squad.id === id))
+    .filter((squad): squad is Squad => Boolean(squad))
+  const members = squads.flatMap(squad => membersOf(state, squad))
+
+  if (decision === 'exploit' && members.some(cat => cat.id === 'myata')
+    && members.some(cat => cat.id !== 'myata' && (cat.energy < CONFIG.story.myataLowEnergyThreshold || cat.injuredRemaining > 0))) {
+    return { kind: 'myata_retreat', catId: 'myata', reason: 'story.intervention.myata.warning', threatDelta: 0, delay: 0 }
+  }
+  if (decision === 'shelter' && members.some(cat => cat.id === 'bastion') && squads.some(squad => squad.style === 'risky')) {
+    return { kind: 'bastion_intercept', catId: 'bastion', reason: 'story.intervention.bastion.warning', threatDelta: CONFIG.story.bastionInterventionThreat, delay: 0 }
+  }
+  const borderRoute = state.storyIncident.facts.find(fact => fact.id === 'border_route')
+  if (decision === 'escort' && members.some(cat => cat.id === 'shorokh') && borderRoute?.quality !== 'confirmed') {
+    return { kind: 'shorokh_false_alarm', catId: 'shorokh', reason: 'story.intervention.shorokh.warning', threatDelta: 0, delay: CONFIG.story.shorokhFalseAlarmDelay }
+  }
+  return undefined
 }
 
 export function continueAfterFinale(state: State) {
@@ -2261,13 +2765,11 @@ function spendTravelEnergy(state: State, squad: Squad, elapsed: number) {
   for (const cat of membersOf(state, squad)) cat.energy = Math.max(0, cat.energy - energyCost)
 }
 
-export function tick(state: State, seconds: number) {
-  if (!state.speed) return
+function advanceSimulation(state: State, elapsed: number) {
   for (const mission of state.missions) {
     mission.squadIds ??= []
     mission.contributorSquadIds ??= []
   }
-  const elapsed = seconds * state.speed
   state.time += elapsed
   reconcileMissionFlow(state)
   syncCatSleep(state)
@@ -2332,12 +2834,18 @@ export function tick(state: State, seconds: number) {
       spendTravelEnergy(state, squad, elapsed)
       squad.travel += elapsed
       if (squad.travel >= squad.travelDuration && squad.destination) {
+        const reachedStoryContact = state.storyIncident?.stage === 'dispatch'
+          && state.storyIncident.dispatchedSquadId === squad.id
+        const reachedWaterFilters = state.urgentOperation?.status === 'dispatch'
+          && state.urgentOperation.dispatchedSquadId === squad.id
         squad.travel = 0
         squad.travelDuration = 0
         squad.routeFrom = { ...squad.destination }
         delete squad.destination
         squad.phase = 'field'
-        note(state, 'log.squad_arrived_at_point', { squad: squad.name })
+        if (reachedStoryContact) reachNinthLifeContact(state, squad)
+        else if (reachedWaterFilters) startWaterFiltersWork(state, squad)
+        else note(state, 'log.squad_arrived_at_point', { squad: squad.name })
       }
       continue
     }
@@ -2379,8 +2887,29 @@ export function tick(state: State, seconds: number) {
       continue
     }
 
+    if (squad.phase === 'urgent') {
+      const operation = state.urgentOperation
+      if (!operation || operation.status !== 'active' || operation.dispatchedSquadId !== squad.id) {
+        squad.phase = 'field'
+        continue
+      }
+      operation.workRemaining = Math.max(0, (operation.workRemaining ?? 0) - elapsed)
+      const workDuration = operation.fullReward
+        ? CONFIG.urgentOperations.waterFilters.specialistWorkDuration
+        : CONFIG.urgentOperations.waterFilters.standardWorkDuration
+      for (const cat of membersOf(state, squad)) {
+        cat.energy = Math.max(0, cat.energy - elapsed * 5 / workDuration)
+      }
+      if (operation.workRemaining <= 1e-9) completeWaterFilters(state, squad)
+      continue
+    }
+
     if (squad.phase === 'cleanup') continue
   }
+
+  updateNinthLife(state)
+  updateUrgentOperation(state)
+  updateStoryAftermath(state)
 
   for (const mission of [...state.missions]) {
     if (mission.status !== 'assigned' || state.incident?.missionId === mission.id) continue
@@ -2421,6 +2950,23 @@ export function tick(state: State, seconds: number) {
   syncAchievements(state)
 }
 
+export function tick(state: State, seconds: number) {
+  if (!state.speed || !Number.isFinite(seconds) || seconds <= 0) return
+
+  state.simulationRemainder += seconds * state.speed
+  const steps = Math.floor((state.simulationRemainder + 1e-9) / SIMULATION_STEP_SECONDS)
+  state.simulationRemainder -= steps * SIMULATION_STEP_SECONDS
+  if (Math.abs(state.simulationRemainder) < 1e-9) state.simulationRemainder = 0
+
+  for (let step = 0; step < steps; step++) {
+    advanceSimulation(state, SIMULATION_STEP_SECONDS)
+    if (!state.speed) {
+      state.simulationRemainder = 0
+      break
+    }
+  }
+}
+
 export type GameCommand =
   | { type: 'set_speed'; speed: Speed }
   | { type: 'assign_cat'; catId: string; squadId: string }
@@ -2439,7 +2985,10 @@ export type GameCommand =
   | { type: 'select_research'; researchId?: ResearchId }
   | { type: 'resolve_raid'; action: 'escape' | 'attack' | 'support'; supportSquadId?: string }
   | { type: 'resolve_raid_followup'; action: 'retreat' | 'continue' }
+  | { type: 'dispatch_ninth_life'; squadId: string }
+  | { type: 'verify_ninth_life'; verification: NinthLifeVerification }
   | { type: 'resolve_ninth_life'; decision: NinthLifeDecision }
+  | { type: 'dispatch_water_filters'; squadId: string }
   | { type: 'continue_after_finale' }
 
 /**
@@ -2457,7 +3006,7 @@ export class GameCore {
     switch (command.type) {
       case 'set_speed':
         if (command.speed !== 0 && (
-          this.world.storyIncident
+          this.world.storyIncident?.stage === 'contact'
           || this.world.finalSummaryVisible
           || (this.world.incident && this.world.incident.stage !== 'support_en_route')
         )) return false
@@ -2479,7 +3028,10 @@ export class GameCore {
       case 'select_research': return selectResearch(this.world, command.researchId)
       case 'resolve_raid': return resolveRaidDecision(this.world, command.action, command.supportSquadId)
       case 'resolve_raid_followup': return resolveRaidFollowup(this.world, command.action)
+      case 'dispatch_ninth_life': return dispatchNinthLife(this.world, command.squadId)
+      case 'verify_ninth_life': return verifyNinthLife(this.world, command.verification)
       case 'resolve_ninth_life': return resolveNinthLife(this.world, command.decision)
+      case 'dispatch_water_filters': return dispatchWaterFilters(this.world, command.squadId)
       case 'continue_after_finale': return continueAfterFinale(this.world)
     }
   }

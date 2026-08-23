@@ -9,6 +9,7 @@ import {
   type GameEvent,
   type ItemId,
   type NinthLifeDecision,
+  type NinthLifeVerification,
   type ResearchId,
   type Speed,
   type SquadStyle,
@@ -216,7 +217,7 @@ export async function createGameSession() {
 
   async function setSpeed(speed: Speed) {
     const blockingOverlay = newGameConfirmOpen.value
-      || Boolean(state.value.storyIncident)
+      || state.value.storyIncident?.stage === 'contact'
       || state.value.finalSummaryVisible
       || Boolean(state.value.incident && state.value.incident.stage !== 'support_en_route')
     if (blockingOverlay && speed !== 0) return false
@@ -364,7 +365,10 @@ export async function createGameSession() {
     selectResearch: (researchId?: ResearchId) => runCommand({ type: 'select_research', researchId }),
     resolveRaidDecision: (action: 'escape' | 'attack' | 'support', supportSquadId?: string) => runCommand({ type: 'resolve_raid', action, supportSquadId }),
     resolveRaidFollowup: (action: 'retreat' | 'continue') => runCommand({ type: 'resolve_raid_followup', action }),
+    dispatchNinthLife: (squadId: string) => runCommand({ type: 'dispatch_ninth_life', squadId }),
+    verifyNinthLife: (verification: NinthLifeVerification) => runCommand({ type: 'verify_ninth_life', verification }),
     resolveNinthLife: (decision: NinthLifeDecision) => runCommand({ type: 'resolve_ninth_life', decision }),
+    dispatchWaterFilters: (squadId: string) => runCommand({ type: 'dispatch_water_filters', squadId }),
     continueAfterFinale: () => runCommand({ type: 'continue_after_finale' }),
     exportSave, importSave, requestNewGame, resetProgress, toggleMuted, testSignal, dispose,
   }

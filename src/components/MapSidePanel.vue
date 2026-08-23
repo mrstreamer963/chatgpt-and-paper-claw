@@ -18,6 +18,11 @@ function formatLog(time: number, key: string, params?: Record<string, string | n
   const minutes = 540 + Math.floor(time / 60)
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} · ${tr(key, params)}`
 }
+function storyStatus() {
+  if (props.state.storyResolution) return 'ЗАКРЫТО'
+  if (props.state.storyIncident) return `story.status.${props.state.storyIncident.stage}`
+  return 'ОЖИДАЕТ СИГНАЛА'
+}
 </script>
 
 <template>
@@ -32,7 +37,8 @@ function formatLog(time: number, key: string, params?: Record<string, string | n
     </section>
     <h2>{{ tr('ОПЕРАТИВНАЯ ЛЕНТА') }}</h2>
     <p class="goal">{{ tr('objective.summary', { fame: GAME_RULES.fameGoal }) }}</p>
-    <div class="case-progress" :class="{ done: state.storyResolution }"><span>{{ tr('ДЕЛО 09') }}</span><b>{{ tr(state.storyResolution ? 'ЗАКРЫТО' : state.storyIncident ? 'ТРЕБУЕТ РЕШЕНИЯ' : 'ОЖИДАЕТ СИГНАЛА') }}</b></div>
+    <div class="case-progress" :class="{ done: state.storyResolution }"><span>{{ tr('ДЕЛО 09') }}</span><b>{{ tr(storyStatus()) }}</b></div>
+    <div v-if="state.urgentOperation && state.urgentOperation.status !== 'pending'" class="case-progress" :class="{ done: state.urgentOperation.status === 'completed' }"><span>{{ tr('urgent.water_filters.short') }}</span><b>{{ tr(`urgent.status.${state.urgentOperation.status}`) }}</b></div>
     <article v-for="(item, index) in state.log" :key="`${index}-${item.time}-${item.key}`">{{ formatLog(item.time, item.key, item.params) }}</article>
   </aside>
 </template>

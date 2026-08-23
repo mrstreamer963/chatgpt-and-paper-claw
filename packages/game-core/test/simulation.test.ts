@@ -9,6 +9,8 @@ import {
   disbandSquad,
   deserializeCurrentSave,
   deserializeState,
+  dispatchNinthLife,
+  dispatchWaterFilters,
   drainEvents,
   equipItem,
   getAchievements,
@@ -20,6 +22,9 @@ import {
   getSquadCleanupEstimate,
   getSquadMapPosition,
   getMoveSquadBlockReason,
+  getNinthLifeVerificationOptions,
+  getNinthLifeIntervention,
+  getNinthLifeDecisionOptions,
   getSplitSquadBlockReason,
   GameCore,
   hasPendingEquipment,
@@ -32,12 +37,14 @@ import {
   moveSquadToPoint,
   mergeSquads,
   selectResearch,
+  SIMULATION_STEP_SECONDS,
   serializeState,
   setSquadAutoDispatch,
   setSquadStyle,
   splitSquad,
   successfulCleanups,
   tick,
+  verifyNinthLife,
 } from '../src/simulation.ts'
 
 // Most legacy regression cases exercise established squad behavior. Seed their
@@ -55,6 +62,51 @@ function createState() {
   state.squads[1].autoDispatch = true
   return state
 }
+
+function advanceUntil(state: ReturnType<typeof createFreshState>, condition: () => boolean, message = 'Condition was not reached') {
+  for (let step = 0; step < 10_000; step++) {
+    if (condition()) return
+    assert.notEqual(state.speed, 0, `${message}: simulation is paused`)
+    tick(state, SIMULATION_STEP_SECONDS / state.speed)
+  }
+  assert.fail(message)
+}
+
+test('fixed simulation steps produce the same state at x1, x5, and x10', () => {
+  const run = (speed: 1 | 5 | 10, chunks: number[]) => {
+    const state = createFreshState()
+    state.scrap = 20
+    assert.equal(selectResearch(state, 'field_scanners'), true)
+    state.speed = speed
+    for (const seconds of chunks) tick(state, seconds)
+    state.speed = 1
+    return state
+  }
+
+  const atX1 = run(1, [0.1, 0.15, 3.33, 6.42])
+  const atX5 = run(5, [0.07, 0.13, 1.8])
+  const atX10 = run(10, [0.03, 0.22, 0.75])
+
+  assert.deepEqual(atX5, atX1)
+  assert.deepEqual(atX10, atX1)
+  assert.equal(atX1.time, 10)
+  assert.equal(atX1.simulationRemainder, 0)
+})
+
+test('a saved partial simulation step resumes without losing elapsed time', () => {
+  const state = createFreshState()
+  state.speed = 1
+
+  tick(state, 0.1)
+  assert.equal(state.time, 0)
+  assert.equal(state.simulationRemainder, 0.1)
+
+  const restored = deserializeCurrentSave(serializeState(state))
+  tick(restored, 0.15)
+
+  assert.equal(restored.time, 0.25)
+  assert.equal(restored.simulationRemainder, 0)
+})
 
 test('GameCore owns the live state and exposes isolated snapshots', () => {
   const core = new GameCore()
@@ -268,7 +320,7 @@ test('a tired field squad preserves the trip home and sleeps after returning', (
   assert.equal(squad.phase, 'returning')
   assert.equal(squad.restAfterReturn, true)
   const energyBeforeReturn = pixel.energy
-  tick(state, squad.travelDuration)
+  advanceUntil(state, () => squad.phase === 'base', 'Tired squad did not return to base')
 
   assert.equal(squad.phase, 'base')
   assert.equal(squad.restAfterReturn, false)
@@ -345,7 +397,7 @@ test('the player can order an idle field squad back to base', () => {
   assert.equal(squad.phase, 'returning')
   assert.equal(squad.restAfterReturn, false)
   state.speed = 1
-  tick(state, squad.travelDuration)
+  advanceUntil(state, () => squad.phase === 'base', 'Ordered squad did not return to base')
 
   assert.equal(squad.phase, 'base')
   assert.equal(pixel.sleeping, false)
@@ -365,7 +417,9 @@ test('an idle field squad moves toward base without retaining a mission target',
   const duration = squad.travelDuration
   tick(state, duration / 2)
 
-  assert.deepEqual(getSquadMapPosition(squad), { x: 38, y: 40.5 })
+  const midpoint = getSquadMapPosition(squad)
+  assert.ok(Math.abs(midpoint.x - 38) < 0.2)
+  assert.ok(Math.abs(midpoint.y - 40.5) < 0.2)
   assert.equal(squad.phase, 'returning')
 })
 
@@ -383,9 +437,11 @@ test('a manual squad marches to an arbitrary point and waits there', () => {
 
   tick(state, squad.travelDuration / 2)
   assert.equal(squad.phase, 'moving')
-  assert.deepEqual(getSquadMapPosition(squad), { x: 38, y: 40.5 })
+  const midpoint = getSquadMapPosition(squad)
+  assert.ok(Math.abs(midpoint.x - 38) < 0.2)
+  assert.ok(Math.abs(midpoint.y - 40.5) < 0.2)
 
-  tick(state, squad.travelDuration)
+  advanceUntil(state, () => squad.phase === 'field', 'Squad did not reach the ordered point')
   assert.equal(squad.phase, 'field')
   assert.deepEqual(squad.routeFrom, { x: 30, y: 30 })
   assert.equal(squad.destination, undefined)
@@ -527,6 +583,32 @@ function finishThirdCleanup() {
   return state
 }
 
+function finishThirdCleanupAtContact() {
+  const state = finishThirdCleanup()
+  assert.equal(dispatchNinthLife(state, 'alpha'), true)
+  advanceUntil(state, () => state.storyIncident?.stage === 'contact', 'Squad did not reach the Ninth Life contact')
+  return state
+}
+
+function prepareWaterFiltersCompetition() {
+  const state = finishThirdCleanup()
+  const alpha = state.squads.find(candidate => candidate.id === 'alpha')!
+  const bravo = state.squads.find(candidate => candidate.id === 'bravo')!
+  const shorokh = state.cats.find(cat => cat.id === 'shorokh')!
+  alpha.members.push(shorokh.id)
+  shorokh.assignedTo = alpha.id
+  assert.equal(assignCat(state, 'rust', bravo.id), true)
+  assert.equal(equipItem(state, 'rust', 'hands', 'toolkit'), true)
+  assert.equal(setSquadAutoDispatch(state, alpha.id, false), true)
+  assert.equal(setSquadAutoDispatch(state, bravo.id, false), true)
+  assert.equal(dispatchNinthLife(state, alpha.id), true)
+  advanceUntil(state, () => state.storyIncident?.stage === 'contact')
+  assert.equal(verifyNinthLife(state, 'recon'), true)
+  tick(state, 15)
+  assert.equal(state.urgentOperation?.status, 'available')
+  return { state, alpha, bravo }
+}
+
 test('a cat can be removed from a squad while it is at base', () => {
   const state = createState()
   assert.equal(assignCat(state, 'pixel', 'alpha'), true)
@@ -614,7 +696,10 @@ test('an active research order wakes a sleeping specialist at fifty', () => {
   pixel.energy = 20
   pixel.sleeping = true
   for (const cat of state.cats) {
-    if (cat.id !== pixel.id) cat.energy = 40
+    if (cat.id !== pixel.id) {
+      cat.energy = 0
+      cat.sleeping = true
+    }
   }
   state.scrap = 20
   assert.equal(selectResearch(state, 'field_scanners'), true)
@@ -675,7 +760,7 @@ test('field equipment is reserved and applied after the squad returns', () => {
 
   tick(state, 1)
   assert.equal(squad.phase, 'returning')
-  tick(state, squad.travelDuration)
+  advanceUntil(state, () => squad.phase === 'base', 'Squad did not return for queued equipment')
 
   assert.equal(squad.phase, 'base')
   assert.equal(pixel.equipment.hands, 'toolkit')
@@ -707,7 +792,7 @@ test('equipment queued during outbound travel is shown immediately and waits for
   tick(state, 10)
   assert.equal(squad.phase, 'cleanup')
   tick(state, 30)
-  tick(state, squad.travelDuration)
+  advanceUntil(state, () => squad.phase === 'base', 'Squad did not return for outbound queued equipment')
   assert.equal(squad.phase, 'base')
   assert.equal(pixel.equipment.hands, 'toolkit')
   assert.equal(hasPendingEquipment(pixel), false)
@@ -812,7 +897,7 @@ test('save envelopes expose saveVersion and autosave can be compact', () => {
 
 test('GameCore refuses to resume time while story or final overlays are blocking', () => {
   const storyState = createState()
-  storyState.storyIncident = { kind: 'ninth_life', participantSquadIds: ['alpha'], x: 50, y: 20 }
+  storyState.storyIncident = { kind: 'ninth_life', stage: 'contact', stageStartedAt: 0, participantSquadIds: ['alpha'], x: 50, y: 20 }
   const storyCore = new GameCore(storyState)
   assert.equal(storyCore.dispatch({ type: 'set_speed', speed: 1 }), false)
   assert.equal(storyCore.snapshot().speed, 0)
@@ -1025,7 +1110,7 @@ test('moving a deployed cat waits for both squads to return and can be canceled'
   assert.equal(assignCat(state, pixel.id, 'bravo'), true)
   alpha.phase = 'base'
   state.speed = 1
-  tick(state, bravo.travelDuration + 1)
+  advanceUntil(state, () => bravo.phase === 'base', 'Target squad did not return for roster change')
   assert.equal(bravo.phase, 'base')
   assert.equal(pixel.assignedTo, 'bravo')
   assert.deepEqual(alpha.members, [])
@@ -1144,9 +1229,9 @@ test('an occupied cleanup accepts a second equal squad', () => {
   const assistant = state.squads[1]
   assert.equal(assignSquadToMission(state, primary.id, mission.id), true)
   state.speed = 1
-  tick(state, primary.travelDuration)
+  advanceUntil(state, () => primary.phase === 'cleanup', 'Primary squad did not reach the shared mission')
   assert.equal(assignSquadToMission(state, assistant.id, mission.id), true)
-  tick(state, assistant.travelDuration)
+  advanceUntil(state, () => assistant.phase === 'cleanup', 'Assistant squad did not reach the shared mission')
   assert.equal(primary.phase, 'cleanup')
   assert.equal(assistant.phase, 'cleanup')
   assert.deepEqual(mission.squadIds, [primary.id, assistant.id])
@@ -1171,7 +1256,7 @@ test('every equal squad with positive work receives credit while the world rewar
   assert.equal(assignSquadToMission(state, first.id, mission.id), true)
   assert.equal(assignSquadToMission(state, second.id, mission.id), true)
   state.speed = 1
-  tick(state, Math.max(first.travelDuration, second.travelDuration))
+  advanceUntil(state, () => first.phase === 'cleanup' && second.phase === 'cleanup', 'Both squads did not reach the shared mission')
   assert.equal(first.phase, 'cleanup')
   assert.equal(second.phase, 'cleanup')
   mission.progress = 29
@@ -1198,7 +1283,7 @@ test('a squad that has not arrived when equal peers finish gets no credit and le
   setSquadAutoDispatch(state, late.id, false)
   assert.equal(assignSquadToMission(state, arrived.id, mission.id), true)
   state.speed = 1
-  tick(state, arrived.travelDuration)
+  advanceUntil(state, () => arrived.phase === 'cleanup', 'First squad did not reach the mission')
   assert.equal(arrived.phase, 'cleanup')
   mission.progress = 29.5
   assert.equal(assignSquadToMission(state, late.id, mission.id), true)
@@ -1437,46 +1522,433 @@ test('a raid captures every squad that has arrived at the cleanup', () => {
   assert.equal(state.squads.find(squad => squad.id === 'squad-3')?.phase, 'cleanup')
 })
 
-test('the ninth life investigation opens immediately after the third successful cleanup', () => {
+test('the ninth life investigation opens as a timed non-blocking signal', () => {
   const state = finishThirdCleanup()
   assert.equal(successfulCleanups(state), 3)
   assert.equal(state.storyTriggered, true)
   assert.equal(state.storyIncident?.kind, 'ninth_life')
+  assert.equal(state.storyIncident?.stage, 'signal')
+  assert.equal(state.storyIncident?.deadline, state.time + 60)
+  assert.equal(state.speed, 1)
+})
+
+test('a dispatched squad physically reaches the Ninth Life contact and pauses for a decision', () => {
+  const state = finishThirdCleanup()
+  assert.equal(dispatchNinthLife(state, 'alpha'), true)
+  assert.equal(state.storyIncident?.stage, 'dispatch')
+  assert.equal(state.storyIncident?.dispatchedSquadId, 'alpha')
+  assert.equal(state.squads[0].phase, 'moving')
+
+  advanceUntil(state, () => state.storyIncident?.stage === 'contact', 'Squad did not reach the contact')
+
+  assert.equal(state.speed, 0)
+  assert.deepEqual(state.storyIncident?.participantSquadIds, ['alpha'])
+  assert.equal(state.squads[0].phase, 'field')
+})
+
+test('ignoring both Ninth Life deadlines advances the case and raises threat deterministically', () => {
+  const state = finishThirdCleanup()
+  const initialThreat = state.threat
+
+  tick(state, 60)
+  assert.equal(state.storyIncident?.stage, 'dispatch')
+  assert.equal(state.storyIncident?.inaction, 'self_evacuating')
+  assert.equal(state.threat, initialThreat + 5)
+
+  tick(state, 60)
+  assert.equal(state.storyIncident?.stage, 'contact')
+  assert.equal(state.storyIncident?.inaction, 'pursued')
+  assert.equal(state.threat, initialThreat + 10)
   assert.equal(state.speed, 0)
 })
 
-test('sheltering the deserter reaches the goal and opens the final summary', () => {
+test('every implemented Ninth Life stage survives a save round trip', () => {
+  const signal = finishThirdCleanup()
+  assert.equal(deserializeState(serializeState(signal)).storyIncident?.stage, 'signal')
+
+  assert.equal(dispatchNinthLife(signal, 'alpha'), true)
+  const dispatch = deserializeState(serializeState(signal))
+  assert.equal(dispatch.storyIncident?.stage, 'dispatch')
+  assert.equal(dispatch.storyIncident?.dispatchedSquadId, 'alpha')
+
+  advanceUntil(dispatch, () => dispatch.storyIncident?.stage === 'contact', 'Restored dispatch did not reach contact')
+  const contact = deserializeState(serializeState(dispatch))
+  assert.equal(contact.storyIncident?.stage, 'contact')
+  assert.deepEqual(contact.storyIncident?.participantSquadIds, ['alpha'])
+})
+
+test('version fifteen investigations migrate their initial intel facts', () => {
+  const state = finishThirdCleanupAtContact()
+  const envelope = JSON.parse(serializeState(state))
+  envelope.version = 15
+  envelope.saveVersion = 15
+  delete envelope.state.storyIncident.facts
+
+  const restored = deserializeCurrentSave(JSON.stringify(envelope))
+
+  assert.equal(restored.storyIncident?.stage, 'contact')
+  assert.deepEqual(restored.storyIncident?.facts, [
+    { id: 'deserter_identity', quality: 'reported', source: 'needle' },
+    { id: 'pursuit', quality: 'estimate', source: 'dispatch' },
+    { id: 'base_coordinates', quality: 'reported', source: 'needle' },
+    { id: 'border_route', quality: 'stale', source: 'dispatch' },
+  ])
+})
+
+test('Marlowe verifies Needle identity over a timed saved stage', () => {
   const state = finishThirdCleanup()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const marlowe = state.cats.find(cat => cat.id === 'marlowe')!
+  squad.members.push(marlowe.id)
+  marlowe.assignedTo = squad.id
+  assert.equal(dispatchNinthLife(state, squad.id), true)
+  advanceUntil(state, () => state.storyIncident?.stage === 'contact')
+
+  assert.equal(getNinthLifeVerificationOptions(state).interview.available, true)
+  assert.equal(verifyNinthLife(state, 'interview'), true)
+  assert.equal(state.storyIncident?.stage, 'verification')
+  assert.equal(state.speed, 1)
+
+  const restored = deserializeState(serializeState(state))
+  tick(restored, 30)
+
+  assert.equal(restored.storyIncident?.stage, 'contact')
+  assert.equal(restored.speed, 0)
+  assert.deepEqual(
+    restored.storyIncident?.facts.find(fact => fact.id === 'deserter_identity'),
+    { id: 'deserter_identity', quality: 'confirmed', source: 'marlowe' },
+  )
+  assert.deepEqual(
+    restored.storyIncident?.facts.find(fact => fact.id === 'base_coordinates'),
+    { id: 'base_coordinates', quality: 'estimate', source: 'marlowe' },
+  )
+  assert.equal(getNinthLifeVerificationOptions(restored).interview.available, false)
+})
+
+test('Shorokh reconnaissance confirms pursuit and the border route', () => {
+  const state = finishThirdCleanup()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const shorokh = state.cats.find(cat => cat.id === 'shorokh')!
+  squad.members.push(shorokh.id)
+  shorokh.assignedTo = squad.id
+  assert.equal(dispatchNinthLife(state, squad.id), true)
+  advanceUntil(state, () => state.storyIncident?.stage === 'contact')
+
+  assert.equal(getNinthLifeVerificationOptions(state).recon.available, true)
+  assert.equal(verifyNinthLife(state, 'recon'), true)
+  tick(state, 30)
+
+  assert.equal(state.storyIncident?.stage, 'contact')
+  assert.deepEqual(
+    state.storyIncident?.facts.find(fact => fact.id === 'pursuit'),
+    { id: 'pursuit', quality: 'confirmed', source: 'shorokh' },
+  )
+  assert.deepEqual(
+    state.storyIncident?.facts.find(fact => fact.id === 'border_route'),
+    { id: 'border_route', quality: 'confirmed', source: 'shorokh' },
+  )
+})
+
+test('water filters compete with verification and grant the full specialist reward', () => {
+  const { state, bravo } = prepareWaterFiltersCompetition()
+  const initialFame = state.fame
+  const initialScrap = state.scrap
+
+  assert.equal(dispatchWaterFilters(state, bravo.id), true)
+  assert.equal(state.urgentOperation?.status, 'dispatch')
+  assert.equal(state.urgentOperation?.fullReward, true)
+
+  advanceUntil(state, () => state.storyIncident?.stage === 'contact', 'Verification did not finish')
+  assert.equal(state.speed, 0)
+  assert.notEqual(state.urgentOperation?.status, 'completed')
+
+  state.speed = 1
+  advanceUntil(state, () => state.urgentOperation?.status === 'completed', 'Water filters were not repaired')
+
+  assert.equal(state.fame, initialFame + 5)
+  assert.equal(state.scrap, initialScrap + 10)
+  assert.equal(bravo.phase, 'field')
+})
+
+test('a dispatched water filters response survives save and resumes travel', () => {
+  const { state, bravo } = prepareWaterFiltersCompetition()
+  assert.equal(dispatchWaterFilters(state, bravo.id), true)
+
+  const restored = deserializeState(serializeState(state))
+  const restoredBravo = restored.squads.find(squad => squad.id === bravo.id)!
+  assert.equal(restored.urgentOperation?.status, 'dispatch')
+  assert.equal(restoredBravo.phase, 'moving')
+
+  advanceUntil(restored, () => restored.urgentOperation?.status === 'active', 'Restored response did not reach South Junction')
+  assert.equal(restoredBravo.phase, 'urgent')
+})
+
+test('a non-specialist water filters response receives the partial reward', () => {
+  const { state, bravo } = prepareWaterFiltersCompetition()
+  const rust = state.cats.find(cat => cat.id === 'rust')!
+  assert.equal(equipItem(state, rust.id, 'hands'), true)
+  const initialFame = state.fame
+  const initialScrap = state.scrap
+
+  assert.equal(dispatchWaterFilters(state, bravo.id), true)
+  assert.equal(state.urgentOperation?.fullReward, false)
+  advanceUntil(state, () => state.storyIncident?.stage === 'contact')
+  state.speed = 1
+  advanceUntil(state, () => state.urgentOperation?.status === 'completed')
+
+  assert.equal(state.fame, initialFame + 2)
+  assert.equal(state.scrap, initialScrap + 5)
+})
+
+test('the South Junction is lost when no squad is assigned before the deadline', () => {
+  const { state } = prepareWaterFiltersCompetition()
+  const deadline = state.urgentOperation!.deadline
+
+  advanceUntil(state, () => state.storyIncident?.stage === 'contact')
+  state.speed = 1
+  tick(state, deadline - state.time)
+
+  assert.equal(state.urgentOperation?.status, 'failed')
+  assert.equal(state.urgentOperation?.dispatchedSquadId, undefined)
+})
+
+test('sheltering the deserter reaches the goal and opens the final summary', () => {
+  const state = finishThirdCleanupAtContact()
   assert.equal(resolveNinthLife(state, 'shelter'), true)
   assert.equal(state.fame, 50)
   assert.equal(state.threat, 40)
   assert.equal(state.storyResolution?.branch, 'story.shelter.branch')
+  assert.deepEqual(state.storyResolution?.participantCatIds, ['pixel'])
+  assert.equal(state.storyResolution?.facts?.length, 4)
   assert.equal(getAchievements(state).find(achievement => achievement.id === 'first_cleanup')?.completed, true)
   assert.equal(getAchievements(state).find(achievement => achievement.id === 'ninth_life_closed')?.completed, true)
-  assert.equal(state.finalSummaryVisible, true)
+  assert.equal(state.finalSummaryVisible, false)
+  advanceUntil(state, () => state.finalSummaryVisible, 'Shelter aftermath did not complete')
+  assert.equal(state.storyAftermath?.kind, 'base_marked')
+  assert.equal(state.storyObserver?.status, 'revealed')
+  const restoredReport = deserializeState(serializeState(state))
+  assert.deepEqual(restoredReport.storyResolution?.participantCatIds, ['pixel'])
+  assert.equal(restoredReport.storyResolution?.facts?.length, 4)
   assert.equal(continueAfterFinale(state), true)
   assert.equal(state.finalSummaryVisible, false)
   assert.equal(state.finalSummarySeen, true)
 })
 
+test('Myata deterministically replaces an exploit rush with a covered retreat for an exhausted teammate', () => {
+  const state = finishThirdCleanupAtContact()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const myata = state.cats.find(cat => cat.id === 'myata')!
+  squad.members.push(myata.id)
+  myata.assignedTo = squad.id
+  state.cats.find(cat => cat.id === 'pixel')!.energy = 29
+
+  assert.equal(getNinthLifeIntervention(state, 'exploit')?.kind, 'myata_retreat')
+  assert.equal(resolveNinthLife(state, 'exploit'), true)
+  assert.equal(state.storyResolution?.intervention, 'myata_retreat')
+  assert.equal(state.storyResolution?.unlockedLocation, false)
+  assert.equal(state.log.some(entry => entry.key === 'log.story_intervention.myata_retreat'), true)
+})
+
+test('Bastion intercepts on a risky shelter order and adds the visible threat consequence', () => {
+  const state = finishThirdCleanupAtContact()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const bastion = state.cats.find(cat => cat.id === 'bastion')!
+  squad.members.push(bastion.id)
+  bastion.assignedTo = squad.id
+  squad.style = 'risky'
+  const initialThreat = state.threat
+
+  assert.equal(getNinthLifeIntervention(state, 'shelter')?.threatDelta, 5)
+  assert.equal(resolveNinthLife(state, 'shelter'), true)
+  assert.equal(state.storyResolution?.intervention, 'bastion_intercept')
+  assert.equal(state.storyResolution?.threatDelta, 25)
+  assert.equal(state.threat, initialThreat + 25)
+})
+
+test('Myata has priority when both autonomous intervention conditions are present', () => {
+  const state = finishThirdCleanupAtContact()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  for (const catId of ['myata', 'bastion']) {
+    const cat = state.cats.find(candidate => candidate.id === catId)!
+    squad.members.push(cat.id)
+    cat.assignedTo = squad.id
+  }
+  squad.style = 'risky'
+  state.cats.find(cat => cat.id === 'pixel')!.energy = 20
+
+  assert.equal(getNinthLifeIntervention(state, 'exploit')?.kind, 'myata_retreat')
+  assert.equal(getNinthLifeIntervention(state, 'shelter')?.kind, 'bastion_intercept')
+  assert.equal(resolveNinthLife(state, 'exploit'), true)
+  assert.equal(state.storyResolution?.intervention, 'myata_retreat')
+})
+
+test('Shorokh delays an escort for a deterministic false alarm on an unverified route', () => {
+  const state = finishThirdCleanupAtContact()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const shorokh = state.cats.find(cat => cat.id === 'shorokh')!
+  squad.members.push(shorokh.id)
+  shorokh.assignedTo = squad.id
+  const initialTime = state.time
+
+  assert.equal(getNinthLifeIntervention(state, 'escort')?.kind, 'shorokh_false_alarm')
+  assert.equal(resolveNinthLife(state, 'escort'), true)
+  assert.equal(state.storyIncident?.stage, 'intervention')
+  assert.equal(state.storyResolution, undefined)
+  assert.equal(state.speed, 1)
+
+  tick(state, 19.75)
+  assert.equal(state.storyResolution, undefined)
+  tick(state, 0.25)
+
+  assert.equal(state.time, initialTime + 20)
+  assert.equal(state.storyResolution?.intervention, 'shorokh_false_alarm')
+  assert.equal(state.storyResolution?.decision, 'escort')
+  assert.equal(state.storyResolution?.threatDelta, 0)
+  assert.equal(state.log.some(entry => entry.key === 'log.story_intervention.shorokh_false_alarm'), true)
+})
+
+test('Shorokh false alarm survives saving and finishes the pending escort once', () => {
+  const state = finishThirdCleanupAtContact()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const shorokh = state.cats.find(cat => cat.id === 'shorokh')!
+  squad.members.push(shorokh.id)
+  shorokh.assignedTo = squad.id
+  assert.equal(resolveNinthLife(state, 'escort'), true)
+  tick(state, 7)
+
+  const restored = deserializeState(serializeState(state))
+  assert.equal(restored.storyIncident?.pendingDecision, 'escort')
+  assert.equal(restored.storyIncident?.intervention, 'shorokh_false_alarm')
+  tick(restored, 13)
+
+  assert.equal(restored.storyResolution?.intervention, 'shorokh_false_alarm')
+  assert.equal(restored.log.filter(entry => entry.key === 'log.story_closed').length, 1)
+})
+
+test('verified reconnaissance prevents Shorokh false alarm', () => {
+  const state = finishThirdCleanupAtContact()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const shorokh = state.cats.find(cat => cat.id === 'shorokh')!
+  squad.members.push(shorokh.id)
+  shorokh.assignedTo = squad.id
+  assert.equal(verifyNinthLife(state, 'recon'), true)
+  tick(state, 30)
+
+  assert.equal(getNinthLifeIntervention(state, 'escort'), undefined)
+  assert.equal(resolveNinthLife(state, 'escort'), true)
+  assert.equal(state.storyResolution?.intervention, undefined)
+})
+
+test('Marlowe de-escalates Needle over time and makes sheltering safer', () => {
+  const state = finishThirdCleanupAtContact()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const marlowe = state.cats.find(cat => cat.id === 'marlowe')!
+  squad.members.push(marlowe.id)
+  marlowe.assignedTo = squad.id
+  const initialThreat = state.threat
+
+  assert.equal(getNinthLifeVerificationOptions(state).deescalation.available, true)
+  assert.equal(verifyNinthLife(state, 'deescalation'), true)
+  assert.equal(state.storyIncident?.stage, 'verification')
+  tick(state, 14.75)
+  assert.equal(state.storyIncident?.deescalated, undefined)
+  tick(state, 0.25)
+
+  assert.equal(state.storyIncident?.deescalated, true)
+  assert.equal(state.speed, 0)
+  assert.equal(getNinthLifeDecisionOptions(state).shelter.threatAdjustment, -5)
+  assert.equal(resolveNinthLife(state, 'shelter'), true)
+  assert.equal(state.storyResolution?.threatDelta, 15)
+  assert.equal(state.threat, initialThreat + 15)
+})
+
+test('Marlowe de-escalation blocks immediate exploitation and survives a save', () => {
+  const state = finishThirdCleanupAtContact()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const marlowe = state.cats.find(cat => cat.id === 'marlowe')!
+  squad.members.push(marlowe.id)
+  marlowe.assignedTo = squad.id
+  assert.equal(verifyNinthLife(state, 'deescalation'), true)
+  tick(state, 15)
+
+  const restored = deserializeState(serializeState(state))
+  assert.equal(restored.storyIncident?.deescalated, true)
+  assert.equal(getNinthLifeDecisionOptions(restored).exploit.available, false)
+  assert.equal(resolveNinthLife(restored, 'exploit'), false)
+  assert.equal(restored.storyResolution, undefined)
+})
+
 test('a cautious story decision waits for 50 fame before the final summary', () => {
-  const state = finishThirdCleanup()
+  const state = finishThirdCleanupAtContact()
   assert.equal(resolveNinthLife(state, 'escort'), true)
   assert.equal(state.fame, 40)
   assert.equal(state.finalSummaryVisible, false)
 
   const squad = state.squads[0]
   state.speed = 1
-  squad.phase = 'cleanup'
-  state.missions.find(mission => mission.id === squad.missionId)!.progress = 29
+  let cleanupSerial = 0
+  const prepareCleanup = () => {
+    const mission = {
+      id: `finale-cleanup-${++cleanupSerial}`, title: 'mission.a', x: 23, y: 25, priority: 1,
+      status: 'assigned' as const, progress: 29, interruptionPolicy: 'preserve_progress' as const,
+      squadIds: [squad.id], contributorSquadIds: [] as string[],
+    }
+    state.missions.push(mission)
+    squad.phase = 'cleanup'
+    squad.missionId = mission.id
+    squad.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
+  }
+  prepareCleanup()
   tick(state, 1)
   assert.equal(state.fame, 45)
   assert.equal(state.finalSummaryVisible, false)
-  squad.phase = 'cleanup'
-  state.missions.find(mission => mission.id === squad.missionId)!.progress = 29
+  prepareCleanup()
   tick(state, 1)
   assert.equal(state.fame, 50)
+  assert.equal(state.finalSummaryVisible, false)
+  advanceUntil(state, () => state.finalSummaryVisible, 'Final aftermath did not complete')
   assert.equal(state.finalSummaryVisible, true)
+})
+
+test('the revealed observer moves physically toward the aftermath target and survives saving', () => {
+  const state = finishThirdCleanupAtContact()
+  const squad = state.squads.find(candidate => candidate.id === 'alpha')!
+  const shorokh = state.cats.find(cat => cat.id === 'shorokh')!
+  squad.members.push(shorokh.id)
+  shorokh.assignedTo = squad.id
+  assert.equal(verifyNinthLife(state, 'recon'), true)
+  tick(state, 30)
+  assert.equal(state.storyObserver?.status, 'revealed')
+  assert.equal(resolveNinthLife(state, 'shelter'), true)
+  const startX = state.storyObserver!.x
+  tick(state, 10)
+  assert.notEqual(state.storyObserver?.x, startX)
+  assert.equal(state.storyObserver?.status, 'tracking')
+
+  const restored = deserializeState(serializeState(state))
+  assert.equal(restored.storyAftermath?.status, 'pending')
+  tick(restored, 50)
+  assert.equal(restored.storyAftermath?.status, 'completed')
+  assert.deepEqual(
+    { x: restored.storyObserver?.x, y: restored.storyObserver?.y },
+    { x: 46, y: 51 },
+  )
+})
+
+test('each Ninth Life decision schedules its distinct returning consequence', () => {
+  const expected = {
+    shelter: 'base_marked', interrogate: 'intercepted_transmission', escort: 'safe_route', exploit: 'false_entrance',
+  } as const
+  for (const [decision, kind] of Object.entries(expected) as [keyof typeof expected, typeof expected[keyof typeof expected]][]) {
+    const state = finishThirdCleanupAtContact()
+    assert.equal(resolveNinthLife(state, decision), true)
+    assert.equal(state.storyAftermath?.kind, kind)
+    const delay = decision === 'interrogate' ? 75 : 60
+    tick(state, delay)
+    assert.equal(state.storyAftermath?.status, 'completed')
+    assert.equal(state.log.some(entry => entry.key === `log.story_aftermath.${kind}`), true)
+    if (decision === 'exploit') assert.equal(state.storyResolution?.unlockedLocation, true)
+  }
 })
 
 test('research consumes scrap over sixty seconds and grants its warehouse reward', () => {

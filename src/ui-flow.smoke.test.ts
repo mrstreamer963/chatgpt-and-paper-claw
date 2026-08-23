@@ -8,12 +8,14 @@ import {
   createSquad,
   createState as createFreshState,
   drainEvents,
+  dispatchNinthLife,
   equipItem,
   getAchievements,
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
   tick,
+  verifyNinthLife,
 } from '@nine-lives/game-core'
 
 function createState() {
@@ -53,6 +55,7 @@ const acceptedAction = async () => true
 test('UI smoke: a prepared operation renders every blocking stage through the final report', async () => {
   const BaseOperations = await loadComponent('/src/components/BaseOperations.vue')
   const GameOverlays = await loadComponent('/src/components/GameOverlays.vue')
+  const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
   const state = createState()
   for (const catId of ['pixel', 'rust', 'bastion']) assignCat(state, catId, 'alpha')
   for (const catId of ['marlowe', 'shorokh', 'myata']) assignCat(state, catId, 'bravo')
@@ -103,17 +106,39 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   state.speed = 1
   tick(state, 3)
   assert.ok(state.storyIncident)
+  assert.equal(dispatchNinthLife(state, 'bravo'), true)
+  for (let step = 0; step < 100 && state.storyIncident?.stage !== 'contact'; step++) tick(state, 0.25)
+  assert.equal(state.storyIncident?.stage, 'contact')
   overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 3 })
   assert.match(overlayHtml, /Девятая жизнь/)
   assert.match(overlayHtml, /Укрыть дезертира/)
+  assert.match(overlayHtml, /Личность дезертира/)
+  assert.match(overlayHtml, /Проверить показания/)
   assert.match(overlayHtml, /Новая игра \/ сброс прогресса/)
+
+  assert.equal(verifyNinthLife(state, 'recon'), true)
+  tick(state, 15)
+  const urgentMapHtml = await render(OperationsMap, { state, locale: 'ru' })
+  assert.match(urgentMapHtml, /Фильтры для Южного узла/)
+  tick(state, 15)
+  assert.equal(state.storyIncident?.stage, 'contact')
+
   const resetOverlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: true, totalRuns: 3 })
   assert.match(resetOverlayHtml, /Начать новую операцию/)
   assert.doesNotMatch(resetOverlayHtml, /Укрыть дезертира/)
 
   assert.equal(resolveNinthLife(state, 'shelter'), true)
+  const trackingMapHtml = await render(OperationsMap, { state, locale: 'ru' })
+  assert.match(trackingMapHtml, /Наблюдатель ежей/)
+  for (let step = 0; step < 500 && !state.finalSummaryVisible; step++) tick(state, 0.25)
+  assert.equal(state.storyAftermath?.status, 'completed')
   overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 3 })
   assert.match(overlayHtml, /ДЕЛО ЗАКРЫТО/)
+  assert.match(overlayHtml, /КОНТАКТ/)
+  assert.match(overlayHtml, /ПРОВЕРКА СВЕДЕНИЙ/)
+  assert.match(overlayHtml, /ПОВЕДЕНИЕ ОТРЯДА/)
+  assert.match(overlayHtml, /ПОЛЕВОЕ ПОСЛЕДСТВИЕ/)
+  assert.match(overlayHtml, /ЮЖНЫЙ УЗЕЛ/)
   assert.match(overlayHtml, /Продолжить в песочнице/)
 })
 

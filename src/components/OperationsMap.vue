@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { GAME_RULES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getDeployCatsBlockReason, getMergeSquadsBlockReason, getMoveSquadBlockReason, getSplitSquadBlockReason, getSquadMapPosition, type Cat, type DeployOrder, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
+import { GAME_RULES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getDeployCatsBlockReason, getMergeSquadsBlockReason, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getSplitSquadBlockReason, getSquadMapPosition, getWaterFiltersDispatchBlockReason, type Cat, type DeployOrder, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
@@ -19,6 +19,8 @@ const emit = defineEmits<{
   merge: [sourceSquadId: string, targetSquadId: string]
   move: [squadId: string, x: number, y: number]
   returnHome: [squadId: string]
+  dispatchStory: [squadId: string]
+  dispatchUrgent: [squadId: string]
 }>()
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
 const base = { x: 46, y: 51 }
@@ -103,6 +105,7 @@ function squadLabel(squad: Squad) {
   if (squad.phase === 'support') return tr('status.support', { seconds: Math.max(0, Math.ceil(squad.travelDuration - squad.travel)) })
   if (squad.phase === 'merging') return tr('status.merging')
   if (squad.phase === 'incident') return tr('status.incident')
+  if (squad.phase === 'urgent') return tr('status.urgent')
   return tr('status.cleanup', { progress: Math.round((props.state.missions.find(mission => mission.id === squad.missionId)?.progress ?? 0) / GAME_RULES.cleanupWork * 100), seconds: Math.ceil(getCleanupSecondsRemaining(props.state, squad)) })
 }
 
@@ -152,6 +155,36 @@ function armMerge() { if (selectedSquadIds.value.length === 1) { mergeSourceSqua
 function selectMission(mission: Mission) { commandMessage.value = undefined; if (selectedCount.value) return issueMission(mission); selectedTarget.value = selectedTarget.value?.type === 'mission' && selectedTarget.value.missionId === mission.id ? undefined : { type: 'mission', missionId: mission.id } }
 function selectBase() { commandMessage.value = undefined; if (selectedCount.value) return issueReturn(); selectedTarget.value = selectedTarget.value?.type === 'base' ? undefined : { type: 'base' } }
 
+function selectedCommandSquads() {
+  const selectedField = selectedSquadIds.value
+    .map(id => props.state.squads.find(squad => squad.id === id))
+    .filter((squad): squad is Squad => Boolean(squad))
+  const selectedBase = props.state.squads.filter(squad => squad.phase === 'base' && squad.members.length > 0
+    && squad.members.every(id => selectedCatIds.value.includes(id)))
+  return [...new Map([...selectedField, ...selectedBase].map(squad => [squad.id, squad])).values()]
+}
+
+function dispatchStory() {
+  const story = props.state.storyIncident
+  if (!story || story.stage !== 'signal') return
+  const candidates = selectedCommandSquads()
+  if (candidates.length !== 1) return setFailure('story.dispatch.reason.select_one')
+  const reason = getNinthLifeDispatchBlockReason(props.state, candidates[0].id)
+  if (reason) return setFailure(reason)
+  emit('dispatchStory', candidates[0].id)
+  clearCommand()
+}
+
+function dispatchUrgent() {
+  if (props.state.urgentOperation?.status !== 'available') return
+  const candidates = selectedCommandSquads()
+  if (candidates.length !== 1) return setFailure('urgent.water_filters.reason.select_one')
+  const reason = getWaterFiltersDispatchBlockReason(props.state, candidates[0].id)
+  if (reason) return setFailure(reason)
+  emit('dispatchUrgent', candidates[0].id)
+  clearCommand()
+}
+
 function selectMapPoint(event: MouseEvent) {
   if (suppressMapClick) { suppressMapClick = false; return }
   if (!selectedCount.value) return
@@ -193,7 +226,10 @@ function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.tim
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <button type="button" class="base-pin" :class="{ selected: selectedTarget?.type === 'base' }" :aria-label="tr('БАЗА')" @click.stop="selectBase"><strong>NL</strong></button>
       <button v-for="cat in state.cats.filter(catIsAtBase)" :key="`map-cat-${cat.id}`" type="button" class="base-cat-marker" :class="{ selected: selectedCatIds.includes(cat.id), sleeping: cat.sleeping, injured: cat.injuredRemaining > 0 }" :style="baseCatStyle(cat)" :aria-label="tr(cat.name)" :title="baseCatTooltip(cat)" @click.stop="selectCat(cat, $event)"><svg viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg></button>
-      <div v-if="state.storyIncident" class="story-pin" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }" :aria-label="tr('Дезертир ждёт решения')"><span>!</span></div><div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span></div>
+      <button v-if="state.storyIncident" type="button" class="story-pin" :class="{ dispatching: state.storyIncident.stage === 'dispatch' }" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }" :aria-label="tr('Дезертир ждёт решения')" @click.stop="dispatchStory"><span>!</span></button><div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span></div>
+      <div v-if="state.storyObserver && state.storyObserver.status !== 'hidden' && state.storyObserver.status !== 'gone'" class="observer-pin" :class="state.storyObserver.status" :style="{ left: `${state.storyObserver.x}%`, top: `${state.storyObserver.y}%` }" :title="tr('story.observer.title')"><span>◉</span></div>
+      <div v-if="state.storyAftermath?.status === 'completed'" class="aftermath-pin" :class="state.storyAftermath.kind" :style="{ left: `${state.storyAftermath.x}%`, top: `${state.storyAftermath.y}%` }" :title="tr(`story.aftermath.${state.storyAftermath.kind}.title`)"><span>◆</span></div>
+      <button v-if="state.urgentOperation && !['pending', 'completed', 'failed'].includes(state.urgentOperation.status)" type="button" class="urgent-pin" :class="state.urgentOperation.status" :style="{ left: `${state.urgentOperation.x}%`, top: `${state.urgentOperation.y}%` }" :aria-label="tr('urgent.water_filters.title')" @click.stop="dispatchUrgent"><span>F</span></button>
       <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id, 'enhanced-alert': mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
       <button v-for="mission in state.missions.filter(isActiveAssignedMission)" :key="`assigned-${mission.id}`" type="button" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id, selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
       <div v-if="selectedCount || selectedTarget || commandMessage" class="command-hint"><span>{{ tr(mergeSourceSquadId ? 'squad.merge.choose_target' : selectedCount ? 'dispatch.command.choose_target_count' : 'dispatch.command.choose_squad', { count: selectedCount }) }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>

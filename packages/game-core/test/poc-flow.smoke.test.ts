@@ -5,6 +5,7 @@ import {
   createState,
   deployCats,
   drainEvents,
+  dispatchNinthLife,
   equipItem,
   getAchievements,
   resolveNinthLife,
@@ -64,9 +65,14 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
   assert.equal(successfulCleanups(state), 3)
   assert.equal(state.storyIncident?.kind, 'ninth_life')
 
+  assert.equal(dispatchNinthLife(state, supportSquad.id), true)
+  advanceUntil(state, () => state.storyIncident?.stage === 'contact', 'The squad did not reach the deserter')
+
   assert.equal(resolveNinthLife(state, 'shelter'), true)
   assert.equal(state.fame, 50)
   assert.equal(state.threat, 40)
+  assert.equal(state.finalSummaryVisible, false)
+  advanceUntil(state, () => state.finalSummaryVisible, 'The field aftermath did not reach the final report')
   assert.equal(state.finalSummaryVisible, true)
   const eventTypes = drainEvents(state).map(event => event.type)
   const requiredEventOrder = [
