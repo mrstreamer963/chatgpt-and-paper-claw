@@ -121,16 +121,14 @@ test('GameCore owns the live state and exposes isolated snapshots', () => {
   assert.equal(core.snapshot().speed, 5)
 })
 
-test('GameCore forms a persistent squad from map-selected cats on first order', () => {
+test('GameCore rejects forming a squad from a map order', () => {
   const core = new GameCore()
   const missionId = core.snapshot().missions[0].id
   assert.equal(core.snapshot().squads.length, 0)
-  assert.equal(core.dispatch({ type: 'deploy_cats', catIds: ['pixel', 'rust'], order: { type: 'mission', missionId } }), true)
+  assert.equal(core.dispatch({ type: 'deploy_cats', catIds: ['pixel', 'rust'], order: { type: 'mission', missionId } }), false)
   const snapshot = core.snapshot()
-  assert.equal(snapshot.squads.length, 1)
-  assert.deepEqual(snapshot.squads[0].members, ['pixel', 'rust'])
-  assert.equal(snapshot.squads[0].autoDispatch, false)
-  assert.deepEqual(snapshot.missions[0].squadIds, [snapshot.squads[0].id])
+  assert.equal(snapshot.squads.length, 0)
+  assert.deepEqual(snapshot.missions[0].squadIds, [])
 })
 
 test('squads can be created up to the staff count with stable non-reused ids', () => {

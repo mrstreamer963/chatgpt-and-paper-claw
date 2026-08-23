@@ -6,6 +6,7 @@ import {
   ITEM_DEFINITIONS,
   RESEARCH_DEFINITIONS,
   RESEARCH_RULES,
+  catIsAtBase,
   getResearchWorker,
   getRenameSquadError,
   getSquadCleanupEstimate,
@@ -136,7 +137,7 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
   const lane = index % 3
   if (cat.assignedTo) {
     const squad = props.state.squads.find(candidate => candidate.id === cat.assignedTo)
-    if (squad && squad.phase !== 'base') return { left: '50%', top: '50%', opacity: 0 }
+    if (!catIsAtBase(props.state, cat)) return { left: '50%', top: '50%', opacity: 0 }
   }
   const positions = cat.injuredRemaining > 0
     ? [{ left: 66, top: 68 }, { left: 76, top: 71 }, { left: 86, top: 67 }]
@@ -157,7 +158,7 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
         <button class="room control" :class="{ selected: panel === 'achievements' }" @click="emit('panel', 'achievements')"><span>{{ tr('ДИСПЕТЧЕРСКАЯ') }}</span><small>{{ tr('base.achievement_summary', { completed: completedAchievementCount, total: achievements.length, cleanups: totalRuns }) }}</small></button>
         <button class="room lab" :class="{ selected: panel === 'lab' }" @click="emit('panel', 'lab')"><span>{{ tr('ЛАБОРАТОРИЯ') }}</span><small v-if="state.research.activeId">{{ researchWorker ? tr(researchWorker.name) : tr('Нет исполнителя') }} · {{ researchPercent(state.research.activeId) }}%</small><small v-else>{{ tr('research.count', { completed: Object.values(state.research.nodes).filter(node => node.completed).length, total: RESEARCH_DEFINITIONS.length }) }}</small></button>
         <button class="room garage" :class="{ selected: panel === 'teams' }" @click="emit('panel', 'teams')"><span>{{ tr('ГАРАЖ И АРСЕНАЛ') }}</span><small>{{ tr('base.garage_summary', { squads: state.squads.filter(squad => squad.phase === 'base').length, total: state.squads.length, items: Object.values(state.inventory).reduce((sum, count) => sum + count, 0) }) }}</small></button>
-        <svg v-for="(cat, index) in state.cats" :key="`base-${cat.id}`" class="base-cat-token" :class="{ injured: cat.injuredRemaining > 0, sleeping: cat.sleeping, away: cat.assignedTo && state.squads.find(squad => squad.id === cat.assignedTo)?.phase !== 'base' }" :style="baseCatStyle(cat, index)" viewBox="0 0 64 64" :aria-label="tr(cat.name)"><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg>
+        <svg v-for="(cat, index) in state.cats" :key="`base-${cat.id}`" class="base-cat-token" :class="{ injured: cat.injuredRemaining > 0, sleeping: cat.sleeping, away: !catIsAtBase(state, cat) }" :style="baseCatStyle(cat, index)" viewBox="0 0 64 64" :aria-label="tr(cat.name)"><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg>
       </div>
     </div>
 

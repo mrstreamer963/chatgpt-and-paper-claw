@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { formSquadAtPoint, readWorld, selectBaseCats, waitForSquadPhase } from './rts-helpers'
+import { formSquadAtPoint, readWorld, waitForSquadPhase } from './rts-helpers'
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -8,9 +8,9 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
-test('the first map order forms a persistent squad and the same composition reuses its id', async ({ page }) => {
+test('a squad formed at base keeps its id across field orders', async ({ page }) => {
   await page.goto('/')
-  await expect(page.locator('.base-cat-marker')).toHaveCount(6)
+  await expect(page.locator('.base-cat-marker')).toHaveCount(0)
   await expect(page.locator('.squad-formation')).toHaveCount(0)
 
   await formSquadAtPoint(page, ['Пиксель', 'Ржа'])
@@ -28,7 +28,7 @@ test('the first map order forms a persistent squad and the same composition reus
   await waitForSquadPhase(page, 'squad-1', ['base'])
   await page.getByRole('button', { name: /^Ⅱ/ }).click()
 
-  await selectBaseCats(page, ['Пиксель', 'Ржа'])
+  await page.locator('.map-squad-list > button').first().click()
   await page.locator('.cleanup-pin').first().click()
   await expect.poll(() => readWorld(page, state => state.squads.map((squad: any) => squad.id))).toEqual(['squad-1'])
 })
@@ -45,8 +45,8 @@ test('a dynamically formed squad keeps its custom name across deployment and loc
   await expect(page.getByRole('button', { name: /Ночные фонари/ })).toBeVisible()
 
   await page.getByRole('button', { name: 'Карта', exact: true }).click()
-  await expect(page.locator('.squad-formation.squad-1')).toContainText('Ночные фонари')
+  await expect(page.locator('.map-squad-list')).toContainText('Ночные фонари')
   await page.getByRole('button', { name: 'EN', exact: true }).click()
-  await expect(page.locator('.squad-formation.squad-1')).toContainText('Ночные фонари')
+  await expect(page.locator('.map-squad-list')).toContainText('Ночные фонари')
   await expect.poll(() => readWorld(page, state => state.squads[0]?.customName)).toBe('Ночные фонари')
 })

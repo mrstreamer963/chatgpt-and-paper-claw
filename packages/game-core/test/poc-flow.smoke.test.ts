@@ -3,7 +3,9 @@ import test from 'node:test'
 import {
   continueAfterFinale,
   createState,
-  deployCats,
+  createSquad,
+  assignCat,
+  assignSquadToMission,
   drainEvents,
   dispatchNinthLife,
   equipItem,
@@ -14,6 +16,7 @@ import {
   selectResearch,
   successfulCleanups,
   tick,
+  moveSquadToPoint,
   type State,
 } from '../src/simulation.ts'
 
@@ -32,8 +35,13 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
   assert.equal(equipItem(state, 'marlowe', 'belt', 'headset'), true)
   assert.equal(selectResearch(state, 'field_scanners'), true)
 
-  assert.equal(deployCats(state, ['pixel', 'rust', 'bastion'], { type: 'mission', missionId: state.missions[0].id }), true)
-  assert.equal(deployCats(state, ['marlowe', 'shorokh', 'myata'], { type: 'move', x: 46, y: 55 }), true)
+  assert.equal(createSquad(state), true)
+  assert.equal(createSquad(state), true)
+  for (const catId of ['pixel', 'rust', 'bastion']) assert.equal(assignCat(state, catId, 'squad-1'), true)
+  for (const catId of ['marlowe', 'shorokh', 'myata']) assert.equal(assignCat(state, catId, 'squad-2'), true)
+  assert.equal(assignSquadToMission(state, 'squad-1', state.missions[0].id), true)
+  state.squads[1].autoDispatch = false
+  assert.equal(moveSquadToPoint(state, 'squad-2', { x: 46, y: 55 }), true)
   const operationsSquad = state.squads[0]
   const supportSquad = state.squads[1]
   operationsSquad.autoDispatch = true

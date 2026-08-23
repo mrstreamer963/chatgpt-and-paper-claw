@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { GAME_RULES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getDeployCatsBlockReason, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getSquadMapPosition, getWaterFiltersDispatchBlockReason, type Cat, type DeployOrder, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
+import { GAME_RULES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getReturnSquadBlockReason, getSquadMapPosition, getSquadMinimumEnergy, getWaterFiltersDispatchBlockReason, isActiveAssignedMission, isSquadResting, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
-import { baseFormationOffsets, formationOffsets } from '../map/formation'
+import { formationOffsets } from '../map/formation'
 import { useMapSelection } from '../map/useMapSelection'
-import { orderFailureSummary, partitionSelectedBaseCats as getSelectedBaseCats, validateDeployOrder } from '../map/useMapOrders'
 import MapRouteLayer from './MapRouteLayer.vue'
 import MapSquadLayer from './MapSquadLayer.vue'
 import MapSidePanel from './MapSidePanel.vue'
@@ -14,7 +13,6 @@ import MapSidePanel from './MapSidePanel.vue'
 const props = defineProps<{ state: State; locale: Locale }>()
 const emit = defineEmits<{
   assign: [squadId: string, missionId: string]
-  deploy: [catIds: string[], order: DeployOrder]
   move: [squadId: string, x: number, y: number]
   returnHome: [squadId: string]
   dispatchStory: [squadId: string]
@@ -22,7 +20,7 @@ const emit = defineEmits<{
 }>()
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
 const base = { x: 46, y: 51 }
-const { selectedSquadIds, selectedCatIds, selectedTarget, commandMessage, selectedCount, clearCommand, handleEscape } = useMapSelection()
+const { selectedSquadIds, selectedTarget, commandMessage, selectedCount, clearCommand, handleEscape } = useMapSelection()
 const mapGrid = ref<HTMLElement>()
 const mapSize = ref({ width: 1000, height: 700 })
 const selectionBox = ref<{ startX: number; startY: number; x: number; y: number; additive: boolean; pointerId: number; dragging: boolean }>()
@@ -38,18 +36,11 @@ function squadIndex(squad: Squad) { return Math.max(0, props.state.squads.findIn
 function squadColor(squad: Squad) { const index = squadIndex(squad); return squadPalette[index] ?? `hsl(${(index * 137.5) % 360} 54% 66%)` }
 
 function squadStyle(squad: Squad) { const position = squadPosition(squad); return { left: `${position.x}%`, top: `${position.y}%`, '--squad-color': squadColor(squad) } }
-function formationMemberStyle(member: { x: number; y: number }) { return { left: `${member.x}px`, top: `${member.y}px` } }
 function squadMembers(squad: Squad) { return squad.members.map((id, index) => ({ id, ...formationOffsets(squad.members.length)[index] })) }
 function fieldCat(_squad: Squad, memberId: string) { return props.state.cats.find(cat => cat.id === memberId) }
 function fieldCatTooltip(squad: Squad, memberId: string) {
   const cat = fieldCat(squad, memberId)
   if (!cat) return memberId
-  const condition = cat.injuredRemaining > 0
-    ? tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) })
-    : tr('cat.energy', { role: tr(cat.role), energy: Math.round(cat.energy) })
-  return `${tr(cat.name)} · ${condition}`
-}
-function baseCatTooltip(cat: Cat) {
   const condition = cat.injuredRemaining > 0
     ? tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) })
     : tr('cat.energy', { role: tr(cat.role), energy: Math.round(cat.energy) })
@@ -65,35 +56,9 @@ function formationIntersectsBox(squad: Squad, left: number, right: number, top: 
     return x + halfWidth >= left && x - halfWidth <= right && y + halfHeight >= top && y - halfHeight <= bottom
   })
 }
-function route(squad: Squad) {
-  const position = squadPosition(squad)
-  if (squad.phase === 'returning') return { x1: position.x, y1: position.y, x2: base.x, y2: base.y }
-  if (squad.phase === 'moving') return { x1: position.x, y1: position.y, x2: squad.destination?.x ?? position.x, y2: squad.destination?.y ?? position.y }
-  if (squad.phase === 'merging') return { x1: position.x, y1: position.y, x2: squad.mergePoint?.x ?? position.x, y2: squad.mergePoint?.y ?? position.y }
-  return { x1: position.x, y1: position.y, x2: squad.target?.x ?? position.x, y2: squad.target?.y ?? position.y }
-}
-function missionLink(squad: Squad) { const position = squadPosition(squad); return { x1: position.x, y1: position.y, x2: squad.target?.x ?? position.x, y2: squad.target?.y ?? position.y } }
-function markerOriginStyle(squad: Squad) { const position = squadPosition(squad); return { left: `${position.x}%`, top: `${position.y}%`, '--squad-color': squadColor(squad) } }
 
-function catIsAtBase(cat: Cat) { return !cat.assignedTo || props.state.squads.find(squad => squad.id === cat.assignedTo)?.phase === 'base' }
-function baseCatPosition(cat: Cat) {
-  const baseCats = props.state.cats.filter(candidate => catIsAtBase(candidate))
-  const index = Math.max(0, baseCats.findIndex(candidate => candidate.id === cat.id))
-  const offset = baseFormationOffsets(baseCats.length)[index] ?? { x: 0, y: 0 }
-  return { x: base.x + offset.x / mapSize.value.width * 100, y: base.y + offset.y / mapSize.value.height * 100 }
-}
-function baseCatStyle(cat: Cat) {
-  const squad = props.state.squads.find(candidate => candidate.id === cat.assignedTo)
-  const position = baseCatPosition(cat)
-  return {
-    left: `${position.x}%`, top: `${position.y}%`,
-    '--squad-color': squad ? squadColor(squad) : '#d8c7a7',
-  }
-}
-function isActiveAssignedMission(mission: Mission) { return mission.status === 'assigned' && mission.squadIds.some(id => props.state.squads.find(squad => squad.id === id)?.phase !== 'returning') }
-function squadIsResting(squad: Squad) { return squad.members.map(id => props.state.cats.find(cat => cat.id === id)).filter(Boolean).some(cat => cat!.sleeping ? cat!.energy < GAME_RULES.wakeForOrderEnergy : cat!.energy <= GAME_RULES.sleepAtEnergy) }
 function squadLabel(squad: Squad) {
-  if (squad.phase === 'base') return tr(squadIsResting(squad) ? 'status.resting' : squad.autoDispatch ? 'status.base_ready' : 'status.awaiting_order')
+  if (squad.phase === 'base') return tr(isSquadResting(props.state, squad) ? 'status.resting' : squad.autoDispatch ? 'status.base_ready' : 'status.awaiting_order')
   if (squad.phase === 'field') return tr('status.field')
   if (squad.phase === 'outbound') return tr('status.outbound', { mission: squad.target?.title ?? '', seconds: Math.ceil(squad.travelDuration - squad.travel) })
   if (squad.phase === 'moving') return tr('status.moving', { seconds: Math.max(0, Math.ceil(squad.travelDuration - squad.travel)) })
@@ -106,58 +71,37 @@ function squadLabel(squad: Squad) {
 }
 
 function setFailure(reason: string) { commandMessage.value = reason }
-function partitionSelectedBaseCats() {
-  return getSelectedBaseCats(props.state, selectedCatIds.value)
-}
 function issueMission(mission: Mission) {
   const blockedSquads: string[] = [], reasons: string[] = []
   for (const squadId of selectedSquadIds.value) { const reason = getAssignMissionBlockReason(props.state, squadId, mission.id); if (reason) { blockedSquads.push(squadId); reasons.push(reason) } else emit('assign', squadId, mission.id) }
-  const cats = partitionSelectedBaseCats(); reasons.push(...cats.reasons)
-  const deployReason = cats.ready.length ? getDeployCatsBlockReason(props.state, cats.ready, { type: 'mission', missionId: mission.id }) : undefined
-  if (deployReason) { cats.blocked.push(...cats.ready); reasons.push(deployReason) }
-  else if (cats.ready.length) emit('deploy', cats.ready, { type: 'mission', missionId: mission.id })
   selectedSquadIds.value = blockedSquads
-  selectedCatIds.value = cats.blocked
   selectedTarget.value = undefined
-  commandMessage.value = orderFailureSummary(reasons)
+  commandMessage.value = reasons.length > 1 ? 'dispatch.reason.partial' : reasons[0]
 }
 function issueReturn() {
   const blocked: string[] = [], reasons: string[] = []
-  for (const squadId of selectedSquadIds.value) { const squad = props.state.squads.find(candidate => candidate.id === squadId); if (!squad || ['incident', 'support'].includes(squad.phase)) { blocked.push(squadId); reasons.push('dispatch.reason.away') } else if (squad.phase !== 'base') emit('returnHome', squad.id) }
-  selectedSquadIds.value = blocked; selectedCatIds.value = []; selectedTarget.value = undefined; commandMessage.value = orderFailureSummary(reasons)
+  for (const squadId of selectedSquadIds.value) { const reason = getReturnSquadBlockReason(props.state, squadId); if (reason) { blocked.push(squadId); reasons.push(reason) } else emit('returnHome', squadId) }
+  selectedSquadIds.value = blocked; selectedTarget.value = undefined; commandMessage.value = reasons.length > 1 ? 'dispatch.reason.partial' : reasons[0]
 }
 function selectSquad(squad: Squad, event?: MouseEvent) {
   commandMessage.value = undefined
   const target = selectedTarget.value
-  if (target?.type === 'mission') { const mission = props.state.missions.find(candidate => candidate.id === target.missionId); if (squad.phase === 'base') selectedCatIds.value = [...new Set([...selectedCatIds.value, ...squad.members])]; else selectedSquadIds.value = [...new Set([...selectedSquadIds.value, squad.id])]; if (mission) issueMission(mission); return }
-  if (selectedTarget.value?.type === 'base') { if (squad.phase !== 'base') selectedSquadIds.value = [...new Set([...selectedSquadIds.value, squad.id])]; issueReturn(); return }
-  if (squad.phase === 'base') { if (event?.shiftKey) for (const id of squad.members) selectedCatIds.value = selectedCatIds.value.includes(id) ? selectedCatIds.value.filter(value => value !== id) : [...selectedCatIds.value, id]; else { selectedCatIds.value = [...squad.members]; selectedSquadIds.value = [] } }
-  else if (event?.shiftKey) selectedSquadIds.value = selectedSquadIds.value.includes(squad.id) ? selectedSquadIds.value.filter(id => id !== squad.id) : [...selectedSquadIds.value, squad.id]
-  else { selectedSquadIds.value = [squad.id]; selectedCatIds.value = [] }
-}
-function selectCat(cat: Cat, event: MouseEvent) {
-  commandMessage.value = undefined
-  const target = selectedTarget.value
-  if (target?.type === 'mission') { const mission = props.state.missions.find(candidate => candidate.id === target.missionId); selectedCatIds.value = [...new Set([...selectedCatIds.value, cat.id])]; if (mission) issueMission(mission); return }
-  if (event.shiftKey) selectedCatIds.value = selectedCatIds.value.includes(cat.id) ? selectedCatIds.value.filter(id => id !== cat.id) : [...selectedCatIds.value, cat.id]
-  else { selectedCatIds.value = [cat.id]; selectedSquadIds.value = [] }
+  if (target?.type === 'mission') { const mission = props.state.missions.find(candidate => candidate.id === target.missionId); selectedSquadIds.value = [...new Set([...selectedSquadIds.value, squad.id])]; if (mission) issueMission(mission); return }
+  if (selectedTarget.value?.type === 'base') { selectedSquadIds.value = [...new Set([...selectedSquadIds.value, squad.id])]; issueReturn(); return }
+  if (event?.shiftKey) selectedSquadIds.value = selectedSquadIds.value.includes(squad.id) ? selectedSquadIds.value.filter(id => id !== squad.id) : [...selectedSquadIds.value, squad.id]
+  else selectedSquadIds.value = [squad.id]
 }
 
 function selectMission(mission: Mission) { commandMessage.value = undefined; if (selectedCount.value) return issueMission(mission); selectedTarget.value = selectedTarget.value?.type === 'mission' && selectedTarget.value.missionId === mission.id ? undefined : { type: 'mission', missionId: mission.id } }
 function selectBase() { commandMessage.value = undefined; if (selectedCount.value) return issueReturn(); selectedTarget.value = selectedTarget.value?.type === 'base' ? undefined : { type: 'base' } }
 
 function selectedCommandSquads() {
-  const selectedField = selectedSquadIds.value
+  return selectedSquadIds.value
     .map(id => props.state.squads.find(squad => squad.id === id))
     .filter((squad): squad is Squad => Boolean(squad))
-  const selectedBase = props.state.squads.filter(squad => squad.phase === 'base' && squad.members.length > 0
-    && squad.members.every(id => selectedCatIds.value.includes(id)))
-  return [...new Map([...selectedField, ...selectedBase].map(squad => [squad.id, squad])).values()]
 }
 
 function dispatchStory() {
-  const story = props.state.storyIncident
-  if (!story || story.stage !== 'signal') return
   const candidates = selectedCommandSquads()
   if (candidates.length !== 1) return setFailure('story.dispatch.reason.select_one')
   const reason = getNinthLifeDispatchBlockReason(props.state, candidates[0].id)
@@ -167,7 +111,6 @@ function dispatchStory() {
 }
 
 function dispatchUrgent() {
-  if (props.state.urgentOperation?.status !== 'available') return
   const candidates = selectedCommandSquads()
   if (candidates.length !== 1) return setFailure('urgent.water_filters.reason.select_one')
   const reason = getWaterFiltersDispatchBlockReason(props.state, candidates[0].id)
@@ -181,18 +124,17 @@ function selectMapPoint(event: MouseEvent) {
   if (!selectedCount.value) return
   const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const point: MapPoint = { x: Math.max(5, Math.min(95, (event.clientX - bounds.left) / bounds.width * 100)), y: Math.max(7, Math.min(93, (event.clientY - bounds.top) / bounds.height * 100)) }
-  const cats = partitionSelectedBaseCats()
-  const actors = [...selectedSquadIds.value.map(id => ({ type: 'squad' as const, id })), ...(cats.ready.length ? [{ type: 'cats' as const, id: 'cats' }] : [])]
-  const columns = Math.max(1, Math.ceil(Math.sqrt(actors.length))), blockedSquads: string[] = [], reasons: string[] = [...cats.reasons]; let catsBlocked = false
-  actors.forEach((actor, index) => {
+  const actors = [...selectedSquadIds.value]
+  const columns = Math.max(1, Math.ceil(Math.sqrt(actors.length))), blockedSquads: string[] = [], reasons: string[] = []
+  actors.forEach((squadId, index) => {
     const destination = { x: Math.max(5, Math.min(95, point.x + ((index % columns) - (Math.min(columns, actors.length) - 1) / 2) * 3)), y: Math.max(7, Math.min(93, point.y + (Math.floor(index / columns) - (Math.ceil(actors.length / columns) - 1) / 2) * 3)) }
-    if (actor.type === 'squad') { const reason = getMoveSquadBlockReason(props.state, actor.id, destination); if (reason) { blockedSquads.push(actor.id); reasons.push(reason) } else emit('move', actor.id, destination.x, destination.y) }
-    else { const order: DeployOrder = { type: 'move', ...destination }; const reason = validateDeployOrder(props.state, cats.ready, order); if (reason) { catsBlocked = true; reasons.push(reason) } else emit('deploy', cats.ready, order) }
+    const reason = getMoveSquadBlockReason(props.state, squadId, destination)
+    if (reason) { blockedSquads.push(squadId); reasons.push(reason) } else emit('move', squadId, destination.x, destination.y)
   })
-  selectedSquadIds.value = blockedSquads; selectedCatIds.value = catsBlocked ? [...cats.blocked, ...cats.ready] : cats.blocked; commandMessage.value = orderFailureSummary(reasons)
+  selectedSquadIds.value = blockedSquads; commandMessage.value = reasons.length > 1 ? 'dispatch.reason.partial' : reasons[0]
 }
-function squadCommandReason(squad: Squad) { const target = selectedTarget.value; if (target?.type === 'mission') return getAssignMissionBlockReason(props.state, squad.id, target.missionId); if (target?.type === 'base') return !['base', 'incident', 'support'].includes(squad.phase) ? undefined : 'dispatch.reason.away'; return getMoveSquadBlockReason(props.state, squad.id) }
-function squadEnergy(squad: Squad) { const members = squad.members.map(id => props.state.cats.find(cat => cat.id === id)).filter(Boolean); return members.length ? Math.round(Math.min(...members.map(cat => cat!.energy))) : 0 }
+function squadCommandReason(squad: Squad) { const target = selectedTarget.value; if (target?.type === 'mission') return getAssignMissionBlockReason(props.state, squad.id, target.missionId); if (target?.type === 'base') return getReturnSquadBlockReason(props.state, squad.id); return getMoveSquadBlockReason(props.state, squad.id) }
+function squadEnergy(squad: Squad) { return getSquadMinimumEnergy(props.state, squad) }
 function squadIsAvailable(squad: Squad) { return !getMoveSquadBlockReason(props.state, squad.id) }
 
 function selectionBoxStyle() { const box = selectionBox.value; return box ? { left: `${Math.min(box.startX, box.x)}%`, top: `${Math.min(box.startY, box.y)}%`, width: `${Math.abs(box.x - box.startX)}%`, height: `${Math.abs(box.y - box.startY)}%` } : {} }
@@ -201,7 +143,7 @@ function beginSelection(event: PointerEvent) { if (event.button !== 0 || (event.
 function updateSelection(event: PointerEvent) { const box = selectionBox.value; if (!box || box.pointerId !== event.pointerId) return; const point = pointerPoint(event, event.currentTarget as HTMLElement); box.x = point.x; box.y = point.y; if (Math.hypot(box.x - box.startX, box.y - box.startY) > 0.8) box.dragging = true }
 function finishSelection(event: PointerEvent) {
   const box = selectionBox.value; if (!box || box.pointerId !== event.pointerId) return
-  if (box.dragging) { const left = Math.min(box.startX, box.x), right = Math.max(box.startX, box.x), top = Math.min(box.startY, box.y), bottom = Math.max(box.startY, box.y); const squadIds = props.state.squads.filter(squad => squad.phase !== 'base').filter(squad => formationIntersectsBox(squad, left, right, top, bottom)).map(squad => squad.id); selectedSquadIds.value = box.additive ? [...new Set([...selectedSquadIds.value, ...squadIds])] : squadIds; selectedCatIds.value = []; suppressMapClick = true }
+  if (box.dragging) { const left = Math.min(box.startX, box.x), right = Math.max(box.startX, box.x), top = Math.min(box.startY, box.y), bottom = Math.max(box.startY, box.y); const squadIds = props.state.squads.filter(squad => squad.phase !== 'base').filter(squad => formationIntersectsBox(squad, left, right, top, bottom)).map(squad => squad.id); selectedSquadIds.value = box.additive ? [...new Set([...selectedSquadIds.value, ...squadIds])] : squadIds; suppressMapClick = true }
   selectionBox.value = undefined
 }
 onMounted(() => { window.addEventListener('keydown', handleEscape); if (mapGrid.value) { const updateMapSize = () => { if (mapGrid.value) mapSize.value = { width: mapGrid.value.clientWidth, height: mapGrid.value.clientHeight } }; updateMapSize(); mapResizeObserver = new ResizeObserver(updateMapSize); mapResizeObserver.observe(mapGrid.value) } })
@@ -216,16 +158,15 @@ function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.tim
       <MapSquadLayer :state="state" :selected-squad-ids="selectedSquadIds" :squad-style="squadStyle" :squad-is-available="squadIsAvailable" :field-cat-tooltip="fieldCatTooltip" :squad-color="squadColor" :field-cat="fieldCat" :cat-tokens-url="catTokensUrl" :squad-palette="squadPalette" @select="selectSquad" />
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
       <button type="button" class="base-pin" :class="{ selected: selectedTarget?.type === 'base' }" :aria-label="tr('БАЗА')" @click.stop="selectBase"><strong>NL</strong></button>
-      <div v-for="cat in state.cats.filter(catIsAtBase)" :key="`map-cat-${cat.id}`" class="base-cat-marker" :class="{ sleeping: cat.sleeping, injured: cat.injuredRemaining > 0 }" :style="baseCatStyle(cat)" :aria-label="tr(cat.name)" :title="baseCatTooltip(cat)"><svg viewBox="0 0 64 64" aria-hidden="true"><use :href="`${catTokensUrl}#token-${cat.id}`" /></svg></div>
       <button v-if="state.storyIncident" type="button" class="story-pin" :class="{ dispatching: state.storyIncident.stage === 'dispatch' }" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }" :aria-label="tr('Дезертир ждёт решения')" @click.stop="dispatchStory"><span>!</span></button><div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span></div>
       <div v-if="state.storyObserver && state.storyObserver.status !== 'hidden' && state.storyObserver.status !== 'gone'" class="observer-pin" :class="state.storyObserver.status" :style="{ left: `${state.storyObserver.x}%`, top: `${state.storyObserver.y}%` }" :title="tr('story.observer.title')"><span>◉</span></div>
       <div v-if="state.storyAftermath?.status === 'completed'" class="aftermath-pin" :class="state.storyAftermath.kind" :style="{ left: `${state.storyAftermath.x}%`, top: `${state.storyAftermath.y}%` }" :title="tr(`story.aftermath.${state.storyAftermath.kind}.title`)"><span>◆</span></div>
       <button v-if="state.urgentOperation && !['pending', 'completed', 'failed'].includes(state.urgentOperation.status)" type="button" class="urgent-pin" :class="state.urgentOperation.status" :style="{ left: `${state.urgentOperation.x}%`, top: `${state.urgentOperation.y}%` }" :aria-label="tr('urgent.water_filters.title')" @click.stop="dispatchUrgent"><span>F</span></button>
       <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id, 'enhanced-alert': mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
-      <button v-for="mission in state.missions.filter(isActiveAssignedMission)" :key="`assigned-${mission.id}`" type="button" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id, selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
+      <button v-for="mission in state.missions.filter(mission => isActiveAssignedMission(state, mission))" :key="`assigned-${mission.id}`" type="button" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id, selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
       <div v-if="selectedCount || selectedTarget || commandMessage" class="command-hint"><span>{{ tr(selectedCount ? 'dispatch.command.choose_target_count' : 'dispatch.command.choose_squad', { count: selectedCount }) }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
       <div v-if="selectionBox?.dragging" class="selection-box" :style="selectionBoxStyle()"></div>
     </div>
-    <MapSidePanel :state="state" :locale="locale" :selected-squad-ids="selectedSquadIds" :selected-cat-ids="selectedCatIds" :squad-is-available="squadIsAvailable" :squad-command-reason="squadCommandReason" :squad-energy="squadEnergy" :squad-label="squadLabel" @select="selectSquad" />
+    <MapSidePanel :state="state" :locale="locale" :selected-squad-ids="selectedSquadIds" :squad-is-available="squadIsAvailable" :squad-command-reason="squadCommandReason" :squad-energy="squadEnergy" :squad-label="squadLabel" @select="selectSquad" />
   </section>
 </template>

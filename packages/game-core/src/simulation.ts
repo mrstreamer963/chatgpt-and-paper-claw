@@ -914,7 +914,7 @@ export function successfulCleanups(state: State) {
   return state.completedMissionCount
 }
 
-function catIsAtBase(state: State, cat: Cat) {
+export function catIsAtBase(state: State, cat: Cat) {
   if (!cat.assignedTo) return true
   return state.squads.find(squad => squad.id === cat.assignedTo)?.phase === 'base'
 }
@@ -1132,78 +1132,14 @@ export function createSquad(state: State) {
   return true
 }
 
-function createPersistentSquad(state: State, memberIds: string[]) {
-  const serial = Math.max(0, state.squadSerial) + 1
-  const squad: Squad = {
-    id: `squad-${serial}`,
-    name: squadNameForSerial(serial),
-    members: [...memberIds],
-    style: 'balanced',
-    autoDispatch: false,
-    phase: 'base',
-    travel: 0,
-    travelDuration: 0,
-    completed: 0,
-    routeFrom: { ...CONFIG.map.base },
-    restAfterReturn: false,
-  }
-  state.squadSerial = serial
-  state.squads.push(squad)
-  for (const cat of state.cats) if (memberIds.includes(cat.id)) cat.assignedTo = squad.id
-  note(state, 'log.squad_created', { squad: squad.name })
-  syncAchievements(state)
-  return squad
-}
-
-function removeEmptyBaseSquads(state: State, protectedSquadId?: string) {
-  for (const squad of [...state.squads]) {
-    if (squad.id === protectedSquadId || squad.phase !== 'base' || squad.members.length) continue
-    state.disbandedSquadCleanups += squad.completed
-    state.squads.splice(state.squads.indexOf(squad), 1)
-    note(state, 'log.squad_disbanded', { squad: squad.name })
-  }
-}
-
 export function getDeployCatsBlockReason(state: State, catIds: string[], order: DeployOrder) {
-  const ids = [...new Set(catIds)]
-  const cats = ids.map(id => state.cats.find(cat => cat.id === id)).filter((cat): cat is Cat => Boolean(cat))
-  if (!ids.length || cats.length !== ids.length || cats.some(cat => !catIsAtBase(state, cat))) return 'dispatch.reason.away'
-  if (cats.some(cat => cat.injuredRemaining > 0)) return 'dispatch.reason.injured'
-  if (cats.some(cat => !canReceiveWorkOrder(cat))) return 'dispatch.reason.tired'
-  const exactSquad = state.squads.find(squad => squad.phase === 'base' && squad.members.length === ids.length
-    && squad.members.every(id => ids.includes(id)))
-  const virtual: Squad = exactSquad ?? {
-    id: '__deployment__', name: 'squad.alpha', members: ids, style: 'balanced', autoDispatch: false,
-    phase: 'base', travel: 0, travelDuration: 0, completed: 0, routeFrom: { ...CONFIG.map.base }, restAfterReturn: false,
-  }
-  if (order.type === 'mission') {
-    const mission = state.missions.find(candidate => candidate.id === order.missionId)
-    if (!mission || mission.status === 'completed' || state.incident?.missionId === mission.id) return 'dispatch.reason.unavailable'
-    if (!hasEnergyForMissionFrom(state, virtual, CONFIG.map.base, mission)) return 'dispatch.reason.tired'
-    return undefined
-  }
-  return getMoveSquadBlockReason({ ...state, squads: exactSquad ? state.squads : [...state.squads, virtual] }, virtual.id, { x: order.x, y: order.y })
+  void state; void catIds; void order
+  return 'dispatch.reason.away'
 }
 
 export function deployCats(state: State, catIds: string[], order: DeployOrder) {
-  const ids = [...new Set(catIds)]
-  if (getDeployCatsBlockReason(state, ids, order)) return false
-  let squad = state.squads.find(candidate => candidate.phase === 'base' && candidate.members.length === ids.length
-    && candidate.members.every(id => ids.includes(id)))
-  if (!squad) {
-    for (const cat of state.cats) {
-      if (!ids.includes(cat.id)) continue
-      const previous = state.squads.find(candidate => candidate.id === cat.assignedTo)
-      if (previous) previous.members = previous.members.filter(id => id !== cat.id)
-      cat.assignedTo = undefined
-      delete cat.pendingAssignment
-    }
-    squad = createPersistentSquad(state, ids)
-    removeEmptyBaseSquads(state, squad.id)
-  }
-  return order.type === 'mission'
-    ? assignSquadToMission(state, squad.id, order.missionId)
-    : moveSquadToPoint(state, squad.id, { x: order.x, y: order.y })
+  void state; void catIds; void order
+  return false
 }
 
 export function getDisbandSquadBlockReason(state: State, squadId: string) {
@@ -1232,10 +1168,14 @@ export function disbandSquad(state: State, squadId: string) {
 
 export function setSquadStyle(state: State, squadId: string, style: SquadStyle) {
   const squad = state.squads.find(candidate => candidate.id === squadId)
-  if (!squad || squad.phase !== 'base' || squad.style === style) return false
+  if (!squad || !canEditSquadStyle(squad) || squad.style === style) return false
   squad.style = style
   note(state, 'log.squad_style', { squad: squad.name, style })
   return true
+}
+
+export function canEditSquadStyle(squad: Squad) {
+  return squad.phase === 'base'
 }
 
 export function setSquadAutoDispatch(state: State, squadId: string, enabled: boolean) {
@@ -1273,6 +1213,17 @@ export function getEquipmentSelection(cat: Cat, slot: EquipmentSlot) {
 
 export function hasPendingEquipment(cat: Cat, slot?: EquipmentSlot) {
   return slot ? hasPendingSlot(cat, slot) : EQUIPMENT_SLOTS.some(candidate => hasPendingSlot(cat, candidate.id))
+}
+
+export function canSelectEquipmentItem(state: State, catId: string, slot: EquipmentSlot, itemId?: ItemId) {
+  const cat = state.cats.find(candidate => candidate.id === catId)
+  if (!cat) return false
+  if (!itemId) return true
+  const definition = itemDefinition(itemId)
+  if (!definition || definition.slot !== slot) return false
+  return itemId === getEquipmentSelection(cat, slot)
+    || itemId === cat.equipment[slot]
+    || state.inventory[itemId] > 0
 }
 
 function squadHasPendingEquipment(state: State, squad: Squad) {
@@ -2339,6 +2290,22 @@ export function getCleanupSecondsRemaining(state: State, squad: Squad) {
   return rate > 0 && mission ? Math.max(0, CONFIG.mission.cleanupWork - (mission.progress ?? 0)) / rate : 0
 }
 
+export function isSquadResting(state: State, squad: Squad) {
+  return membersOf(state, squad).some(cat => cat.sleeping
+    ? cat.energy < CONFIG.sleep.wakeForOrderEnergy
+    : cat.energy <= CONFIG.sleep.sleepAtEnergy)
+}
+
+export function getSquadMinimumEnergy(state: State, squad: Squad) {
+  const members = membersOf(state, squad)
+  return members.length ? Math.round(Math.min(...members.map(cat => cat.energy))) : 0
+}
+
+export function isActiveAssignedMission(state: State, mission: Mission) {
+  return mission.status === 'assigned'
+    && mission.squadIds.some(id => state.squads.find(squad => squad.id === id)?.phase !== 'returning')
+}
+
 function actionChance(state: State, squad: Squad, action: 'support' | 'attack') {
   const members = membersOf(state, squad)
   const skillSum = members.reduce((sum, cat) => sum + (action === 'support' ? cat.scouting + cat.perception : cat.combat + cat.reaction), 0)
@@ -2507,10 +2474,17 @@ function sendHome(squad: Squad, restAfterReturn = false, origin = getSquadMapPos
   delete squad.missionArrivalTime
 }
 
-export function returnSquadToBase(state: State, squadId: string) {
+export function getReturnSquadBlockReason(state: State, squadId: string) {
   const squad = state.squads.find(candidate => candidate.id === squadId)
   if (!squad || squad.phase === 'base' || squad.phase === 'incident' || squad.phase === 'support'
-    || state.incident?.participantSquadIds.includes(squad.id)) return false
+    || state.incident?.participantSquadIds.includes(squad.id)) return 'dispatch.reason.away'
+  return undefined
+}
+
+export function returnSquadToBase(state: State, squadId: string) {
+  if (getReturnSquadBlockReason(state, squadId)) return false
+  const squad = state.squads.find(candidate => candidate.id === squadId)
+  if (!squad) return false
   const origin = getSquadMapPosition(squad)
   releaseSquadFromMission(state, squad)
   sendHome(squad, false, origin)

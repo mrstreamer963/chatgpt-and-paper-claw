@@ -22,7 +22,7 @@ test('field cats render separately but select and move as one squad', async ({ p
     const bounds = element.getBoundingClientRect()
     return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }
   }))
-  expect(new Set(memberCenters.map(({ x, y }) => `${x}:${y}`)).size).toBe(1)
+  expect(new Set(memberCenters.map(({ x, y }) => `${x}:${y}`)).size).toBe(3)
 
   await members.last().click()
   await expect(formation).toHaveClass(/selected/)

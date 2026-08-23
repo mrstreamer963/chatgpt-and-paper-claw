@@ -1,9 +1,26 @@
 import { expect, type Page } from '@playwright/test'
 
 export async function selectBaseCats(page: Page, names: string[]) {
-  for (const [index, name] of names.entries()) {
-    await page.getByRole('button', { name, exact: true }).dispatchEvent('click', { shiftKey: index > 0 })
+  await page.getByRole('button', { name: 'База', exact: true }).click()
+  const previousCount = await readWorld(page, state => state.squads.length) ?? 0
+  await page.getByRole('button', { name: 'Сформировать отряд', exact: true }).click()
+  await expect.poll(() => readWorld(page, state => state.squads.length)).toBe(previousCount + 1)
+  await expect(page.locator('.squad-config')).toHaveCount(previousCount + 1)
+  const squad = await readWorld(page, state => state.squads.at(-1))
+  if (!squad) throw new Error('Squad was not created at base')
+  const squadConfig = page.locator('.squad-config').last()
+  const autoDispatch = squadConfig.locator('.auto-dispatch-toggle input')
+  if (!await autoDispatch.isVisible()) await squadConfig.locator('.squad-config-summary').click()
+  await expect(autoDispatch).toBeVisible()
+  if (await autoDispatch.isChecked()) await autoDispatch.uncheck()
+  for (const name of names) {
+    const card = page.locator('.cat-card').filter({ hasText: name })
+    await card.getByText('Досье и экипировка').click()
+    await card.getByRole('combobox', { name: 'Назначение в отряд' }).selectOption(squad.id)
   }
+  const squadIndex = await readWorld(page, state => state.squads.findIndex((candidate: any) => candidate.id === squad.id))
+  await page.getByRole('button', { name: 'Карта', exact: true }).click()
+  await page.locator('.map-squad-list > button').nth(squadIndex ?? -1).click()
 }
 
 export async function orderSelectedToPoint(page: Page, x = 72, y = 72) {
