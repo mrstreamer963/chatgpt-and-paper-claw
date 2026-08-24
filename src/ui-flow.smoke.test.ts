@@ -223,6 +223,40 @@ test('queued equipment remains visible in its orange slot without extra status t
   assert.equal(state.speed, 10)
 })
 
+test('queued reassignment from a field squad is marked pending in the roster', async () => {
+  const BaseOperations = await loadComponent('/src/components/BaseOperations.vue')
+  const state = createState()
+  createSquad(state)
+  state.squads[2].id = 'echo'
+  state.squads[2].name = 'squad.echo'
+  assignCat(state, 'rust', 'alpha')
+  state.squads[0].phase = 'cleanup'
+
+  assert.equal(assignCat(state, 'rust', 'echo'), true)
+  assert.equal(state.cats.find(cat => cat.id === 'rust')?.pendingAssignment, 'echo')
+
+  const achievements = getAchievements(state)
+  const html = await render(BaseOperations, {
+    state,
+    locale: 'ru',
+    panel: 'teams',
+    achievements,
+    completedAchievementCount: achievements.filter(item => item.completed).length,
+    nextAchievement: achievements.find(item => !item.completed),
+    hintsVisible: true,
+    totalRuns: 0,
+    saveStatus: { key: 'save.ready' },
+    assignCat: acceptedAction,
+    createSquad: acceptedAction,
+    disbandSquad: acceptedAction,
+    renameSquad: acceptedAction,
+    equipItem: acceptedAction,
+    setSquadStyle: acceptedAction,
+  })
+
+  assert.match(html, /<select class="pending"[^>]*>.*?<option value="echo" selected>Отряд «Эхо»<\/option>/s)
+})
+
 test('a manual field squad shows its waiting state only in the command list', async () => {
   const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
   const state = createState()

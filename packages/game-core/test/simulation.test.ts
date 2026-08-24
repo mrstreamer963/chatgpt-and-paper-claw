@@ -727,7 +727,7 @@ test('an available squad mission wakes a sleeping member at fifty', () => {
   assert.equal(state.squads[0].phase, 'outbound')
 })
 
-test('an awake cat keeps taking missions until exhausted and then sleeps', () => {
+test('an awake cat keeps taking persistent missions until it must return to rest', () => {
   const state = createState()
   state.raidTriggered = true
   assert.equal(assignCat(state, 'marlowe', 'alpha'), true)
@@ -741,7 +741,7 @@ test('an awake cat keeps taking missions until exhausted and then sleeps', () =>
   }
 
   assert.equal(state.squads[0].completed, 2)
-  assert.ok(marlowe.energy <= 20)
+  assert.ok(marlowe.energy < 50)
   assert.equal(marlowe.sleeping, true)
 })
 
@@ -972,6 +972,15 @@ test('mission flow never creates duplicate active coordinates', () => {
     const coordinates = state.missions.map(mission => `${mission.x}:${mission.y}`)
     assert.equal(new Set(coordinates).size, coordinates.length)
   }
+})
+
+test('routine cleanup missions remain available across mission flow changes', () => {
+  const state = createState()
+  const initialIds = state.missions.map(mission => mission.id)
+  state.speed = 10
+  for (let step = 0; step < 800; step++) tick(state, 0.25)
+  assert.ok(initialIds.every(id => state.missions.some(mission => mission.id === id)))
+  assert.ok(state.missions.every(mission => mission.status === 'available'))
 })
 
 test('core exposes typed transient events without persisting them', () => {

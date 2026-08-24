@@ -12,14 +12,11 @@
 .mission-rail-card { display: block; width: 100%; margin-bottom: 9px; padding: 11px; border-color: #374241; background: #182022; text-align: left; }
 .mission-rail-card:hover,.mission-rail-card.selected { border-color: #c78d50; background: #202728; }
 .mission-rail-card.assigned { border-color: #39644b; box-shadow: inset 3px 0 #63bd7d; }
-.mission-rail-card.urgent { border-color: #935844; box-shadow: inset 3px 0 #e27855; }
 .mission-card-top { display: grid; grid-template-columns: 7px 1fr auto; align-items: center; gap: 6px; margin-bottom: 8px; }
 .mission-card-top > i { width: 6px; height: 6px; border-radius: 50%; background: #d7a45e; box-shadow: 0 0 8px #d7a45e88; }
 .assigned .mission-card-top > i { background: #68ca83; box-shadow: 0 0 8px #68ca8388; }
-.urgent .mission-card-top > i { background: #ef7656; box-shadow: 0 0 9px #ef7656aa; }
 .mission-card-top small { color: #74827d; font-size: 6px; letter-spacing: .9px; }
 .mission-card-top strong { color: #d8b078; font-size: 8px; font-weight: 500; }
-.mission-rail-card.urgent .mission-card-top strong { color: #ef8b6d; }
 .mission-rail-card > b { display: block; overflow: hidden; color: #e5d8bd; font: 600 13px Oswald,sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .mission-squads { display: block; overflow: hidden; margin-top: 5px; color: #8e9c96; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
 .mission-progress { display: block; height: 2px; margin-top: 10px; background: #2c3635; }
@@ -450,9 +447,9 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .cat-card .sleeping-label { color: #73a9bd; }
 .cat-card .cat-squad-name { color: #d6ae71; font-size: 8px; letter-spacing: .25px; }
 .cat-card .cat-squad-name.unassigned { color: #687772; }
-.cat-assignment { padding: 0 9px 8px 60px; }
-.cat-assignment select { width: 100%; min-width: 0; padding: 6px 4px; font-size: 9px; }
-.cat-assignment select.pending, .cat-header select.pending { border-color: #d8893a; box-shadow: inset 0 0 0 1px #d8893a66; }
+.cat-squad-assignment { padding: 0 9px 8px 60px; }
+.cat-squad-assignment select { width: 100%; min-width: 0; padding: 6px 4px; font-size: 9px; }
+.cat-squad-assignment select.pending, .cat-header select.pending { border-color: #d8893a; box-shadow: inset 0 0 0 1px #d8893a66; }
 .cat-header select { min-width: 0; padding: 6px 4px; font-size: 9px; }
 .cat-card select:disabled { cursor: not-allowed; opacity: .5; }
 .cat-trait { display: flex; justify-content: space-between; gap: 8px; padding: 8px 9px; border-top: 1px solid #303b3b; color: #d6ae71; font-size: 8px; }
