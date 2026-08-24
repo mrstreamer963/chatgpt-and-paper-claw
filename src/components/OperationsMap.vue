@@ -9,6 +9,7 @@ import { useMapSelection } from '../map/useMapSelection'
 import MapRouteLayer from './MapRouteLayer.vue'
 import MapSquadLayer from './MapSquadLayer.vue'
 import MapSidePanel from './MapSidePanel.vue'
+import ActiveMissionRail from './ActiveMissionRail.vue'
 
 const props = defineProps<{ state: State; locale: Locale }>()
 const emit = defineEmits<{
@@ -154,6 +155,7 @@ function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.tim
 
 <template>
   <section class="map-view">
+    <ActiveMissionRail :state="state" :locale="locale" :selected-mission-id="selectedTarget?.type === 'mission' ? selectedTarget.missionId : undefined" @select="selectMission" />
     <div ref="mapGrid" class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedCount || selectedTarget, 'return-command-active': selectedSquadIds.length > 0 }" @click="selectMapPoint" @pointerdown="beginSelection" @pointermove="updateSelection" @pointerup="finishSelection" @pointercancel="selectionBox = undefined">
       <MapRouteLayer :state="state" :base="base" :squad-color="squadColor" :squad-index="squadIndex" />
       <MapSquadLayer :state="state" :selected-squad-ids="selectedSquadIds" :squad-style="squadStyle" :squad-is-available="squadIsAvailable" :field-cat-tooltip="fieldCatTooltip" :squad-color="squadColor" :field-cat="fieldCat" :cat-tokens-url="catTokensUrl" :squad-palette="squadPalette" @select="selectSquad" />

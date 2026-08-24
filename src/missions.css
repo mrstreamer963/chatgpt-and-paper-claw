@@ -4,6 +4,27 @@
 .squad-marker-origin { position: absolute; z-index: 2; width: 14px; height: 14px; transform: translate(-50%, -50%); border: 2px solid #172023; border-radius: 50%; background: var(--squad-color, #fff1c8); box-shadow: 0 0 7px var(--squad-color, #fff1c8); pointer-events: none; }
 .map-grid.command-active { cursor: crosshair; }
 
+.active-mission-rail { padding: 22px 16px; background: #13191b; overflow-y: auto; }
+.active-mission-rail header { display: flex; align-items: center; justify-content: space-between; color: #687773; font-size: 8px; letter-spacing: 1.6px; }
+.active-mission-rail header b { display: grid; place-items: center; min-width: 22px; height: 22px; border: 1px solid #46514f; border-radius: 50%; color: #bfc7bf; }
+.active-mission-rail h2 { margin: 8px 0 17px; font-size: 18px; }
+.mission-rail-empty { color: #72807b; font-size: 9px; line-height: 1.6; }
+.mission-rail-card { display: block; width: 100%; margin-bottom: 9px; padding: 11px; border-color: #374241; background: #182022; text-align: left; }
+.mission-rail-card:hover,.mission-rail-card.selected { border-color: #c78d50; background: #202728; }
+.mission-rail-card.assigned { border-color: #39644b; box-shadow: inset 3px 0 #63bd7d; }
+.mission-rail-card.urgent { border-color: #935844; box-shadow: inset 3px 0 #e27855; }
+.mission-card-top { display: grid; grid-template-columns: 7px 1fr auto; align-items: center; gap: 6px; margin-bottom: 8px; }
+.mission-card-top > i { width: 6px; height: 6px; border-radius: 50%; background: #d7a45e; box-shadow: 0 0 8px #d7a45e88; }
+.assigned .mission-card-top > i { background: #68ca83; box-shadow: 0 0 8px #68ca8388; }
+.urgent .mission-card-top > i { background: #ef7656; box-shadow: 0 0 9px #ef7656aa; }
+.mission-card-top small { color: #74827d; font-size: 6px; letter-spacing: .9px; }
+.mission-card-top strong { color: #d8b078; font-size: 8px; font-weight: 500; }
+.mission-rail-card.urgent .mission-card-top strong { color: #ef8b6d; }
+.mission-rail-card > b { display: block; overflow: hidden; color: #e5d8bd; font: 600 13px Oswald,sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+.mission-squads { display: block; overflow: hidden; margin-top: 5px; color: #8e9c96; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.mission-progress { display: block; height: 2px; margin-top: 10px; background: #2c3635; }
+.mission-progress i { display: block; height: 100%; background: #67bd7e; transition: width .2s linear; }
+
 .cleanup-pin {
   width: 0;
   height: 0;

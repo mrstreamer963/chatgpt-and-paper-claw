@@ -4,6 +4,9 @@ import type { Squad } from '@nine-lives/game-core'
 type Params = Record<string, string | number>
 
 const ru: Record<string, string> = {
+  'missions.kicker': 'ОПЕРАТИВНЫЙ РАДАР', 'missions.title': 'АКТИВНЫЕ МИССИИ', 'missions.empty': 'В секторе нет доступных или выполняемых миссий.',
+  'missions.open': 'СВОБОДНА', 'missions.in_progress': 'В РАБОТЕ', 'missions.available': 'ДОСТУПНА', 'missions.expires_in': 'ЕЩЁ {time}',
+  'missions.completes_in': 'ГОТОВО ≈ {time}', 'missions.en_route': 'ОТРЯД В ПУТИ',
   'log.base_ready': 'База NINE LIVES CORP готова к работе',
   'log.legacy': '{text}',
   'log.achievement': 'ДОСТИЖЕНИЕ: {achievement}',
@@ -312,6 +315,9 @@ const ru: Record<string, string> = {
 }
 
 const en: Record<string, string> = {
+  'missions.kicker': 'OPERATIONS RADAR', 'missions.title': 'ACTIVE MISSIONS', 'missions.empty': 'No available or active missions in the sector.',
+  'missions.open': 'OPEN', 'missions.in_progress': 'IN PROGRESS', 'missions.available': 'AVAILABLE', 'missions.expires_in': '{time} LEFT',
+  'missions.completes_in': 'DONE ≈ {time}', 'missions.en_route': 'SQUAD EN ROUTE',
   'log.base_ready': 'NINE LIVES CORP base is ready for operations',
   'log.legacy': '{text}',
   'log.achievement': 'ACHIEVEMENT: {achievement}',

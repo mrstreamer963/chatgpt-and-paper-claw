@@ -2378,6 +2378,36 @@ export function isActiveAssignedMission(state: State, mission: Mission) {
     && mission.squadIds.some(id => state.squads.find(squad => squad.id === id)?.phase !== 'returning')
 }
 
+/** Forecasts when an untouched available mission will leave the board. */
+export function getMissionAvailabilitySecondsRemaining(state: State, missionId: string) {
+  const target = state.missions.find(mission => mission.id === missionId)
+  if (!target || target.status !== 'available' || (target.progress ?? 0) > 0) return undefined
+
+  const forecast = state.missions.map(mission => ({
+    id: mission.id,
+    removable: mission.status === 'available' && (mission.progress ?? 0) <= 0,
+  }))
+  const interval = CONFIG.mission.flowInterval
+  const phase = state.time % interval
+  let seconds = phase <= 1e-9 ? interval : interval - phase
+  let boundary = state.time + seconds
+  let generated = 0
+
+  for (let step = 0; step < CONFIG.mission.flowCycle.length * 8; step++) {
+    const desired = desiredMissionCount(boundary + 1e-6)
+    while (forecast.length < desired) forecast.push({ id: `forecast-${generated++}`, removable: true })
+    while (forecast.length > desired) {
+      const index = forecast.findIndex(mission => mission.removable)
+      if (index < 0) break
+      const [removed] = forecast.splice(index, 1)
+      if (removed.id === missionId) return seconds
+    }
+    seconds += interval
+    boundary += interval
+  }
+  return undefined
+}
+
 function actionChance(state: State, squad: Squad, action: 'support' | 'attack') {
   const members = membersOf(state, squad)
   const skillSum = members.reduce((sum, cat) => sum + (action === 'support' ? cat.scouting + cat.perception : cat.combat + cat.reaction), 0)
