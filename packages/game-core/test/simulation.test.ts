@@ -23,6 +23,7 @@ import {
   getSquadCleanupEstimate,
   getSquadMapPosition,
   getMoveSquadBlockReason,
+  getMissionSquadRosters,
   getGroupMoveDestinations,
   getCatTraitPresentation,
   getNinthLifeChoicePreviews,
@@ -117,6 +118,23 @@ test('group map orders are resolved by core as one command', () => {
   assert.deepEqual(state.missions[0].squadIds, ['alpha', 'bravo'])
   assert.equal(returnSquadsToBase(state, ['alpha', 'bravo']), true)
   assert.deepEqual(state.squads.map(squad => squad.phase), ['returning', 'returning'])
+})
+
+test('mission roster presentation keeps squads and all of their cats grouped', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'rust', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  const mission = state.missions[0]
+  mission.squadIds = ['alpha', 'bravo']
+
+  assert.deepEqual(getMissionSquadRosters(state, mission).map(roster => ({
+    squad: roster.squad.id,
+    cats: roster.members.map(cat => cat.id),
+  })), [
+    { squad: 'alpha', cats: ['pixel', 'rust'] },
+    { squad: 'bravo', cats: ['marlowe'] },
+  ])
 })
 
 test('core exposes trait and story choice domain previews', () => {

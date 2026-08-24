@@ -49,6 +49,10 @@ export type Mission = {
   squadIds: string[]
   contributorSquadIds: string[]
 }
+export type MissionSquadRoster = {
+  squad: Squad
+  members: Cat[]
+}
 export type MapPoint = { x: number; y: number }
 export type DeployOrder = { type: 'mission'; missionId: string } | { type: 'move'; x: number; y: number }
 export type Phase = 'base' | 'field' | 'moving' | 'outbound' | 'cleanup' | 'incident' | 'support' | 'returning' | 'merging' | 'urgent'
@@ -2371,6 +2375,13 @@ export function getSquadMinimumEnergy(state: State, squad: Squad) {
 export function isActiveAssignedMission(state: State, mission: Mission) {
   return mission.status === 'assigned'
     && mission.squadIds.some(id => state.squads.find(squad => squad.id === id)?.phase !== 'returning')
+}
+
+export function getMissionSquadRosters(state: State, mission: Mission): MissionSquadRoster[] {
+  return mission.squadIds.flatMap(squadId => {
+    const squad = state.squads.find(candidate => candidate.id === squadId)
+    return squad ? [{ squad, members: membersOf(state, squad) }] : []
+  })
 }
 
 function actionChance(state: State, squad: Squad, action: 'support' | 'attack') {

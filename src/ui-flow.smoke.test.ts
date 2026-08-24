@@ -52,6 +52,24 @@ async function render(component: Component, props: Record<string, unknown>) {
 
 const acceptedAction = async () => true
 
+test('active mission rail shows every assigned squad with its full cat roster', async () => {
+  const ActiveMissionRail = await loadComponent('/src/components/ActiveMissionRail.vue')
+  const state = createState()
+  for (const catId of ['pixel', 'rust', 'bastion']) assignCat(state, catId, 'alpha')
+  for (const catId of ['marlowe', 'shorokh', 'myata']) assignCat(state, catId, 'bravo')
+  const mission = state.missions[0]
+  mission.status = 'assigned'
+  mission.squadIds = ['alpha', 'bravo']
+  state.squads[0].phase = 'outbound'
+  state.squads[1].phase = 'outbound'
+
+  const html = await render(ActiveMissionRail, { state, locale: 'ru' })
+  assert.match(html, /mission-squad-name[^>]*>Отряд «Альфа»/)
+  assert.match(html, /mission-squad-members[^>]*>Пиксель · Ржа · Бастион/)
+  assert.match(html, /mission-squad-name[^>]*>Отряд «Браво»/)
+  assert.match(html, /mission-squad-members[^>]*>Марлоу · Шорох · Мята/)
+})
+
 test('UI smoke: a prepared operation renders every blocking stage through the final report', async () => {
   const BaseOperations = await loadComponent('/src/components/BaseOperations.vue')
   const GameOverlays = await loadComponent('/src/components/GameOverlays.vue')

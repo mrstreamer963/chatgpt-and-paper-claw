@@ -18,7 +18,10 @@
 .mission-card-top small { color: #74827d; font-size: 6px; letter-spacing: .9px; }
 .mission-card-top strong { color: #d8b078; font-size: 8px; font-weight: 500; }
 .mission-rail-card > b { display: block; overflow: hidden; color: #e5d8bd; font: 600 13px Oswald,sans-serif; text-overflow: ellipsis; white-space: nowrap; }
-.mission-squads { display: block; overflow: hidden; margin-top: 5px; color: #8e9c96; font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+.mission-squads { display: grid; gap: 6px; margin-top: 6px; }
+.mission-squad { display: grid; gap: 2px; min-width: 0; }
+.mission-squad-name { color: #a9b5af; font-size: 7px; line-height: 1.35; }
+.mission-squad-members { color: #788782; font-size: 7px; line-height: 1.45; overflow-wrap: anywhere; white-space: normal; }
 .mission-progress { display: block; height: 2px; margin-top: 10px; background: #2c3635; }
 .mission-progress i { display: block; height: 100%; background: #67bd7e; transition: width .2s linear; }
 
