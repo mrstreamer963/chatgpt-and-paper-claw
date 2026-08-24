@@ -239,7 +239,17 @@ test('a manual field squad shows its waiting state only in the command list', as
   assert.match(html, /СВОБОДЕН/)
   assert.match(html, /class="available"/)
   assert.match(html, /бодрость 92%/)
+  assert.match(html, /class="squad-member-names">Пиксель<\/small>/)
   assert.match(html, /left:30%;top:35%/)
+})
+
+test('the command list summarizes long squad rosters', async () => {
+  const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
+  const state = createState()
+  state.squads[0].members = ['marlowe', 'pixel', 'rust', 'shorokh', 'bastion']
+
+  const html = await render(OperationsMap, { state, locale: 'ru' })
+  assert.match(html, /class="squad-member-names">Марлоу · Пиксель · Ржа \+2<\/small>/)
 })
 
 test('an arbitrary march renders its route and destination status', async () => {

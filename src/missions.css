@@ -75,6 +75,7 @@
 .map-squad-list strong { color: #b8c5bc; font-size: 8px; font-weight: 500; }
 .map-squad-list .squad-energy.tired { color: #ed745c; text-shadow: 0 0 9px #d7463344; }
 .map-squad-list small { margin-top: 3px; color: #7e8c87; font-size: 7px; line-height: 1.3; }
+.map-squad-list .squad-member-names { color: #a9b6b0; letter-spacing: .15px; }
 .map-squad-list > button > span:last-child small { color: #b97a67; }
 
 .cleanup-pin.assigned {
