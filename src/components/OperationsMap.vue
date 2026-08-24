@@ -12,9 +12,9 @@ import MapSidePanel from './MapSidePanel.vue'
 
 const props = defineProps<{ state: State; locale: Locale }>()
 const emit = defineEmits<{
-  assign: [squadId: string, missionId: string]
-  move: [squadId: string, x: number, y: number]
-  returnHome: [squadId: string]
+  assign: [squadIds: string[], missionId: string]
+  move: [squadIds: string[], x: number, y: number]
+  returnHome: [squadIds: string[]]
   dispatchStory: [squadId: string]
   dispatchUrgent: [squadId: string]
 }>()
@@ -73,14 +73,16 @@ function squadLabel(squad: Squad) {
 function setFailure(reason: string) { commandMessage.value = reason }
 function issueMission(mission: Mission) {
   const blockedSquads: string[] = [], reasons: string[] = []
-  for (const squadId of selectedSquadIds.value) { const reason = getAssignMissionBlockReason(props.state, squadId, mission.id); if (reason) { blockedSquads.push(squadId); reasons.push(reason) } else emit('assign', squadId, mission.id) }
+  for (const squadId of selectedSquadIds.value) { const reason = getAssignMissionBlockReason(props.state, squadId, mission.id); if (reason) { blockedSquads.push(squadId); reasons.push(reason) } }
+  emit('assign', [...selectedSquadIds.value], mission.id)
   selectedSquadIds.value = blockedSquads
   selectedTarget.value = undefined
   commandMessage.value = reasons.length > 1 ? 'dispatch.reason.partial' : reasons[0]
 }
 function issueReturn() {
   const blocked: string[] = [], reasons: string[] = []
-  for (const squadId of selectedSquadIds.value) { const reason = getReturnSquadBlockReason(props.state, squadId); if (reason) { blocked.push(squadId); reasons.push(reason) } else emit('returnHome', squadId) }
+  for (const squadId of selectedSquadIds.value) { const reason = getReturnSquadBlockReason(props.state, squadId); if (reason) { blocked.push(squadId); reasons.push(reason) } }
+  emit('returnHome', [...selectedSquadIds.value])
   selectedSquadIds.value = blocked; selectedTarget.value = undefined; commandMessage.value = reasons.length > 1 ? 'dispatch.reason.partial' : reasons[0]
 }
 function selectSquad(squad: Squad, event?: MouseEvent) {
@@ -124,13 +126,12 @@ function selectMapPoint(event: MouseEvent) {
   if (!selectedCount.value) return
   const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
   const point: MapPoint = { x: Math.max(5, Math.min(95, (event.clientX - bounds.left) / bounds.width * 100)), y: Math.max(7, Math.min(93, (event.clientY - bounds.top) / bounds.height * 100)) }
-  const actors = [...selectedSquadIds.value]
-  const columns = Math.max(1, Math.ceil(Math.sqrt(actors.length))), blockedSquads: string[] = [], reasons: string[] = []
-  actors.forEach((squadId, index) => {
-    const destination = { x: Math.max(5, Math.min(95, point.x + ((index % columns) - (Math.min(columns, actors.length) - 1) / 2) * 3)), y: Math.max(7, Math.min(93, point.y + (Math.floor(index / columns) - (Math.ceil(actors.length / columns) - 1) / 2) * 3)) }
-    const reason = getMoveSquadBlockReason(props.state, squadId, destination)
-    if (reason) { blockedSquads.push(squadId); reasons.push(reason) } else emit('move', squadId, destination.x, destination.y)
+  const actors = [...selectedSquadIds.value], blockedSquads: string[] = [], reasons: string[] = []
+  actors.forEach(squadId => {
+    const reason = getMoveSquadBlockReason(props.state, squadId)
+    if (reason) { blockedSquads.push(squadId); reasons.push(reason) }
   })
+  emit('move', actors, point.x, point.y)
   selectedSquadIds.value = blockedSquads; commandMessage.value = reasons.length > 1 ? 'dispatch.reason.partial' : reasons[0]
 }
 function squadCommandReason(squad: Squad) { const target = selectedTarget.value; if (target?.type === 'mission') return getAssignMissionBlockReason(props.state, squad.id, target.missionId); if (target?.type === 'base') return getReturnSquadBlockReason(props.state, squad.id); return getMoveSquadBlockReason(props.state, squad.id) }

@@ -215,11 +215,7 @@ export async function createGameSession() {
   }
 
   async function setSpeed(speed: Speed) {
-    const blockingOverlay = newGameConfirmOpen.value
-      || state.value.storyIncident?.stage === 'contact'
-      || state.value.finalSummaryVisible
-      || Boolean(state.value.incident && state.value.incident.stage !== 'support_en_route')
-    if (blockingOverlay && speed !== 0) return false
+    if (newGameConfirmOpen.value && speed !== 0) return false
     return runCommand({ type: 'set_speed', speed })
   }
 
@@ -356,8 +352,11 @@ export async function createGameSession() {
     setSquadStyle: (squadId: string, style: SquadStyle) => runCommand({ type: 'set_squad_style', squadId, style }),
     setSquadAutoDispatch: (squadId: string, enabled: boolean) => runCommand({ type: 'set_auto_dispatch', squadId, enabled }),
     assignSquadToMission: (squadId: string, missionId: string) => runCommand({ type: 'assign_squad_to_mission', squadId, missionId }),
+    assignSquadsToMission: (squadIds: string[], missionId: string) => runCommand({ type: 'assign_squads_to_mission', squadIds, missionId }),
     moveSquadToPoint: (squadId: string, x: number, y: number) => runCommand({ type: 'move_squad', squadId, x, y }),
+    moveSquadsToPoint: (squadIds: string[], x: number, y: number) => runCommand({ type: 'move_squads', squadIds, x, y }),
     returnSquadToBase: (squadId: string) => runCommand({ type: 'return_squad', squadId }),
+    returnSquadsToBase: (squadIds: string[]) => runCommand({ type: 'return_squads', squadIds }),
     selectResearch: (researchId?: ResearchId) => runCommand({ type: 'select_research', researchId }),
     resolveRaidDecision: (action: 'escape' | 'attack' | 'support', supportSquadId?: string) => runCommand({ type: 'resolve_raid', action, supportSquadId }),
     resolveRaidFollowup: (action: 'retreat' | 'continue') => runCommand({ type: 'resolve_raid_followup', action }),

@@ -3,10 +3,8 @@ import { computed } from 'vue'
 import {
   GAME_RULES,
   RESEARCH_RULES,
-  STORY_DECISION_BALANCE,
+  getNinthLifeChoicePreviews,
   getNinthLifeVerificationOptions,
-  getNinthLifeIntervention,
-  getNinthLifeDecisionOptions,
   getRaidOptions,
   type NinthLifeDecision,
   type NinthLifeFactId,
@@ -45,16 +43,8 @@ function supportMembers(memberIds: string[]) {
     .join(', ')
 }
 
-const storyChoicePresentation: { id: NinthLifeDecision; title: string; tag: string; description: string; tone: string }[] = [
-  { id: 'shelter', title: 'Укрыть дезертира', tag: 'Гуманность', description: 'Дать убежище на базе. Слух укрепит имя корпорации, но приведёт преследователей к нашим воротам.', tone: 'danger' },
-  { id: 'interrogate', title: 'Допросить', tag: 'Разведданные', description: 'Проверить показания и собрать полное досье на укрепление ежей. Без эскалации в секторе.', tone: 'intel' },
-  { id: 'escort', title: 'Сопроводить к границе', tag: 'Безопасность', description: 'Вывести свидетеля из сектора по тихому маршруту. Надёжно, но без громкой победы.', tone: 'safe' },
-  { id: 'exploit', title: 'Использовать данные сразу', tag: 'Инициатива', description: 'Не теряя времени, отправить разведку по координатам. Получим новую точку, но раскроем интерес к базе.', tone: 'action' },
-]
-const storyChoices = storyChoicePresentation.map(choice => ({ ...choice, ...STORY_DECISION_BALANCE[choice.id] }))
-const storyInterventions = computed(() => Object.fromEntries(storyChoices.map(choice => [choice.id, getNinthLifeIntervention(props.state, choice.id)])))
+const storyChoices = computed(() => getNinthLifeChoicePreviews(props.state))
 const verificationOptions = computed(() => getNinthLifeVerificationOptions(props.state))
-const decisionOptions = computed(() => getNinthLifeDecisionOptions(props.state))
 const factLabels: Record<NinthLifeFactId, string> = {
   deserter_identity: 'story.fact.deserter_identity',
   pursuit: 'story.fact.pursuit',
@@ -107,7 +97,7 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
       <div class="story-heading"><div class="story-kicker">{{ tr('ВХОДЯЩЕЕ ДЕЛО · ВРЕМЯ ОСТАНОВЛЕНО') }}</div><h1 id="story-title">{{ tr('Девятая жизнь') }}</h1><p>{{ tr('story.description', { squad: squadNames(storySquads) }) }}</p><div class="witness-line"><span>{{ tr('СВИДЕТЕЛЬ') }}</span><b>{{ tr('Позывной «Игла»') }}</b><i>{{ tr('показания не подтверждены') }}</i></div></div>
       <div class="story-intel"><div v-for="fact in state.storyIncident.facts" :key="fact.id"><span>{{ tr(factLabels[fact.id]) }}</span><b>{{ tr(`intel.quality.${fact.quality}`) }}</b><small>{{ tr(`intel.source.${fact.source}`) }}</small></div></div>
       <div class="story-verification"><button :disabled="!verificationOptions.interview.available" @click="emit('storyVerify', 'interview')"><b>{{ tr('story.verify.interview') }}</b><small>{{ tr(verificationOptions.interview.available ? 'story.verify.interview.description' : verificationOptions.interview.reason ?? '') }}</small></button><button :disabled="!verificationOptions.recon.available" @click="emit('storyVerify', 'recon')"><b>{{ tr('story.verify.recon') }}</b><small>{{ tr(verificationOptions.recon.available ? 'story.verify.recon.description' : verificationOptions.recon.reason ?? '') }}</small></button><button :disabled="!verificationOptions.deescalation.available" @click="emit('storyVerify', 'deescalation')"><b>{{ tr('story.verify.deescalation') }}</b><small>{{ tr(verificationOptions.deescalation.available ? 'story.verify.deescalation.description' : verificationOptions.deescalation.reason ?? '') }}</small></button></div>
-      <div class="story-choices"><button v-for="(choice, index) in storyChoices" :key="choice.id" class="story-choice" :class="[choice.tone, { intervention: storyInterventions[choice.id] }]" :disabled="!decisionOptions[choice.id].available" @click="emit('storyDecision', choice.id)"><span class="choice-index">0{{ index + 1 }}</span><span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(decisionOptions[choice.id].available ? choice.description : decisionOptions[choice.id].reason ?? choice.description) }}</em><mark v-if="storyInterventions[choice.id]">{{ tr(storyInterventions[choice.id]!.reason) }}</mark></span><span class="choice-impact"><b>+{{ choice.fame }}</b><small>{{ tr('известность') }}</small><strong :class="{ quiet: !(choice.threat + decisionOptions[choice.id].threatAdjustment + (storyInterventions[choice.id]?.threatDelta ?? 0)) }">{{ choice.threat + decisionOptions[choice.id].threatAdjustment + (storyInterventions[choice.id]?.threatDelta ?? 0) ? `+${choice.threat + decisionOptions[choice.id].threatAdjustment + (storyInterventions[choice.id]?.threatDelta ?? 0)}` : '±0' }}</strong><small>{{ tr('угроза') }}</small></span></button></div>
+      <div class="story-choices"><button v-for="(choice, index) in storyChoices" :key="choice.id" class="story-choice" :class="[choice.tone, { intervention: choice.intervention }]" :disabled="!choice.available" @click="emit('storyDecision', choice.id)"><span class="choice-index">0{{ index + 1 }}</span><span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(choice.available ? choice.description : choice.reason ?? choice.description) }}</em><mark v-if="choice.intervention">{{ tr(choice.intervention.reason) }}</mark></span><span class="choice-impact"><b>+{{ choice.fame }}</b><small>{{ tr('известность') }}</small><strong :class="{ quiet: !choice.totalThreatDelta }">{{ choice.totalThreatDelta ? `+${choice.totalThreatDelta}` : '±0' }}</strong><small>{{ tr('угроза') }}</small></span></button></div>
       <footer><span>{{ tr('Решение нельзя отменить') }}</span><span>{{ tr('Каждый вариант открывает отдельную будущую ветку') }}</span><button class="story-reset" @click="emit('newGame')">{{ tr('reset.open') }}</button></footer>
     </section>
   </div>

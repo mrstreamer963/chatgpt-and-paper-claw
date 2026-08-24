@@ -8,6 +8,7 @@ import {
   RESEARCH_RULES,
   catIsAtBase,
   getResearchWorker,
+  getCatTraitPresentation,
   getRenameSquadError,
   getSquadCleanupEstimate,
   type Achievement,
@@ -124,13 +125,10 @@ function formatRate(value: number) {
 }
 
 function catTraitText(cat: State['cats'][number]) {
-  if (cat.id === 'marlowe') return tr('cat.trait.bonus', { trait: 'Деэскалация', bonus: cat.supportTrait, action: 'поддержке' })
-  if (cat.id === 'pixel') return tr('cat.trait.bonus', { trait: 'Самодиагностика', bonus: `${cat.cleanupTrait}%`, action: 'скорости уборки' })
-  if (cat.id === 'rust') return tr('cat.trait.bonus', { trait: 'Тяжёлая работа', bonus: `${cat.cleanupTrait}%`, action: 'скорости уборки' })
-  if (cat.id === 'shorokh') return tr('cat.trait.bonus', { trait: 'Паранойя', bonus: cat.supportTrait, action: 'поддержке' })
-  if (cat.id === 'bastion') return tr('cat.trait.bonus', { trait: 'Силовой ответ', bonus: cat.attackTrait, action: 'нападению' })
-  if (cat.id === 'myata') return tr('cat.trait.reduction', { trait: 'Бережёт команду', bonus: cat.injuryTrait, action: 'ранению' })
-  return ''
+  const trait = getCatTraitPresentation(cat)
+  if (!trait) return ''
+  const bonus = ['pixel', 'rust'].includes(cat.id) ? `${trait.value}%` : trait.value
+  return tr(`cat.trait.${trait.format}`, { trait: trait.trait, bonus, action: trait.action })
 }
 
 function baseCatStyle(cat: State['cats'][number], index: number) {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   assignSquadToMission,
+  assignSquadsToMission,
   assignCat,
   continueAfterFinale,
   createSquad,
@@ -22,6 +23,9 @@ import {
   getSquadCleanupEstimate,
   getSquadMapPosition,
   getMoveSquadBlockReason,
+  getGroupMoveDestinations,
+  getCatTraitPresentation,
+  getNinthLifeChoicePreviews,
   getNinthLifeVerificationOptions,
   getNinthLifeIntervention,
   getNinthLifeDecisionOptions,
@@ -34,7 +38,9 @@ import {
   resolveRaidFollowup,
   renameSquad,
   returnSquadToBase,
+  returnSquadsToBase,
   moveSquadToPoint,
+  moveSquadsToPoint,
   mergeSquads,
   selectResearch,
   SIMULATION_STEP_SECONDS,
@@ -91,6 +97,37 @@ test('fixed simulation steps produce the same state at x1, x5, and x10', () => {
   assert.deepEqual(atX10, atX1)
   assert.equal(atX1.time, 10)
   assert.equal(atX1.simulationRemainder, 0)
+})
+
+test('group map orders are resolved by core as one command', () => {
+  const state = createState()
+  assignCat(state, 'pixel', 'alpha')
+  assignCat(state, 'marlowe', 'bravo')
+  state.squads.forEach(squad => { squad.autoDispatch = false })
+
+  const destinations = getGroupMoveDestinations(['alpha', 'bravo'], { x: 60, y: 40 })
+  assert.deepEqual(destinations, [
+    { squadId: 'alpha', destination: { x: 58.5, y: 40 } },
+    { squadId: 'bravo', destination: { x: 61.5, y: 40 } },
+  ])
+  assert.equal(moveSquadsToPoint(state, ['alpha', 'bravo'], { x: 60, y: 40 }), true)
+  assert.deepEqual(state.squads.map(squad => squad.destination), destinations.map(item => item.destination))
+  state.squads.forEach(squad => { squad.phase = 'field'; squad.routeFrom = { ...squad.destination! } })
+  assert.equal(assignSquadsToMission(state, ['alpha', 'bravo'], state.missions[0].id), true)
+  assert.deepEqual(state.missions[0].squadIds, ['alpha', 'bravo'])
+  assert.equal(returnSquadsToBase(state, ['alpha', 'bravo']), true)
+  assert.deepEqual(state.squads.map(squad => squad.phase), ['returning', 'returning'])
+})
+
+test('core exposes trait and story choice domain previews', () => {
+  const state = createState()
+  const pixel = state.cats.find(cat => cat.id === 'pixel')!
+  assert.deepEqual(getCatTraitPresentation(pixel), {
+    trait: 'Самодиагностика', action: 'скорости уборки', format: 'bonus', value: 5,
+  })
+  const choices = getNinthLifeChoicePreviews(state)
+  assert.deepEqual(choices.map(choice => choice.id), ['shelter', 'interrogate', 'escort', 'exploit'])
+  assert.equal(choices.every(choice => !choice.available), true)
 })
 
 test('a saved partial simulation step resumes without losing elapsed time', () => {

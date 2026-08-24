@@ -29,6 +29,13 @@ export type Cat = {
   equipment: Equipment
   pendingEquipment: PendingEquipment
 }
+
+export type CatTraitPresentation = {
+  trait: string
+  action: string
+  value: number
+  format: 'bonus' | 'reduction'
+}
 export type MissionInterruptionPolicy = 'preserve_progress' | 'reset' | 'fail' | 'remove' | 'scripted'
 export type Mission = {
   id: string
@@ -1611,6 +1618,15 @@ export function assignSquadToMission(state: State, squadId: string, missionId: s
   return accepted
 }
 
+export function assignSquadsToMission(state: State, squadIds: string[], missionId: string) {
+  const uniqueIds = [...new Set(squadIds)]
+  let accepted = false
+  for (const squadId of uniqueIds) {
+    if (assignSquadToMission(state, squadId, missionId)) accepted = true
+  }
+  return accepted
+}
+
 function isMapCommandPoint(point: MapPoint) {
   return Number.isFinite(point.x) && Number.isFinite(point.y)
     && point.x >= 5 && point.x <= 95 && point.y >= 7 && point.y <= 93
@@ -1652,6 +1668,27 @@ export function moveSquadToPoint(state: State, squadId: string, destination: Map
   squad.travelDuration = travelTimeBetween(origin, destination)
   note(state, 'log.squad_moving', { squad: squad.name })
   return true
+}
+
+export function getGroupMoveDestinations(squadIds: string[], point: MapPoint) {
+  const uniqueIds = [...new Set(squadIds)]
+  const columns = Math.max(1, Math.ceil(Math.sqrt(uniqueIds.length)))
+  return uniqueIds.map((squadId, index) => ({
+    squadId,
+    destination: {
+      x: Math.max(5, Math.min(95, point.x + ((index % columns) - (Math.min(columns, uniqueIds.length) - 1) / 2) * 3)),
+      y: Math.max(7, Math.min(93, point.y + (Math.floor(index / columns) - (Math.ceil(uniqueIds.length / columns) - 1) / 2) * 3)),
+    },
+  }))
+}
+
+export function moveSquadsToPoint(state: State, squadIds: string[], point: MapPoint) {
+  if (!isMapCommandPoint(point)) return false
+  let accepted = false
+  for (const { squadId, destination } of getGroupMoveDestinations(squadIds, point)) {
+    if (moveSquadToPoint(state, squadId, destination)) accepted = true
+  }
+  return accepted
 }
 
 function rewardMission(state: State, mission: Mission, contributors: Squad[]) {
@@ -2156,6 +2193,33 @@ export function getNinthLifeDecisionOptions(state: State) {
   }
 }
 
+export const STORY_DECISION_PRESENTATION: Record<NinthLifeDecision, {
+  title: string
+  tag: string
+  description: string
+  tone: string
+}> = {
+  shelter: { title: 'Укрыть дезертира', tag: 'Гуманность', description: 'Дать убежище на базе. Слух укрепит имя корпорации, но приведёт преследователей к нашим воротам.', tone: 'danger' },
+  interrogate: { title: 'Допросить', tag: 'Разведданные', description: 'Проверить показания и собрать полное досье на укрепление ежей. Без эскалации в секторе.', tone: 'intel' },
+  escort: { title: 'Сопроводить к границе', tag: 'Безопасность', description: 'Вывести свидетеля из сектора по тихому маршруту. Надёжно, но без громкой победы.', tone: 'safe' },
+  exploit: { title: 'Использовать данные сразу', tag: 'Инициатива', description: 'Не теряя времени, отправить разведку по координатам. Получим новую точку, но раскроем интерес к базе.', tone: 'action' },
+}
+
+export function getNinthLifeChoicePreviews(state: State) {
+  const options = getNinthLifeDecisionOptions(state)
+  return (Object.keys(STORY_DECISION_PRESENTATION) as NinthLifeDecision[]).map(id => {
+    const intervention = getNinthLifeIntervention(state, id)
+    return {
+      id,
+      ...STORY_DECISION_PRESENTATION[id],
+      ...STORY_DECISION_BALANCE[id],
+      ...options[id],
+      intervention,
+      totalThreatDelta: STORY_DECISION_BALANCE[id].threat + options[id].threatAdjustment + (intervention?.threatDelta ?? 0),
+    }
+  })
+}
+
 export function getNinthLifeIntervention(state: State, decision: NinthLifeDecision): NinthLifeInterventionPreview | undefined {
   if (state.storyIncident?.stage !== 'contact') return undefined
   const squads = state.storyIncident.participantSquadIds
@@ -2490,6 +2554,29 @@ export function returnSquadToBase(state: State, squadId: string) {
   sendHome(squad, false, origin)
   note(state, 'log.squad_ordered_home', { squad: squad.name })
   return true
+}
+
+export function returnSquadsToBase(state: State, squadIds: string[]) {
+  let accepted = false
+  for (const squadId of [...new Set(squadIds)]) {
+    if (returnSquadToBase(state, squadId)) accepted = true
+  }
+  return accepted
+}
+
+export function getCatTraitPresentation(cat: Cat): CatTraitPresentation | undefined {
+  const definitions: Record<string, Omit<CatTraitPresentation, 'value'>> = {
+    marlowe: { trait: 'Деэскалация', action: 'поддержке', format: 'bonus' },
+    pixel: { trait: 'Самодиагностика', action: 'скорости уборки', format: 'bonus' },
+    rust: { trait: 'Тяжёлая работа', action: 'скорости уборки', format: 'bonus' },
+    shorokh: { trait: 'Паранойя', action: 'поддержке', format: 'bonus' },
+    bastion: { trait: 'Силовой ответ', action: 'нападению', format: 'bonus' },
+    myata: { trait: 'Бережёт команду', action: 'ранению', format: 'reduction' },
+  }
+  const definition = definitions[cat.id]
+  if (!definition) return undefined
+  const value = cat.cleanupTrait || cat.supportTrait || cat.attackTrait || cat.injuryTrait
+  return { ...definition, value }
 }
 
 function injuryChance(state: State, squad: Squad) {
@@ -2957,11 +3044,14 @@ export type GameCommand =
   | { type: 'set_squad_style'; squadId: string; style: SquadStyle }
   | { type: 'set_auto_dispatch'; squadId: string; enabled: boolean }
   | { type: 'assign_squad_to_mission'; squadId: string; missionId: string }
+  | { type: 'assign_squads_to_mission'; squadIds: string[]; missionId: string }
   | { type: 'deploy_cats'; catIds: string[]; order: DeployOrder }
   | { type: 'split_squad'; squadId: string; memberIds: string[] }
   | { type: 'merge_squads'; sourceSquadId: string; targetSquadId: string }
   | { type: 'move_squad'; squadId: string; x: number; y: number }
+  | { type: 'move_squads'; squadIds: string[]; x: number; y: number }
   | { type: 'return_squad'; squadId: string }
+  | { type: 'return_squads'; squadIds: string[] }
   | { type: 'select_research'; researchId?: ResearchId }
   | { type: 'resolve_raid'; action: 'escape' | 'attack' | 'support'; supportSquadId?: string }
   | { type: 'resolve_raid_followup'; action: 'retreat' | 'continue' }
@@ -3000,11 +3090,14 @@ export class GameCore {
       case 'set_squad_style': return setSquadStyle(this.world, command.squadId, command.style)
       case 'set_auto_dispatch': return setSquadAutoDispatch(this.world, command.squadId, command.enabled)
       case 'assign_squad_to_mission': return assignSquadToMission(this.world, command.squadId, command.missionId)
+      case 'assign_squads_to_mission': return assignSquadsToMission(this.world, command.squadIds, command.missionId)
       case 'deploy_cats': return deployCats(this.world, command.catIds, command.order)
       case 'split_squad': return splitSquad(this.world, command.squadId, command.memberIds)
       case 'merge_squads': return mergeSquads(this.world, command.sourceSquadId, command.targetSquadId)
       case 'move_squad': return moveSquadToPoint(this.world, command.squadId, { x: command.x, y: command.y })
+      case 'move_squads': return moveSquadsToPoint(this.world, command.squadIds, { x: command.x, y: command.y })
       case 'return_squad': return returnSquadToBase(this.world, command.squadId)
+      case 'return_squads': return returnSquadsToBase(this.world, command.squadIds)
       case 'select_research': return selectResearch(this.world, command.researchId)
       case 'resolve_raid': return resolveRaidDecision(this.world, command.action, command.supportSquadId)
       case 'resolve_raid_followup': return resolveRaidFollowup(this.world, command.action)
