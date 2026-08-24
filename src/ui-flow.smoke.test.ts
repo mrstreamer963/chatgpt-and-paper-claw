@@ -81,6 +81,7 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
     setSquadStyle: acceptedAction,
   })
   assert.match(baseHtml, /уборка за/)
+  assert.match(baseHtml, /Состав: Пиксель, Ржа, Бастион/)
   assert.match(baseHtml, /Расчёт производительности/)
   assert.match(baseHtml, /Пиксель/)
 

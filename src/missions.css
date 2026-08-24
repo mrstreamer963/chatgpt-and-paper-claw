@@ -392,6 +392,7 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .squad-config-summary span { margin: 0; }
 .squad-config-summary b, .squad-config-summary small { display: block; }
 .squad-config-summary small { margin-top: 3px; color: #80908a; font-size: 8px; }
+.squad-config-summary .squad-member-names { overflow: visible; color: #a9b6b0; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
 .squad-config-summary strong { color: #d2a15f; font-size: 16px; font-weight: 400; }
 .squad-config-details { display: grid; grid-template-columns: minmax(0, 1fr) 112px; align-items: center; gap: 9px; padding: 0 10px 10px; }
 .squad-config select { width: 100%; padding: 6px; font-size: 9px; }

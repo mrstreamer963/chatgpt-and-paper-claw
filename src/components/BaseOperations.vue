@@ -120,6 +120,14 @@ function cleanupEstimate(squad: Squad) {
   return getSquadCleanupEstimate(props.state, squad)
 }
 
+function squadMembersText(squad: Squad) {
+  const members = squad.members
+    .map(memberId => props.state.cats.find(cat => cat.id === memberId))
+    .filter((cat): cat is State['cats'][number] => Boolean(cat))
+    .map(cat => tr(cat.name))
+  return tr(members.length ? 'squad.members' : 'squad.members.empty', { members: members.join(', ') })
+}
+
 function formatRate(value: number) {
   return value.toFixed(2).replace(/\.00$/, '')
 }
@@ -175,7 +183,7 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
           </form>
           <div v-else class="squad-config-heading">
             <button type="button" class="squad-config-summary" @click="selectedSquadId = selectedSquadId === squad.id ? undefined : squad.id">
-              <span><b>{{ squadDisplayName(locale, squad) }}</b><small>{{ tr('squad.cleanup_estimate', { cats: squad.members.length, seconds: Math.ceil(cleanupEstimate(squad).seconds) }) }}</small></span>
+              <span><b>{{ squadDisplayName(locale, squad) }}</b><small>{{ tr('squad.cleanup_estimate', { cats: squad.members.length, seconds: Math.ceil(cleanupEstimate(squad).seconds) }) }}</small><small class="squad-member-names">{{ squadMembersText(squad) }}</small></span>
               <strong>{{ selectedSquadId === squad.id ? '−' : '+' }}</strong>
             </button>
             <button type="button" class="rename-squad" :aria-label="tr('squad.rename.action')" :title="tr('squad.rename.action')" @click="startRename(squad)">✎</button>
