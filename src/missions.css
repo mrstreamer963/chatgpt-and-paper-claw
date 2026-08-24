@@ -417,7 +417,7 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .cat-card:has(details[open]) { border-color: #4d5c59; }
 .cat-card.injured { background: #3a211f66; }
 .cat-card.sleeping { background: #172126; }
-.cat-header { display: grid; grid-template-columns: 42px minmax(0, 1fr) 115px; align-items: center; gap: 9px; padding: 8px; }
+.cat-header { display: grid; grid-template-columns: 42px minmax(0, 1fr); align-items: center; gap: 9px; padding: 8px; }
 .cat-card details summary { padding: 6px 9px; border-top: 1px solid #303b3b; color: #91a099; cursor: pointer; font-size: 9px; list-style: none; }
 .cat-card details summary::-webkit-details-marker { display: none; }
 .cat-card details summary::before { content: '+'; margin-right: 6px; color: #d7a25f; }
@@ -427,6 +427,8 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .cat-card small { margin-top: 4px; color: #91a099; font-size: 9px; }
 .cat-card .injury-label { color: #ef765e; }
 .cat-card .sleeping-label { color: #73a9bd; }
+.cat-card .cat-squad-name { color: #d6ae71; font-size: 8px; letter-spacing: .25px; }
+.cat-card .cat-squad-name.unassigned { color: #687772; }
 .cat-assignment { padding: 0 9px 8px 60px; }
 .cat-assignment select { width: 100%; min-width: 0; padding: 6px 4px; font-size: 9px; }
 .cat-assignment select.pending, .cat-header select.pending { border-color: #d8893a; box-shadow: inset 0 0 0 1px #d8893a66; }

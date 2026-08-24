@@ -26,6 +26,7 @@ const {
   setSquadStyle,
   setSquadAutoDispatch,
   createSquad,
+  disbandSquad,
   assignCat,
   assignSquadsToMission,
   moveSquadsToPoint,
@@ -127,6 +128,7 @@ async function resetProgress() {
       :equip-item="equipItem"
       :set-squad-style="setSquadStyle"
       :create-squad="createSquad"
+      :disband-squad="disbandSquad"
       :assign-cat="assignCat"
       @panel="basePanel = $event"
       @auto-dispatch="setSquadAutoDispatch"

@@ -82,7 +82,8 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   })
   assert.match(baseHtml, /уборка за/)
   assert.match(baseHtml, /Состав: Пиксель, Ржа, Бастион/)
-  assert.match(baseHtml, /Расчёт производительности/)
+  assert.match(baseHtml, /class="cat-squad-name">Отряд «Альфа»<\/small>/)
+  assert.match(baseHtml, /class="cat-squad-name">Отряд «Браво»<\/small>/)
   assert.match(baseHtml, /Пиксель/)
 
   state.squads[0].completed = 2
@@ -250,6 +251,31 @@ test('the command list summarizes long squad rosters', async () => {
 
   const html = await render(OperationsMap, { state, locale: 'ru' })
   assert.match(html, /class="squad-member-names">Марлоу · Пиксель · Ржа \+2<\/small>/)
+})
+
+test('forming squads does not automatically expand the first squad', async () => {
+  const BaseOperations = await loadComponent('/src/components/BaseOperations.vue')
+  const state = createState()
+  const achievements = getAchievements(state)
+  const html = await render(BaseOperations, {
+    state,
+    locale: 'ru',
+    panel: 'teams',
+    achievements,
+    completedAchievementCount: 0,
+    hintsVisible: true,
+    totalRuns: 0,
+    saveStatus: { key: 'save.ready' },
+    assignCat: acceptedAction,
+    createSquad: acceptedAction,
+    disbandSquad: acceptedAction,
+    renameSquad: acceptedAction,
+    equipItem: acceptedAction,
+    setSquadStyle: acceptedAction,
+  })
+  assert.doesNotMatch(html, /squad-config-details/)
+  assert.doesNotMatch(html, /class="disband-squad"/)
+  assert.equal(html.match(/<strong>\+<\/strong>/g)?.length, state.squads.length)
 })
 
 test('an arbitrary march renders its route and destination status', async () => {

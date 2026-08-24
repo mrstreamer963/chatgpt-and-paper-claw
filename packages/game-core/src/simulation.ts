@@ -1073,8 +1073,10 @@ const SQUAD_CALLSIGN_KEYS = [
   'squad.foxtrot',
 ]
 
-function squadNameForSerial(serial: number) {
-  return SQUAD_CALLSIGN_KEYS[serial - 1] ?? `squad.generated.${String(serial).padStart(2, '0')}`
+function nextAvailableSquadName(state: State, serial: number) {
+  const usedNames = new Set(state.squads.map(squad => squad.name))
+  return SQUAD_CALLSIGN_KEYS.find(name => !usedNames.has(name))
+    ?? `squad.generated.${String(serial).padStart(2, '0')}`
 }
 
 export function getSquadDisplayName(squad: Pick<Squad, 'name' | 'customName'>) {
@@ -1122,7 +1124,7 @@ export function createSquad(state: State) {
   const serial = Math.max(0, state.squadSerial) + 1
   const squad: Squad = {
     id: `squad-${serial}`,
-    name: squadNameForSerial(serial),
+    name: nextAvailableSquadName(state, serial),
     members: [],
     style: 'balanced',
     autoDispatch: true,

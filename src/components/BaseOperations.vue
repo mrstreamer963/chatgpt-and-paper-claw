@@ -49,6 +49,7 @@ const props = defineProps<{
   equipItem: (catId: string, slot: EquipmentSlot, itemId?: ItemId) => Promise<boolean>
   setSquadStyle: (squadId: string, style: Squad['style']) => Promise<boolean>
   createSquad: () => Promise<boolean>
+  disbandSquad: (squadId: string) => Promise<boolean>
   assignCat: (catId: string, squadId: string) => Promise<boolean>
 }>()
 
@@ -63,7 +64,7 @@ const emit = defineEmits<{
 }>()
 
 const saveInput = ref<HTMLInputElement>()
-const selectedSquadId = ref<string | undefined>(props.state.squads[0]?.id)
+const selectedSquadId = ref<string>()
 const renamingSquadId = ref<string>()
 const renameValue = ref('')
 const renameError = ref<string>()
@@ -80,7 +81,7 @@ const portraitUrls: Record<string, string> = {
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
 
 watch(() => props.state.squads.map(squad => squad.id), ids => {
-  if (!ids.includes(selectedSquadId.value ?? '')) selectedSquadId.value = ids[0]
+  if (selectedSquadId.value && !ids.includes(selectedSquadId.value)) selectedSquadId.value = undefined
 })
 
 function startRename(squad: Squad) {
@@ -126,6 +127,11 @@ function squadMembersText(squad: Squad) {
     .filter((cat): cat is State['cats'][number] => Boolean(cat))
     .map(cat => tr(cat.name))
   return tr(members.length ? 'squad.members' : 'squad.members.empty', { members: members.join(', ') })
+}
+
+function catSquadName(cat: State['cats'][number]) {
+  const squad = props.state.squads.find(candidate => candidate.id === cat.assignedTo)
+  return squad ? squadDisplayName(props.locale, squad) : tr('cat.squad.unassigned')
 }
 
 function formatRate(value: number) {
@@ -204,12 +210,13 @@ function baseCatStyle(cat: State['cats'][number], index: number) {
                 <span>{{ tr('cleanup.energy_per_cat') }} <b>−{{ formatRate(cleanupEstimate(squad).energyPerCat) }}</b></span>
               </template>
             </details>
+            <button v-if="!squad.members.length" type="button" class="disband-squad" @click="props.disbandSquad(squad.id)">{{ tr('squad.manage.disband') }}</button>
           </div>
         </div>
         <small v-if="!state.squads.length" class="squad-manage-reason">{{ tr('squad.manage.form_on_map') }}</small>
       </section>
       <div v-for="cat in state.cats" :key="cat.id" class="cat-card" :class="{ injured: cat.injuredRemaining > 0, sleeping: cat.sleeping }">
-        <div class="cat-header"><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else-if="cat.sleeping" class="sleeping-label">{{ tr('cat.sleeping', { energy: Math.round(cat.energy) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small></span></div>
+        <div class="cat-header"><img :src="portraitUrls[cat.id]" :alt="tr(cat.name)"><span><b>{{ tr(cat.name) }}</b><small v-if="cat.injuredRemaining > 0" class="injury-label">{{ tr('cat.injured', { seconds: Math.ceil(cat.injuredRemaining) }) }}</small><small v-else-if="cat.sleeping" class="sleeping-label">{{ tr('cat.sleeping', { energy: Math.round(cat.energy) }) }}</small><small v-else>{{ tr('cat.energy', { role: cat.role, energy: Math.round(cat.energy) }) }}</small><small class="cat-squad-name" :class="{ unassigned: !cat.assignedTo }">{{ catSquadName(cat) }}</small></span></div>
         <details>
           <summary>{{ tr('Досье и экипировка') }}</summary>
           <label class="cat-squad-assignment"><span>{{ tr('Назначение в отряд') }}</span><CatAssignmentSelect :state="state" :cat="cat" :locale="locale" :assign="assignCat" /></label>

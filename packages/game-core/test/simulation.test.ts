@@ -168,7 +168,7 @@ test('GameCore rejects forming a squad from a map order', () => {
   assert.deepEqual(snapshot.missions[0].squadIds, [])
 })
 
-test('squads can be created up to the staff count with stable non-reused ids', () => {
+test('squads reuse the first free default callsign while keeping ids unique', () => {
   const state = createState()
   assert.equal(state.squads.length, 2)
   assert.equal(state.squadSerial, 2)
@@ -182,10 +182,18 @@ test('squads can be created up to the staff count with stable non-reused ids', (
   assert.equal(disbandSquad(state, 'squad-3'), true)
   assert.equal(createSquad(state), true)
   assert.equal(state.squads.at(-1)?.id, 'squad-7')
-  assert.equal(state.squads.at(-1)?.name, 'squad.generated.07')
+  assert.equal(state.squads.at(-1)?.name, 'squad.charlie')
   const restored = deserializeState(serializeState(state))
   assert.equal(restored.squadSerial, 7)
   assert.deepEqual(restored.squads.map(squad => squad.id), state.squads.map(squad => squad.id))
+})
+
+test('recreating a disbanded Alpha squad reuses the Alpha callsign', () => {
+  const state = createState()
+  assert.equal(disbandSquad(state, 'alpha'), true)
+  assert.equal(createSquad(state), true)
+  assert.equal(state.squads.at(-1)?.id, 'squad-3')
+  assert.equal(state.squads.at(-1)?.name, 'squad.alpha')
 })
 
 test('disbanding only accepts an empty idle non-final squad', () => {
