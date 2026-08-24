@@ -241,6 +241,18 @@ test('custom squad names survive save round trips and remain optional in old sav
   assert.equal(deserializeState(JSON.stringify(envelope)).squads[0].customName, undefined)
 })
 
+test('legacy localized default names do not survive migration as custom localization keys', () => {
+  const state = createState()
+  const envelope = JSON.parse(serializeState(state))
+  envelope.saveVersion = 1
+  envelope.state.squads[0].customName = 'Отряд «Альфа»'
+  envelope.state.log = []
+
+  const restored = deserializeState(JSON.stringify(envelope))
+  assert.equal(restored.squads[0].name, 'squad.alpha')
+  assert.equal(restored.squads[0].customName, undefined)
+})
+
 test('adding a staff cat increases dynamic squad capacity', () => {
   const state = createState()
   while (createSquad(state)) { /* fill current capacity */ }

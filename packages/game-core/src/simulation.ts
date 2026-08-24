@@ -663,6 +663,12 @@ function migrateLegacyState(value: unknown, removeLegacyEmptySquads = false) {
   if (Array.isArray(migrated.squads)) {
     for (const squad of migrated.squads) {
       if (!isRecord(squad)) continue
+      if (typeof squad.customName === 'string'
+        && (/^squad\.(?:alpha|bravo|charlie|delta|echo|foxtrot)$/.test(squad.customName)
+          || /^squad\.generated\.\d+$/.test(squad.customName))) {
+        squad.name = squad.customName
+        delete squad.customName
+      }
       if (squad.phase === 'assisting') squad.phase = 'cleanup'
       if (typeof squad.autoDispatch !== 'boolean') squad.autoDispatch = true
       if (!isValidMapPoint(squad.routeFrom)) {

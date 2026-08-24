@@ -714,5 +714,8 @@ export function translate(locale: Locale, key: string, params: Params = {}) {
 }
 
 export function squadDisplayName(locale: Locale, squad: Pick<Squad, 'name' | 'customName'>) {
-  return squad.customName ?? translate(locale, squad.name)
+  const name = squad.customName ?? squad.name
+  return /^squad\.(?:alpha|bravo|charlie|delta|echo|foxtrot|generated\.\d+)$/.test(name)
+    ? translate(locale, name)
+    : name
 }
