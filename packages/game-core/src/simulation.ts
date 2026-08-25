@@ -48,6 +48,7 @@ export type Mission = {
   interruptionPolicy: MissionInterruptionPolicy
   squadIds: string[]
   contributorSquadIds: string[]
+  kind: 'municipal' | 'monolith_service'
 }
 export type MissionSquadRoster = {
   squad: Squad
@@ -76,7 +77,9 @@ export type Squad = {
   mergePoint?: MapPoint
   missionArrivalTime?: number
 }
-export type RaidStage = 'decision' | 'support_en_route' | 'support_decision'
+export type ContactThreat = 'harmless' | 'armed' | 'heavy'
+export type IncidentCheck = 'observe' | 'recon' | 'scan' | 'contact'
+export type RaidStage = 'decision' | 'checking' | 'support_en_route' | 'support_decision' | 'monolith_en_route'
 export type RaidIncident = {
   kind: 'raiders'
   stage: RaidStage
@@ -89,7 +92,19 @@ export type RaidIncident = {
   injuryRoll: number
   injuredMemberRoll: number
   participantSquadIds: string[]
+  threatClass: ContactThreat
+  threatRoll: number
+  monolithRoll: number
+  monolithRequested: boolean
+  intelConfirmed: boolean
+  clues: string[]
+  check?: IncidentCheck
+  checkEndsAt?: number
 }
+export type RelationOwnerId = 'green_monolith' | 'police' | 'space_agency' | 'chemical_lab' | 'physics_lab' | 'biological_lab' | 'computer_lab' | 'weapon_trader' | 'vehicle_trader'
+export type Headquarters = { id: string; ownerId: RelationOwnerId; name: string; function: string; x: number; y: number }
+export type Cordon = { id: string; x: number; y: number; radius: number; startedAt: number; endsAt: number; threatClass: ContactThreat; affectedOwnerIds: RelationOwnerId[] }
+export type MonolithState = { status: 'available' | 'en_route'; x: number; y: number; from: MapPoint; target?: MapPoint; travel: number; travelDuration: number; nextServiceAt: number }
 export type NinthLifeDecision = 'shelter' | 'interrogate' | 'escort' | 'exploit'
 export type NinthLifeStage = 'signal' | 'dispatch' | 'contact' | 'verification' | 'intervention'
 export type NinthLifeInaction = 'self_evacuating' | 'pursued'
@@ -182,6 +197,10 @@ export type GameEvent =
   | { type: 'squad_merge_started'; sourceSquadId: string; targetSquadId: string }
   | { type: 'squad_merged'; sourceSquadId: string; targetSquadId: string }
   | { type: 'mission_squad_assigned'; squadId: string; missionId: string }
+  | { type: 'incident_checked'; check: IncidentCheck; confirmed: boolean }
+  | { type: 'monolith_response'; accepted: boolean; missionId: string }
+  | { type: 'cordon_started'; cordonId: string }
+  | { type: 'cordon_ended'; cordonId: string }
 export type State = {
   fame: number
   scrap: number
@@ -205,6 +224,10 @@ export type State = {
   storyObserver?: StoryObserver
   storyAftermath?: StoryAftermath
   urgentOperation?: UrgentOperation
+  relations: Record<RelationOwnerId, number>
+  relationLastEvent: Partial<Record<RelationOwnerId, string>>
+  monolith: MonolithState
+  cordons: Cordon[]
   finalSummaryVisible: boolean
   finalSummarySeen: boolean
   inventory: Record<ItemId, number>
@@ -242,7 +265,7 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 22
+export const SAVE_VERSION = 23
 export const GAME_VERSION = '0.1.0'
 export const SIMULATION_STEP_SECONDS = 0.25
 export type SaveErrorKey =
@@ -313,12 +336,31 @@ export const STORY_DECISION_BALANCE = CONFIG.story.decisions
 
 const templates: Mission[] = CONFIG.mission.templates.map(template => ({
   ...template,
+  kind: 'municipal',
   status: 'available',
   progress: 0,
   interruptionPolicy: 'preserve_progress',
   squadIds: [],
   contributorSquadIds: [],
 }))
+export const HEADQUARTERS: Headquarters[] = [
+  { id: 'monolith', ownerId: 'green_monolith', name: 'hq.monolith.name', function: 'hq.monolith.function', x: 18, y: 18 },
+  { id: 'police', ownerId: 'police', name: 'hq.police.name', function: 'hq.police.function', x: 72, y: 18 },
+  { id: 'space-agency', ownerId: 'space_agency', name: 'hq.space_agency.name', function: 'hq.space_agency.function', x: 84, y: 48 },
+  { id: 'spaceport', ownerId: 'space_agency', name: 'hq.spaceport.name', function: 'hq.spaceport.function', x: 88, y: 76 },
+  { id: 'chemical-lab', ownerId: 'chemical_lab', name: 'hq.chemical_lab.name', function: 'hq.chemical_lab.function', x: 64, y: 72 },
+  { id: 'physics-lab', ownerId: 'physics_lab', name: 'hq.physics_lab.name', function: 'hq.physics_lab.function', x: 38, y: 18 },
+  { id: 'biological-lab', ownerId: 'biological_lab', name: 'hq.biological_lab.name', function: 'hq.biological_lab.function', x: 16, y: 74 },
+  { id: 'computer-lab', ownerId: 'computer_lab', name: 'hq.computer_lab.name', function: 'hq.computer_lab.function', x: 50, y: 12 },
+  { id: 'weapon-trader', ownerId: 'weapon_trader', name: 'hq.weapon_trader.name', function: 'hq.weapon_trader.function', x: 32, y: 82 },
+  { id: 'vehicle-trader', ownerId: 'vehicle_trader', name: 'hq.vehicle_trader.name', function: 'hq.vehicle_trader.function', x: 58, y: 86 },
+]
+
+const initialRelations = (): Record<RelationOwnerId, number> => ({
+  green_monolith: CONFIG.raid.monolith.initialTrust, police: 50, space_agency: 50,
+  chemical_lab: 50, physics_lab: 50, biological_lab: 50, computer_lab: 50,
+  weapon_trader: 50, vehicle_trader: 50,
+})
 const pendingEvents = new WeakMap<State, GameEvent[]>()
 
 function emitEvent(state: State, event: GameEvent) {
@@ -346,11 +388,18 @@ export function createState(): State {
     squadSerial: 0,
     disbandedSquadCleanups: 0,
     completedMissionCount: 0,
-    missions: structuredClone(templates.slice(0, CONFIG.mission.initialAvailableCount)),
+    missions: [
+      ...structuredClone(templates.slice(0, CONFIG.mission.initialAvailableCount)),
+      { id: 'monolith-service-1', title: 'mission.monolith_service', kind: 'monolith_service', x: 24, y: 22, priority: 1, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] },
+    ],
     missionSerial: 0,
     rngSeed: CONFIG.initial.rngSeed,
     raidTriggered: false,
     storyTriggered: false,
+    relations: initialRelations(),
+    relationLastEvent: {},
+    monolith: { status: 'available', x: CONFIG.map.monolith.x, y: CONFIG.map.monolith.y, from: { ...CONFIG.map.monolith }, travel: 0, travelDuration: 0, nextServiceAt: 0 },
+    cordons: [],
     finalSummaryVisible: false,
     finalSummarySeen: false,
     inventory: Object.fromEntries(CONFIG.equipment.items.map(item => [item.id, item.initialCount])) as Record<ItemId, number>,
@@ -467,7 +516,7 @@ function isValidSquad(value: unknown) {
 function isValidMission(value: unknown) {
   return isRecord(value) && typeof value.id === 'string' && typeof value.title === 'string'
     && isFiniteNumber(value.x) && isFiniteNumber(value.y) && isFiniteNumber(value.priority)
-    && isFiniteNumber(value.progress)
+    && isFiniteNumber(value.progress) && ['municipal', 'monolith_service'].includes(value.kind as string)
     && ['preserve_progress', 'reset', 'fail', 'remove', 'scripted'].includes(value.interruptionPolicy as string)
     && ['available', 'assigned', 'completed'].includes(value.status as string)
     && Array.isArray(value.squadIds) && value.squadIds.every(id => typeof id === 'string')
@@ -477,11 +526,15 @@ function isValidMission(value: unknown) {
 function isValidIncident(value: unknown) {
   if (!isRecord(value)) return false
   const rolls = ['supportChance', 'attackChance', 'supportRoll', 'attackRoll', 'injuryRoll', 'injuredMemberRoll']
-  return value.kind === 'raiders' && ['decision', 'support_en_route', 'support_decision'].includes(value.stage as string)
+  return value.kind === 'raiders' && ['decision', 'checking', 'support_en_route', 'support_decision', 'monolith_en_route'].includes(value.stage as string)
     && typeof value.missionId === 'string'
     && (value.supportSquadId === undefined || typeof value.supportSquadId === 'string')
     && Array.isArray(value.participantSquadIds) && value.participantSquadIds.every(id => typeof id === 'string')
     && rolls.every(field => isFiniteNumber(value[field]))
+    && ['harmless', 'armed', 'heavy'].includes(value.threatClass as string)
+    && isFiniteNumber(value.threatRoll) && isFiniteNumber(value.monolithRoll)
+    && typeof value.monolithRequested === 'boolean' && typeof value.intelConfirmed === 'boolean'
+    && Array.isArray(value.clues) && value.clues.every(clue => typeof clue === 'string')
 }
 
 function isValidStoryIncident(value: unknown) {
@@ -694,6 +747,7 @@ function migrateLegacyState(value: unknown, removeLegacyEmptySquads = false) {
   }
   if (Array.isArray(migrated.missions)) {
     for (const mission of migrated.missions) {
+      if (isRecord(mission) && !['municipal', 'monolith_service'].includes(String(mission.kind))) mission.kind = 'municipal'
       if (!isRecord(mission)) continue
       if (!isFiniteNumber(mission.progress)) {
         const legacyOwnerId = typeof mission.squadId === 'string'
@@ -738,6 +792,12 @@ function migrateLegacyState(value: unknown, removeLegacyEmptySquads = false) {
       && !participants.includes(migrated.incident.primarySquadId)) participants.push(migrated.incident.primarySquadId)
     migrated.incident.participantSquadIds = participants
     delete migrated.incident.primarySquadId
+    if (!['harmless', 'armed', 'heavy'].includes(String(migrated.incident.threatClass))) migrated.incident.threatClass = 'armed'
+    if (!isFiniteNumber(migrated.incident.threatRoll)) migrated.incident.threatRoll = 50
+    if (!isFiniteNumber(migrated.incident.monolithRoll)) migrated.incident.monolithRoll = 50
+    if (typeof migrated.incident.monolithRequested !== 'boolean') migrated.incident.monolithRequested = false
+    if (typeof migrated.incident.intelConfirmed !== 'boolean') migrated.incident.intelConfirmed = false
+    if (!Array.isArray(migrated.incident.clues)) migrated.incident.clues = ['incident.clue.movement', 'incident.clue.unclear_numbers']
   }
   if (isRecord(migrated.storyIncident)) {
     migrated.storyIncident.participantSquadIds = Array.isArray(migrated.storyIncident.participantSquadIds)
@@ -784,6 +844,10 @@ function migrateLegacyState(value: unknown, removeLegacyEmptySquads = false) {
       : 0
     migrated.completedMissionCount = migrated.disbandedSquadCleanups + squadTotal
   }
+  if (!isRecord(migrated.relations)) migrated.relations = initialRelations()
+  if (!isRecord(migrated.relationLastEvent)) migrated.relationLastEvent = {}
+  if (!Array.isArray(migrated.cordons)) migrated.cordons = []
+  if (!isRecord(migrated.monolith)) migrated.monolith = { status: 'available', x: 18, y: 18, from: { x: 18, y: 18 }, travel: 0, travelDuration: 0, nextServiceAt: 0 }
   return migrated
 }
 
@@ -797,6 +861,13 @@ function isValidState(value: unknown): value is State {
   if (!Array.isArray(value.cats) || !value.cats.every(isValidCat)) return false
   if (!Array.isArray(value.squads) || !value.squads.every(isValidSquad)) return false
   if (!Array.isArray(value.missions) || !value.missions.every(isValidMission)) return false
+  if (!isRecord(value.relations) || !Object.keys(initialRelations()).every(key => isFiniteNumber((value.relations as Record<string, unknown>)[key]))) return false
+  if (!isRecord(value.relationLastEvent) || !isRecord(value.monolith) || !['available', 'en_route'].includes(String(value.monolith.status))
+    || ![value.monolith.x, value.monolith.y, value.monolith.travel, value.monolith.travelDuration, value.monolith.nextServiceAt].every(isFiniteNumber)
+    || !isValidMapPoint(value.monolith.from) || !Array.isArray(value.cordons)
+    || !value.cordons.every(cordon => isRecord(cordon) && typeof cordon.id === 'string'
+      && [cordon.x, cordon.y, cordon.radius, cordon.startedAt, cordon.endsAt].every(isFiniteNumber)
+      && ['harmless', 'armed', 'heavy'].includes(String(cordon.threatClass)) && Array.isArray(cordon.affectedOwnerIds))) return false
   if (!isFiniteNumber(value.squadSerial) || !Number.isInteger(value.squadSerial) || value.squadSerial < 0) return false
   if (!isFiniteNumber(value.disbandedSquadCleanups) || !Number.isInteger(value.disbandedSquadCleanups)
     || value.disbandedSquadCleanups < 0) return false
@@ -855,10 +926,15 @@ export function serializeState(state: State, pretty = true) {
   state.disbandedSquadCleanups ??= 0
   state.completedMissionCount ??= state.disbandedSquadCleanups + state.squads.reduce((total, squad) => total + squad.completed, 0)
   state.simulationRemainder ??= 0
+  state.relations ??= initialRelations()
+  state.relationLastEvent ??= {}
+  state.cordons ??= []
+  state.monolith ??= { status: 'available', x: 18, y: 18, from: { x: 18, y: 18 }, travel: 0, travelDuration: 0, nextServiceAt: 0 }
   if (state.storyIncident) state.storyIncident.facts ??= initialNinthLifeFacts()
   state.missions.forEach(mission => {
     const legacyMission = mission as Mission & { squadId?: string }
     mission.progress ??= 0
+    mission.kind ??= 'municipal'
     mission.interruptionPolicy ??= 'preserve_progress'
     mission.squadIds ??= []
     mission.contributorSquadIds ??= []
@@ -884,7 +960,7 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
@@ -921,7 +997,7 @@ export function deserializeCurrentSave(payload: string): State {
       version: String(isRecord(envelope) ? envelope.gameVersion ?? envelope.version : 'unknown'),
     })
   }
-  if (![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, SAVE_VERSION].includes(envelope.version as number)) {
+  if (![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, SAVE_VERSION].includes(envelope.version as number)) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   return deserializeState(payload)
@@ -1353,6 +1429,11 @@ function distanceBetween(origin: MapPoint, target: Pick<Mission, 'x' | 'y'>) {
   return Math.hypot(target.x - origin.x, target.y - origin.y)
 }
 
+export function pointInCordon(state: State, point: MapPoint) {
+  return state.cordons.some(cordon => state.time < cordon.endsAt
+    && Math.hypot(point.x - cordon.x, point.y - cordon.y) <= cordon.radius)
+}
+
 function travelTimeBetween(origin: MapPoint, target: Pick<Mission, 'x' | 'y'>) {
   return Math.max(CONFIG.mission.minimumTravelTime, distanceBetween(origin, target) / CONFIG.mission.mapSpeed)
 }
@@ -1602,6 +1683,7 @@ export function getAssignMissionBlockReason(state: State, squadId: string, missi
   const squad = state.squads.find(candidate => candidate.id === squadId)
   const mission = state.missions.find(candidate => candidate.id === missionId)
   if (!squad || !mission || mission.status === 'completed') return 'dispatch.reason.unavailable'
+  if (pointInCordon(state, mission)) return 'dispatch.reason.cordon'
   if (mission.squadIds.includes(squad.id)) return undefined
   if (state.incident?.missionId === missionId) return 'dispatch.reason.away'
   if (state.incident && state.incident.participantSquadIds.includes(squad.id)) return 'dispatch.reason.away'
@@ -1657,6 +1739,7 @@ export function getMoveSquadBlockReason(state: State, squadId: string, destinati
   if (members.some(cat => !canReceiveWorkOrder(cat))) return 'dispatch.reason.tired'
   if (!destination) return undefined
   if (!isMapCommandPoint(destination)) return 'dispatch.reason.invalid_point'
+  if (pointInCordon(state, destination)) return 'dispatch.reason.cordon'
   const origin = squad.phase === 'field' ? getSquadMapPosition(squad) : CONFIG.map.base
   const energyCost = (travelTimeBetween(origin, destination) + travelTimeBetween(destination, CONFIG.map.base))
     * CONFIG.mission.energyCostPerTravelSecond
@@ -1706,6 +1789,13 @@ export function moveSquadsToPoint(state: State, squadIds: string[], point: MapPo
 function rewardMission(state: State, mission: Mission, contributors: Squad[]) {
   mission.status = 'completed'
   mission.progress = CONFIG.mission.cleanupWork
+  if (mission.kind === 'monolith_service') {
+    state.relations.green_monolith = Math.min(100, state.relations.green_monolith + 10)
+    state.monolith.nextServiceAt = state.time + 90
+    note(state, 'log.monolith_service_completed', { trust: state.relations.green_monolith })
+    emitEvent(state, { type: 'mission_completed', squadIds: contributors.map(squad => squad.id), missionId: mission.id })
+    return
+  }
   for (const squad of contributors) squad.completed++
   state.completedMissionCount++
   state.scrap += CONFIG.mission.rewardScrap
@@ -2272,7 +2362,7 @@ function spawnMission(state: State): Mission {
     const x = generation.x.minimum + (serial * generation.x.multiplier) % generation.x.range
     const y = generation.y.minimum + (serial * generation.y.multiplier) % generation.y.range
     const clear = state.missions.every(mission => Math.hypot(mission.x - x, mission.y - y) > generation.minimumSeparation)
-    if (clear) return { id: `cleanup-${serial}`, title: label, x, y, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
+    if (clear && !pointInCordon(state, { x, y })) return { id: `cleanup-${serial}`, title: label, kind: 'municipal', x, y, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
   }
   const serial = ++state.missionSerial
   const fallbackCandidates: MapPoint[] = [{ ...generation.fallback }]
@@ -2286,7 +2376,7 @@ function spawnMission(state: State): Mission {
     const bestSeparation = Math.min(...state.missions.map(mission => Math.hypot(mission.x - best.x, mission.y - best.y)), Number.POSITIVE_INFINITY)
     return separation > bestSeparation ? candidate : best
   })
-  return { id: `cleanup-${serial}`, title: label, ...fallback, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
+  return { id: `cleanup-${serial}`, title: label, kind: 'municipal', ...fallback, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
 }
 
 function desiredMissionCount(time: number) {
@@ -2295,8 +2385,12 @@ function desiredMissionCount(time: number) {
 }
 
 function reconcileMissionFlow(state: State) {
+  if (state.relations.green_monolith < 100 && state.time >= state.monolith.nextServiceAt
+    && !state.missions.some(mission => mission.kind === 'monolith_service')) {
+    state.missions.push({ id: `monolith-service-${++state.missionSerial}`, title: 'mission.monolith_service', kind: 'monolith_service', x: 24, y: 22, priority: 1, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] })
+  }
   const desired = desiredMissionCount(state.time)
-  while (state.missions.length < desired) state.missions.push(spawnMission(state))
+  while (state.missions.filter(mission => mission.kind === 'municipal').length < desired) state.missions.push(spawnMission(state))
 }
 
 function randomPercent(state: State) {
@@ -2443,6 +2537,9 @@ function startRaidIncident(state: State, mission: Mission) {
   if (!participants.length) return
   const participantIds = participants.map(participant => participant.id)
   const combined = incidentCombinedSquad(state, participantIds)
+  const threatRoll = randomPercent(state)
+  const threatClass: ContactThreat = threatRoll <= CONFIG.raid.contactThreatRolls.harmlessBelow
+    ? 'harmless' : threatRoll <= CONFIG.raid.contactThreatRolls.armedBelow ? 'armed' : 'heavy'
   for (const participant of participants) participant.phase = 'incident'
   state.incident = {
     kind: 'raiders',
@@ -2455,9 +2552,61 @@ function startRaidIncident(state: State, mission: Mission) {
     injuryRoll: randomPercent(state),
     injuredMemberRoll: randomPercent(state),
     participantSquadIds: participantIds,
+    threatClass,
+    threatRoll,
+    monolithRoll: randomPercent(state),
+    monolithRequested: false,
+    intelConfirmed: false,
+    clues: ['incident.clue.movement', 'incident.clue.unclear_numbers'],
   }
   note(state, 'log.raid_started', { squad: participants.map(squad => getSquadDisplayName(squad)).join(', ') })
   emitEvent(state, { type: 'incident_started', incident: 'raiders', squadIds: participantIds, missionId: mission.id })
+}
+
+export function getIncidentCheckOptions(state: State) {
+  const incident = state.incident
+  const cats = incident ? incident.participantSquadIds.flatMap(id => membersOf(state, state.squads.find(s => s.id === id) ?? incidentCombinedSquad(state, []))) : []
+  const hasScanner = cats.some(cat => hasEquipped(cat, 'scanner'))
+  return {
+    observe: { available: incident?.stage === 'decision', seconds: CONFIG.raid.checks.observe, reason: undefined as string | undefined },
+    recon: { available: incident?.stage === 'decision' && cats.some(cat => cat.id === 'shorokh'), seconds: CONFIG.raid.checks.recon, reason: 'incident.reason.shorokh' },
+    scan: { available: incident?.stage === 'decision' && hasScanner, seconds: CONFIG.raid.checks.scan, reason: 'incident.reason.scanner' },
+    contact: { available: incident?.stage === 'decision' && cats.some(cat => cat.id === 'marlowe'), seconds: CONFIG.raid.checks.contact, reason: 'incident.reason.marlowe' },
+  }
+}
+
+export function checkIncident(state: State, check: IncidentCheck) {
+  const incident = state.incident
+  const option = getIncidentCheckOptions(state)[check]
+  if (!incident || !option.available || incident.stage !== 'decision') return false
+  incident.stage = 'checking'; incident.check = check; incident.checkEndsAt = state.time + option.seconds
+  state.speed = 1
+  note(state, `log.incident_check.${check}`, { seconds: option.seconds })
+  return true
+}
+
+export function getMonolithSupportOption(state: State) {
+  const incident = state.incident
+  const chance = Math.max(CONFIG.raid.monolith.minimumResponseChance, state.relations.green_monolith)
+  return { available: Boolean(incident?.stage === 'decision' && !incident.monolithRequested && state.monolith.status === 'available'), chance, seconds: CONFIG.raid.monolith.travelTime,
+    reason: incident?.monolithRequested ? 'incident.reason.monolith_used' : state.monolith.status !== 'available' ? 'incident.reason.monolith_busy' : undefined }
+}
+
+export function requestMonolithSupport(state: State) {
+  const incident = state.incident
+  const option = getMonolithSupportOption(state)
+  if (!incident || !option.available) return false
+  incident.monolithRequested = true
+  const accepted = incident.monolithRoll <= option.chance
+  emitEvent(state, { type: 'monolith_response', accepted, missionId: incident.missionId })
+  if (!accepted) { note(state, 'log.monolith_declined', { chance: option.chance }); return true }
+  const mission = state.missions.find(candidate => candidate.id === incident.missionId)
+  if (!mission) return false
+  incident.stage = 'monolith_en_route'
+  Object.assign(state.monolith, { status: 'en_route', x: 18, y: 18, from: { x: 18, y: 18 }, target: { x: mission.x, y: mission.y }, travel: 0, travelDuration: CONFIG.raid.monolith.travelTime })
+  state.speed = 1
+  note(state, 'log.monolith_dispatched', { seconds: CONFIG.raid.monolith.travelTime })
+  return true
 }
 
 export function getRaidOptions(state: State) {
@@ -2846,12 +2995,76 @@ function spendTravelEnergy(state: State, squad: Squad, elapsed: number) {
   for (const cat of membersOf(state, squad)) cat.energy = Math.max(0, cat.energy - energyCost)
 }
 
+function adjustRelation(state: State, ownerId: RelationOwnerId, delta: number, event: string) {
+  state.relations[ownerId] = Math.max(0, Math.min(100, state.relations[ownerId] + delta))
+  state.relationLastEvent[ownerId] = event
+}
+
+function createMonolithCordon(state: State, incident: RaidIncident, point: MapPoint) {
+  const rules = incident.threatClass === 'heavy' ? { radius: 16, seconds: 60, territory: -1, trust: 5 }
+    : incident.threatClass === 'armed' ? { radius: 16, seconds: 45, territory: -10, trust: -10 }
+      : { radius: 10, seconds: 30, territory: -5, trust: -20 }
+  adjustRelation(state, 'green_monolith', rules.trust, `relation.monolith.${incident.threatClass}`)
+  const affectedOwnerIds = [...new Set(HEADQUARTERS.filter(hq => hq.ownerId !== 'green_monolith'
+    && Math.hypot(hq.x - point.x, hq.y - point.y) <= rules.radius).map(hq => hq.ownerId))]
+  for (const ownerId of affectedOwnerIds) adjustRelation(state, ownerId, rules.territory, `relation.cordon.${incident.threatClass}`)
+  const cordon: Cordon = { id: `cordon-${Math.round(state.time * 1000)}`, ...point, radius: rules.radius, startedAt: state.time, endsAt: state.time + rules.seconds, threatClass: incident.threatClass, affectedOwnerIds }
+  state.cordons.push(cordon)
+  emitEvent(state, { type: 'cordon_started', cordonId: cordon.id })
+  note(state, 'log.cordon_started', { seconds: rules.seconds, threat: incident.threatClass, affected: affectedOwnerIds.length })
+}
+
+function finishMonolithArrival(state: State) {
+  const incident = state.incident
+  if (!incident || incident.stage !== 'monolith_en_route' || !state.monolith.target) return
+  const point = { ...state.monolith.target }
+  createMonolithCordon(state, incident, point)
+  for (const squad of incidentSquads(state, incident)) { releaseSquadFromMission(state, squad); sendHome(squad) }
+  removeMission(state, incident.missionId)
+  state.monolith = { status: 'available', x: 18, y: 18, from: { x: 18, y: 18 }, travel: 0, travelDuration: 0, nextServiceAt: state.monolith.nextServiceAt }
+  state.incident = undefined
+  state.speed = 0
+  syncAchievements(state)
+}
+
+function updateMonolithAndCordons(state: State, elapsed: number) {
+  const expired = state.cordons.filter(cordon => state.time >= cordon.endsAt)
+  state.cordons = state.cordons.filter(cordon => state.time < cordon.endsAt)
+  for (const cordon of expired) { note(state, 'log.cordon_ended'); emitEvent(state, { type: 'cordon_ended', cordonId: cordon.id }) }
+  if (state.monolith.status !== 'en_route' || !state.monolith.target) return
+  state.monolith.travel += elapsed
+  const ratio = Math.min(1, state.monolith.travel / state.monolith.travelDuration)
+  state.monolith.x = state.monolith.from.x + (state.monolith.target.x - state.monolith.from.x) * ratio
+  state.monolith.y = state.monolith.from.y + (state.monolith.target.y - state.monolith.from.y) * ratio
+  if (ratio >= 1) finishMonolithArrival(state)
+}
+
+function updateIncidentCheck(state: State) {
+  const incident = state.incident
+  if (!incident || incident.stage !== 'checking' || state.time < (incident.checkEndsAt ?? Infinity)) return
+  const check = incident.check ?? 'observe'
+  if (check === 'observe') incident.clues.push(`incident.clue.observed.${incident.threatClass}`)
+  else {
+    incident.intelConfirmed = true
+    incident.clues.push(`incident.clue.confirmed.${incident.threatClass}`)
+  }
+  emitEvent(state, { type: 'incident_checked', check, confirmed: incident.intelConfirmed })
+  if (check === 'contact' && incident.threatClass === 'harmless') {
+    for (const squad of incidentSquads(state, incident)) squad.phase = 'cleanup'
+    state.incident = undefined
+    note(state, 'log.incident_contact_resolved')
+  } else incident.stage = 'decision'
+  state.speed = 0
+}
+
 function advanceSimulation(state: State, elapsed: number) {
   for (const mission of state.missions) {
     mission.squadIds ??= []
     mission.contributorSquadIds ??= []
   }
   state.time += elapsed
+  updateIncidentCheck(state)
+  updateMonolithAndCordons(state, elapsed)
   reconcileMissionFlow(state)
   syncCatSleep(state)
   const workingCatId = updateResearch(state, elapsed)
@@ -2996,7 +3209,7 @@ function advanceSimulation(state: State, elapsed: number) {
     if (mission.status !== 'assigned' || state.incident?.missionId === mission.id) continue
     const participants = cleanupParticipants(state, mission.id)
     if (!participants.length) continue
-    const raidIsPending = !state.raidTriggered
+    const raidIsPending = mission.kind === 'municipal' && !state.raidTriggered
       && successfulCleanups(state) >= CONFIG.raid.successfulCleanupsBeforeTrigger
     const workLimit = raidIsPending ? CONFIG.mission.raidTriggerWork : CONFIG.mission.cleanupWork
     mission.progress ??= 0
@@ -3021,7 +3234,7 @@ function advanceSimulation(state: State, elapsed: number) {
         .filter((squad): squad is Squad => Boolean(squad))
       const assignedSquads = missionSquads(state, mission.id)
       rewardMission(state, mission, contributors)
-      afterSuccessfulCleanup(state, mission, contributors)
+      if (mission.kind === 'municipal') afterSuccessfulCleanup(state, mission, contributors)
       for (const assigned of assignedSquads) {
         if (assigned.phase === 'incident' || assigned.phase === 'support') continue
         continueAfterSharedMission(state, assigned)
@@ -3069,6 +3282,11 @@ export type GameCommand =
   | { type: 'select_research'; researchId?: ResearchId }
   | { type: 'resolve_raid'; action: 'escape' | 'attack' | 'support'; supportSquadId?: string }
   | { type: 'resolve_raid_followup'; action: 'retreat' | 'continue' }
+  | { type: 'observe_incident' }
+  | { type: 'recon_incident' }
+  | { type: 'scan_incident' }
+  | { type: 'contact_incident' }
+  | { type: 'request_monolith_support' }
   | { type: 'dispatch_ninth_life'; squadId: string }
   | { type: 'verify_ninth_life'; verification: NinthLifeVerification }
   | { type: 'resolve_ninth_life'; decision: NinthLifeDecision }
@@ -3115,6 +3333,11 @@ export class GameCore {
       case 'select_research': return selectResearch(this.world, command.researchId)
       case 'resolve_raid': return resolveRaidDecision(this.world, command.action, command.supportSquadId)
       case 'resolve_raid_followup': return resolveRaidFollowup(this.world, command.action)
+      case 'observe_incident': return checkIncident(this.world, 'observe')
+      case 'recon_incident': return checkIncident(this.world, 'recon')
+      case 'scan_incident': return checkIncident(this.world, 'scan')
+      case 'contact_incident': return checkIncident(this.world, 'contact')
+      case 'request_monolith_support': return requestMonolithSupport(this.world)
       case 'dispatch_ninth_life': return dispatchNinthLife(this.world, command.squadId)
       case 'verify_ninth_life': return verifyNinthLife(this.world, command.verification)
       case 'resolve_ninth_life': return resolveNinthLife(this.world, command.decision)

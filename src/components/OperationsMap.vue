@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { GAME_RULES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getReturnSquadBlockReason, getSquadMapPosition, getSquadMinimumEnergy, getWaterFiltersDispatchBlockReason, isActiveAssignedMission, isSquadResting, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
+import { GAME_RULES, HEADQUARTERS, getAssignMissionBlockReason, getCleanupSecondsRemaining, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getReturnSquadBlockReason, getSquadMapPosition, getSquadMinimumEnergy, getWaterFiltersDispatchBlockReason, isActiveAssignedMission, isSquadResting, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
@@ -23,6 +23,8 @@ const tr = (key: string, params?: Record<string, string | number>) => translate(
 const base = { x: 46, y: 51 }
 const { selectedSquadIds, selectedTarget, commandMessage, selectedCount, clearCommand, handleEscape } = useMapSelection()
 const mapGrid = ref<HTMLElement>()
+const selectedHqId = ref<string>()
+const selectedHq = computed(() => HEADQUARTERS.find(hq => hq.id === selectedHqId.value))
 const mapSize = ref({ width: 1000, height: 700 })
 const selectionBox = ref<{ startX: number; startY: number; x: number; y: number; additive: boolean; pointerId: number; dragging: boolean }>()
 let mapResizeObserver: ResizeObserver | undefined
@@ -160,6 +162,11 @@ function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.tim
       <MapRouteLayer :state="state" :base="base" :squad-color="squadColor" :squad-index="squadIndex" />
       <MapSquadLayer :state="state" :selected-squad-ids="selectedSquadIds" :squad-style="squadStyle" :squad-is-available="squadIsAvailable" :field-cat-tooltip="fieldCatTooltip" :squad-color="squadColor" :field-cat="fieldCat" :cat-tokens-url="catTokensUrl" :squad-palette="squadPalette" @select="selectSquad" />
       <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
+      <div v-for="cordon in state.cordons" :key="cordon.id" class="cordon-zone" :style="{ left: `${cordon.x}%`, top: `${cordon.y}%`, width: `${cordon.radius * 2}%`, aspectRatio: '1' }"><b>{{ tr('map.cordon') }}</b><small>{{ Math.max(0, Math.ceil(cordon.endsAt - state.time)) }} с</small></div>
+      <svg v-if="state.monolith.status === 'en_route' && state.monolith.target" class="monolith-route" viewBox="0 0 100 100" preserveAspectRatio="none"><line :x1="state.monolith.from.x" :y1="state.monolith.from.y" :x2="state.monolith.target.x" :y2="state.monolith.target.y" /></svg>
+      <div v-if="state.monolith.status === 'en_route'" class="monolith-unit" :style="{ left: `${state.monolith.x}%`, top: `${state.monolith.y}%` }"><span>M</span><b>{{ tr('monolith.unit') }}</b></div>
+      <button v-for="hq in HEADQUARTERS" :key="hq.id" type="button" class="hq-pin" :class="{ monolith: hq.id === 'monolith', selected: selectedHqId === hq.id }" :style="{ left: `${hq.x}%`, top: `${hq.y}%` }" @click.stop="selectedHqId = selectedHqId === hq.id ? undefined : hq.id"><span>{{ hq.id === 'monolith' ? 'M' : '◆' }}</span><small>{{ tr(hq.name) }}</small></button>
+      <section v-if="selectedHq" class="hq-card" @click.stop><button @click="selectedHqId = undefined">×</button><h3>{{ tr(selectedHq.name) }}</h3><p>{{ tr(selectedHq.function) }}</p><b>{{ tr('hq.relation') }}: {{ state.relations[selectedHq.ownerId] }}/100</b><small v-if="state.relationLastEvent[selectedHq.ownerId]">{{ tr(state.relationLastEvent[selectedHq.ownerId]!) }}</small><small v-if="selectedHq.id === 'monolith'">{{ tr(`monolith.status.${state.monolith.status}`) }}</small></section>
       <button type="button" class="base-pin" :class="{ selected: selectedTarget?.type === 'base' }" :aria-label="tr('БАЗА')" @click.stop="selectBase"><strong>NL</strong></button>
       <button v-if="state.storyIncident" type="button" class="story-pin" :class="{ dispatching: state.storyIncident.stage === 'dispatch' }" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }" :aria-label="tr('Дезертир ждёт решения')" @click.stop="dispatchStory"><span>!</span></button><div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span></div>
       <div v-if="state.storyObserver && state.storyObserver.status !== 'hidden' && state.storyObserver.status !== 'gone'" class="observer-pin" :class="state.storyObserver.status" :style="{ left: `${state.storyObserver.x}%`, top: `${state.storyObserver.y}%` }" :title="tr('story.observer.title')"><span>◉</span></div>

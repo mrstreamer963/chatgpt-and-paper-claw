@@ -60,6 +60,9 @@ export const SIMULATION_CONFIG = {
     minimumInjuryChance: 20,
     injuryRecoveryTime: 60,
     medkitRecoveryTime: 20,
+    contactThreatRolls: { harmlessBelow: 30, armedBelow: 85 },
+    checks: { observe: 20, recon: 10, scan: 15, contact: 15 },
+    monolith: { travelTime: 12, initialTrust: 70, minimumResponseChance: 10, heavyTrust: 5, armedTrust: -10, harmlessTrust: -20 },
   },
   research: {
     duration: 60,
@@ -125,7 +128,7 @@ export const SIMULATION_CONFIG = {
       partialRewardScrap: 5,
     },
   },
-  map: { base: { x: 46, y: 51 } },
+  map: { base: { x: 46, y: 51 }, monolith: { x: 18, y: 18 } },
   cats: [
     { id: 'marlowe', name: 'cat.marlowe.name', role: 'cat.marlowe.role', energy: 88, reaction: 4, combat: 2, tech: 4, perception: 6, scouting: 5, cleanupTrait: 0, supportTrait: 5, attackTrait: 0, injuryTrait: 0 },
     { id: 'pixel', name: 'cat.pixel.name', role: 'cat.pixel.role', energy: 92, reaction: 5, combat: 2, tech: 9, perception: 5, scouting: 4, cleanupTrait: 5, supportTrait: 0, attackTrait: 0, injuryTrait: 0 },

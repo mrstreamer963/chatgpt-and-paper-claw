@@ -113,7 +113,8 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   state.incident.supportRoll = 1
 
   let overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 2 })
-  assert.match(overlayHtml, /Встреча с рейдерами/)
+  assert.match(overlayHtml, /Подозрительная активность/)
+  assert.match(overlayHtml, /Вызвать «Караул-7»/)
   assert.match(overlayHtml, /Укрыться и запросить поддержку/)
 
   assert.equal(resolveRaidDecision(state, 'support', 'bravo'), true)

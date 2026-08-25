@@ -5,6 +5,7 @@ import {
   assignSquadsToMission,
   assignCat,
   continueAfterFinale,
+  checkIncident,
   createSquad,
   createState as createFreshState,
   disbandSquad,
@@ -20,6 +21,7 @@ import {
   getCatAssignmentSelection,
   getEquipmentSelection,
   getRaidOptions,
+  getIncidentCheckOptions,
   getSquadCleanupEstimate,
   getSquadMapPosition,
   getMoveSquadBlockReason,
@@ -37,6 +39,7 @@ import {
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
+  requestMonolithSupport,
   renameSquad,
   returnSquadToBase,
   returnSquadsToBase,
@@ -53,6 +56,35 @@ import {
   tick,
   verifyNinthLife,
 } from '../src/simulation.ts'
+
+test('Shorokh confirms a suspicious contact after ten simulated seconds', () => {
+  const state = openRaid()
+  state.squads[0].members.push('shorokh')
+  state.cats.find(cat => cat.id === 'shorokh')!.assignedTo = state.squads[0].id
+  state.incident!.threatClass = 'heavy'
+  assert.equal(getIncidentCheckOptions(state).recon.available, true)
+  assert.equal(checkIncident(state, 'recon'), true)
+  tick(state, 10)
+  assert.equal(state.speed, 0)
+  assert.equal(state.incident?.intelConfirmed, true)
+  assert.equal(state.incident?.stage, 'decision')
+})
+
+test('a justified Monolith response creates one territorial penalty per owner', () => {
+  const state = openRaid()
+  const mission = state.missions.find(candidate => candidate.id === state.incident!.missionId)!
+  Object.assign(mission, { x: 84, y: 48 })
+  state.incident!.threatClass = 'heavy'
+  state.incident!.monolithRoll = 1
+  const agencyBefore = state.relations.space_agency
+  assert.equal(requestMonolithSupport(state), true)
+  tick(state, 12)
+  assert.equal(state.incident, undefined)
+  assert.equal(state.relations.green_monolith, 75)
+  assert.equal(state.relations.space_agency, agencyBefore - 1)
+  assert.equal(state.cordons.length, 1)
+  assert.deepEqual(state.cordons[0].affectedOwnerIds, ['space_agency'])
+})
 
 // Most legacy regression cases exercise established squad behavior. Seed their
 // fixture explicitly now that production starts without empty squad templates.

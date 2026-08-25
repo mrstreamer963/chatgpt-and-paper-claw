@@ -6,6 +6,9 @@ import {
   getNinthLifeChoicePreviews,
   getNinthLifeVerificationOptions,
   getRaidOptions,
+  getIncidentCheckOptions,
+  getMonolithSupportOption,
+  type IncidentCheck,
   type NinthLifeDecision,
   type NinthLifeFactId,
   type NinthLifeVerification,
@@ -20,6 +23,8 @@ const emit = defineEmits<{
   reset: []
   raidDecision: [action: 'escape' | 'attack' | 'support', supportSquadId?: string]
   raidFollowup: [action: 'retreat' | 'continue']
+  incidentCheck: [check: IncidentCheck]
+  monolithSupport: []
   storyDecision: [decision: NinthLifeDecision]
   storyVerify: [verification: NinthLifeVerification]
   continueFinale: []
@@ -27,6 +32,8 @@ const emit = defineEmits<{
 
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
 const raidOptions = computed(() => getRaidOptions(props.state))
+const incidentChecks = computed(() => getIncidentCheckOptions(props.state))
+const monolithOption = computed(() => getMonolithSupportOption(props.state))
 const incidentSquads = computed(() => props.state.incident?.participantSquadIds
   .map(id => props.state.squads.find(squad => squad.id === id)).filter(Boolean) ?? [])
 const supportSquad = computed(() => props.state.squads.find(squad => squad.id === props.state.incident?.supportSquadId))
@@ -65,11 +72,15 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
     </section>
   </div>
 
-  <div v-if="!newGameConfirmOpen && state.incident && state.incident.stage !== 'support_en_route'" class="incident-overlay">
+  <div v-if="!newGameConfirmOpen && state.incident && !['support_en_route', 'checking', 'monolith_en_route'].includes(state.incident.stage)" class="incident-overlay">
     <section class="incident-card" role="dialog" aria-modal="true" aria-labelledby="incident-title">
       <div class="incident-kicker"><span></span> {{ tr('НЕШТАТНАЯ СИТУАЦИЯ · ВРЕМЯ ОСТАНОВЛЕНО') }}</div>
       <template v-if="state.incident.stage === 'decision'">
-        <h1 id="incident-title">{{ tr('Встреча с рейдерами') }}</h1><p>{{ tr('raid.description', { squad: squadNames(incidentSquads) }) }}</p>
+        <h1 id="incident-title">{{ tr('incident.suspicious.title') }}</h1><p>{{ tr('incident.suspicious.description', { squad: squadNames(incidentSquads) }) }}</p>
+        <div class="incident-intel"><small>{{ tr('incident.intel.label') }}</small><span v-for="clue in state.incident.clues" :key="clue">{{ tr(clue) }}</span><b v-if="state.incident.intelConfirmed">{{ tr(`incident.threat.${state.incident.threatClass}`) }}</b></div>
+        <div class="incident-checks">
+          <button v-for="check in (['observe','recon','scan','contact'] as IncidentCheck[])" :key="check" :disabled="!incidentChecks[check].available" @click="emit('incidentCheck', check)"><b>{{ tr(`incident.check.${check}`) }}</b><small>{{ tr(incidentChecks[check].available ? `incident.check.${check}.description` : incidentChecks[check].reason ?? '') }}</small></button>
+        </div>
         <div class="incident-facts"><span>{{ tr('ОТРЯДЫ') }} <b>{{ tr('cats.count', { count: incidentSquads.reduce((total, squad) => total + (squad?.members.length ?? 0), 0) }) }}</b></span><span>{{ tr('ПРОГРЕСС') }} <b>{{ Math.round(GAME_RULES.raidTriggerWork / GAME_RULES.cleanupWork * 100) }}%</b></span><span>{{ tr('НАГРАДА ПОД УГРОЗОЙ') }} <b>{{ tr('scrap.count', { count: GAME_RULES.cleanupRewardScrap }) }}</b></span></div>
         <div class="incident-actions">
           <button class="choice safe" @click="emit('raidDecision', 'escape')"><span><b>{{ tr('Сбежать') }}</b><small>{{ tr('Миссия отменится без добычи и ранений.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong></button>
@@ -81,6 +92,7 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
               <strong>{{ candidate.chance }}%</strong>
             </button>
             <button v-if="!raidOptions?.support.available" class="choice support" disabled><span><b>{{ tr('Укрыться и запросить поддержку') }}</b><small>{{ tr(raidOptions?.support.reason ?? '') }}</small></span><strong>{{ tr('НЕТ') }}</strong></button>
+            <button class="choice monolith" :disabled="!monolithOption.available" @click="emit('monolithSupport')"><span><b>{{ tr('incident.monolith.request') }}</b><small>{{ tr(monolithOption.available ? 'incident.monolith.description' : monolithOption.reason ?? '') }}</small></span><strong>{{ monolithOption.chance }}%</strong></button>
           </div>
         </div>
       </template>

@@ -34,6 +34,11 @@ const {
   selectResearch,
   resolveRaidDecision,
   resolveRaidFollowup,
+  observeIncident,
+  reconIncident,
+  scanIncident,
+  contactIncident,
+  requestMonolithSupport,
   dispatchNinthLife,
   verifyNinthLife,
   dispatchWaterFilters,
@@ -149,6 +154,8 @@ async function resetProgress() {
       @reset="resetProgress"
       @raid-decision="resolveRaidDecision"
       @raid-followup="resolveRaidFollowup"
+      @incident-check="$event === 'observe' ? observeIncident() : $event === 'recon' ? reconIncident() : $event === 'scan' ? scanIncident() : contactIncident()"
+      @monolith-support="requestMonolithSupport"
       @story-decision="resolveNinthLife"
       @story-verify="verifyNinthLife"
       @continue-finale="continueAfterFinale"
