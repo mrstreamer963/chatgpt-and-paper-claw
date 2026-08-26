@@ -13,6 +13,7 @@ import {
 } from '@nine-lives/game-core'
 
 const WORLD_FRAME_SECONDS = 1 / 60
+const MAX_WORLD_FRAME_SECONDS = 0.25
 
 type LocalWorkerScope = {
   postMessage(message: WorldResponse): void
@@ -62,9 +63,13 @@ function publish(events: GameEvent[] = []) {
 
 function startTicking() {
   if (tickTimer) clearInterval(tickTimer)
+  let previousFrameAt = performance.now()
   tickTimer = setInterval(() => {
+    const frameAt = performance.now()
+    const elapsed = Math.min(MAX_WORLD_FRAME_SECONDS, Math.max(0, (frameAt - previousFrameAt) / 1000))
+    previousFrameAt = frameAt
     const world = requireCore()
-    world.tick(WORLD_FRAME_SECONDS)
+    world.tick(elapsed)
     publish(world.drainEvents())
   }, WORLD_FRAME_SECONDS * 1000)
 }
