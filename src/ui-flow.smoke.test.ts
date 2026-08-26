@@ -186,6 +186,21 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(overlayHtml, /Проверить показания/)
   assert.match(overlayHtml, /Новая игра \/ сброс прогресса/)
 
+  state.incident = {
+    missionId: state.missions[0].id,
+    stage: 'checking',
+    participantSquadIds: ['alpha'],
+    threatClass: 'harmless',
+    actualActor: 'scavengers',
+    clues: [],
+    check: 'observe',
+    checkEndsAt: state.time + 10,
+  }
+  overlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 3 })
+  assert.match(overlayHtml, /Девятая жизнь/)
+  assert.doesNotMatch(overlayHtml, /Подозрительная активность/)
+  state.incident = undefined
+
   assert.equal(verifyNinthLife(state, 'recon'), true)
   tick(state, 30)
   assert.equal(state.storyIncident?.stage, 'contact')

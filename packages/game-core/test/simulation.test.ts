@@ -1043,6 +1043,25 @@ test('GameCore refuses to resume time while story or final overlays are blocking
   assert.equal(finalCore.snapshot().speed, 0)
 })
 
+test('GameCore can resume during an incident check because no decision overlay is blocking', () => {
+  const state = createState()
+  state.incident = {
+    missionId: state.missions[0].id,
+    stage: 'checking',
+    participantSquadIds: ['alpha'],
+    threatClass: 'harmless',
+    actualActor: 'scavengers',
+    clues: [],
+    check: 'observe',
+    checkEndsAt: 10,
+  }
+  state.speed = 0
+
+  const core = new GameCore(state)
+  assert.equal(core.dispatch({ type: 'set_speed', speed: 1 }), true)
+  assert.equal(core.snapshot().speed, 1)
+})
+
 test('mission flow never creates duplicate active coordinates', () => {
   const state = createState()
   state.speed = 10

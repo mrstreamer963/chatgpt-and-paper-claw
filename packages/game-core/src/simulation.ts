@@ -3947,6 +3947,16 @@ export function tick(state: State, seconds: number) {
   }
 }
 
+export type BlockingOverlay = 'first_shift_container' | 'incident' | 'story' | 'final'
+
+export function getBlockingOverlay(state: State): BlockingOverlay | undefined {
+  if (state.firstShift.containerSquadId && !state.firstShift.containerDecision) return 'first_shift_container'
+  if (state.incident && !['support_en_route', 'checking', 'police_en_route', 'monolith_en_route'].includes(state.incident.stage)) return 'incident'
+  if (state.storyIncident?.stage === 'contact') return 'story'
+  if (state.finalSummaryVisible) return 'final'
+  return undefined
+}
+
 export type GameCommand =
   | { type: 'set_speed'; speed: Speed }
   | { type: 'assign_cat'; catId: string; squadId: string }
@@ -3995,12 +4005,7 @@ export class GameCore {
   dispatch(command: GameCommand): boolean {
     switch (command.type) {
       case 'set_speed':
-        if (command.speed !== 0 && (
-          this.world.storyIncident?.stage === 'contact'
-          || Boolean(this.world.firstShift.containerSquadId && !this.world.firstShift.containerDecision)
-          || this.world.finalSummaryVisible
-          || (this.world.incident && !['support_en_route', 'police_en_route', 'monolith_en_route'].includes(this.world.incident.stage))
-        )) return false
+        if (command.speed !== 0 && getBlockingOverlay(this.world)) return false
         this.world.speed = command.speed
         return true
       case 'assign_cat': return assignCat(this.world, command.catId, command.squadId)

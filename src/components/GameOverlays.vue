@@ -7,6 +7,7 @@ import {
   getNinthLifeVerificationOptions,
   getRaidOptions,
   getIncidentCheckOptions,
+  getBlockingOverlay,
   getMonolithSupportOption,
   getPoliceSupportOption,
   type ContainerDecision,
@@ -35,6 +36,7 @@ const emit = defineEmits<{
 }>()
 
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
+const blockingOverlay = computed(() => getBlockingOverlay(props.state))
 const raidOptions = computed(() => getRaidOptions(props.state))
 const incidentChecks = computed(() => getIncidentCheckOptions(props.state))
 const monolithOption = computed(() => getMonolithSupportOption(props.state))
@@ -83,7 +85,7 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
     </section>
   </div>
 
-  <div v-if="!newGameConfirmOpen && state.firstShift.stage === 'container' && state.firstShift.containerSquadId && !state.firstShift.containerDecision" class="incident-overlay">
+  <div v-if="!newGameConfirmOpen && blockingOverlay === 'first_shift_container'" class="incident-overlay">
     <section class="incident-card container-card" role="dialog" aria-modal="true" aria-labelledby="container-title">
       <div class="incident-kicker"><span></span> {{ tr('first_shift.container.kicker') }}</div>
       <h1 id="container-title">{{ tr('first_shift.container.title') }}</h1>
@@ -103,7 +105,7 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
     </section>
   </div>
 
-  <div v-if="!newGameConfirmOpen && state.incident && !['support_en_route', 'checking', 'monolith_en_route', 'police_en_route'].includes(state.incident.stage)" class="incident-overlay">
+  <div v-if="!newGameConfirmOpen && blockingOverlay === 'incident' && state.incident" class="incident-overlay">
     <section class="incident-card" role="dialog" aria-modal="true" aria-labelledby="incident-title">
       <div class="incident-kicker"><span></span> {{ tr('НЕШТАТНАЯ СИТУАЦИЯ · ВРЕМЯ ОСТАНОВЛЕНО') }}</div>
       <template v-if="state.incident.stage === 'decision'">
@@ -135,7 +137,7 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
     </section>
   </div>
 
-  <div v-if="!newGameConfirmOpen && state.storyIncident?.stage === 'contact' && !state.incident" class="story-overlay">
+  <div v-if="!newGameConfirmOpen && blockingOverlay === 'story' && state.storyIncident" class="story-overlay">
     <section class="story-card" role="dialog" aria-modal="true" aria-labelledby="story-title">
       <div class="case-number"><span>{{ tr('РАССЛЕДОВАНИЕ') }}</span><strong>09</strong></div>
       <div class="story-heading"><div class="story-kicker">{{ tr('ВХОДЯЩЕЕ ДЕЛО · ВРЕМЯ ОСТАНОВЛЕНО') }}</div><h1 id="story-title">{{ tr('Девятая жизнь') }}</h1><p>{{ tr('story.description', { squad: squadNames(storySquads) }) }}</p><div class="witness-line"><span>{{ tr('СВИДЕТЕЛЬ') }}</span><b>{{ tr('Позывной «Игла»') }}</b><i>{{ tr('показания не подтверждены') }}</i></div></div>
@@ -146,7 +148,7 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
     </section>
   </div>
 
-  <div v-if="!newGameConfirmOpen && state.finalSummaryVisible && state.storyResolution" class="final-overlay">
+  <div v-if="!newGameConfirmOpen && blockingOverlay === 'final' && state.storyResolution" class="final-overlay">
     <section class="final-card" role="dialog" aria-modal="true" aria-labelledby="final-title">
       <div class="final-stamp">{{ tr('ДЕЛО ЗАКРЫТО') }}</div><div class="final-kicker">NINE LIVES CORP · {{ tr('ОПЕРАТИВНАЯ СВОДКА 09') }}</div><h1 id="final-title">{{ tr('Девятая жизнь') }}</h1><p class="final-lead">{{ tr(state.storyResolution.outcome) }}</p>
       <div class="final-metrics"><div><small>{{ tr('ИЗВЕСТНОСТЬ') }}</small><b>{{ state.fame }}</b><span>{{ tr('final.goal_complete', { fame: GAME_RULES.fameGoal }) }}</span></div><div><small>{{ tr('УГРОЗА КОРПОРАЦИИ') }}</small><b>{{ state.corporateThreat }}</b><span>{{ tr(state.corporateThreat >= GAME_RULES.severeThreat ? 'ВЫСОКАЯ' : state.corporateThreat >= GAME_RULES.elevatedThreat ? 'ПОВЫШЕННАЯ' : 'СТАБИЛЬНАЯ') }}</span></div><div><small>{{ tr('УСПЕШНЫЕ УБОРКИ') }}</small><b>{{ totalRuns }}</b><span>{{ tr('АВТОНОМНЫЙ ЦИКЛ РАБОТАЕТ') }}</span></div></div>
