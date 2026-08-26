@@ -36,7 +36,7 @@ let mapResizeObserver: ResizeObserver | undefined
 let suppressMapClick = false
 
 function squadPosition(squad: Squad) {
-  const { x, y } = getSquadMapPosition(squad)
+  const { x, y } = getSquadMapPosition(squad, props.state.simulationRemainder)
   return { x: Math.max(5, Math.min(95, x)), y: Math.max(7, Math.min(93, y)) }
 }
 const squadPalette = ['#e5ab64', '#77c5c9', '#8fca78', '#c58fda', '#df7d72', '#7d9fdf']

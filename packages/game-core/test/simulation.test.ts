@@ -149,6 +149,30 @@ test('fixed simulation steps produce the same state at x1, x5, and x10', () => {
   assert.equal(atX1.simulationRemainder, 0)
 })
 
+test('a moving squad exposes pending simulated travel between fixed logic steps and stays still while paused', () => {
+  const state = createState()
+  const squad = state.squads[0]
+  squad.autoDispatch = false
+  squad.members = ['pixel']
+
+  assert.equal(moveSquadToPoint(state, squad.id, { x: 30, y: 30 }), true)
+  const start = getSquadMapPosition(squad)
+
+  state.speed = 1
+  const frame = 1 / 60
+  tick(state, frame)
+  const afterFrame = getSquadMapPosition(squad, state.simulationRemainder)
+  assert.notDeepEqual(afterFrame, start)
+  assert.equal(squad.travel, 0)
+  assert.equal(state.simulationRemainder, frame)
+
+  state.speed = 0
+  tick(state, frame)
+  assert.deepEqual(getSquadMapPosition(squad, state.simulationRemainder), afterFrame)
+  assert.equal(squad.travel, 0)
+  assert.equal(state.simulationRemainder, frame)
+})
+
 test('group map orders are resolved by core as one command', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')

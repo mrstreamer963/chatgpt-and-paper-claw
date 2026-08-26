@@ -4,7 +4,7 @@ import { getSquadMapPosition, type Squad, type State } from '@nine-lives/game-co
 const props = defineProps<{ state: State; base: { x: number; y: number }; squadColor: (squad: Squad) => string; squadIndex: (squad: Squad) => number }>()
 
 function position(squad: Squad) {
-  const point = getSquadMapPosition(squad)
+  const point = getSquadMapPosition(squad, props.state.simulationRemainder)
   return { x: Math.max(5, Math.min(95, point.x)), y: Math.max(7, Math.min(93, point.y)) }
 }
 function routeFallback(squad: Squad) {

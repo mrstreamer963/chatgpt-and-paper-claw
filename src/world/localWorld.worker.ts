@@ -12,6 +12,8 @@ import {
   type WorldSnapshot,
 } from '@nine-lives/game-core'
 
+const WORLD_FRAME_SECONDS = 1 / 60
+
 type LocalWorkerScope = {
   postMessage(message: WorldResponse): void
   onmessage: ((event: MessageEvent<WorldRequest>) => void) | null
@@ -62,9 +64,9 @@ function startTicking() {
   if (tickTimer) clearInterval(tickTimer)
   tickTimer = setInterval(() => {
     const world = requireCore()
-    world.tick(0.25)
+    world.tick(WORLD_FRAME_SECONDS)
     publish(world.drainEvents())
-  }, 250)
+  }, WORLD_FRAME_SECONDS * 1000)
 }
 
 function replaceWorld(state: State) {

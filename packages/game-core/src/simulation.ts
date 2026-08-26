@@ -3223,27 +3223,28 @@ function removeMission(state: State, missionId?: string) {
   if (mission) state.missions.splice(state.missions.indexOf(mission), 1)
 }
 
-export function getSquadMapPosition(squad: Squad): MapPoint {
+export function getSquadMapPosition(squad: Squad, pendingTravel = 0): MapPoint {
+  const travel = squad.travel + Math.max(0, pendingTravel)
   if (squad.phase === 'base') return { ...CONFIG.map.base }
   if (['returning', 'moving', 'outbound', 'support', 'merging'].includes(squad.phase) && squad.route?.length > 1) {
-    return positionAlongRoute(squad.route, Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9)))
+    return positionAlongRoute(squad.route, Math.min(1, travel / Math.max(squad.travelDuration, 1e-9)))
   }
   if (squad.phase === 'returning') {
-    const ratio = Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9))
+    const ratio = Math.min(1, travel / Math.max(squad.travelDuration, 1e-9))
     return {
       x: squad.routeFrom.x + (CONFIG.map.base.x - squad.routeFrom.x) * ratio,
       y: squad.routeFrom.y + (CONFIG.map.base.y - squad.routeFrom.y) * ratio,
     }
   }
   if (squad.phase === 'moving' && squad.destination) {
-    const ratio = Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9))
+    const ratio = Math.min(1, travel / Math.max(squad.travelDuration, 1e-9))
     return {
       x: squad.routeFrom.x + (squad.destination.x - squad.routeFrom.x) * ratio,
       y: squad.routeFrom.y + (squad.destination.y - squad.routeFrom.y) * ratio,
     }
   }
   if (squad.phase === 'merging' && squad.mergePoint) {
-    const ratio = Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9))
+    const ratio = Math.min(1, travel / Math.max(squad.travelDuration, 1e-9))
     return {
       x: squad.routeFrom.x + (squad.mergePoint.x - squad.routeFrom.x) * ratio,
       y: squad.routeFrom.y + (squad.mergePoint.y - squad.routeFrom.y) * ratio,
@@ -3252,7 +3253,7 @@ export function getSquadMapPosition(squad: Squad): MapPoint {
   if (!squad.target) return { ...squad.routeFrom }
   if (!['outbound', 'support'].includes(squad.phase)) return { x: squad.target.x, y: squad.target.y }
   const destination = squad.target
-  const ratio = Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9))
+  const ratio = Math.min(1, travel / Math.max(squad.travelDuration, 1e-9))
   return {
     x: squad.routeFrom.x + (destination.x - squad.routeFrom.x) * ratio,
     y: squad.routeFrom.y + (destination.y - squad.routeFrom.y) * ratio,

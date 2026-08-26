@@ -9,7 +9,7 @@ export type MapSquadProjection = {
 
 export function projectSquads(state: State, selectedSquadIds: string[], palette: string[]): MapSquadProjection[] {
   return state.squads.map((squad, index) => {
-    const point = getSquadMapPosition(squad)
+    const point = getSquadMapPosition(squad, state.simulationRemainder)
     return {
       squad,
       position: { x: Math.max(5, Math.min(95, point.x)), y: Math.max(7, Math.min(93, point.y)) },
