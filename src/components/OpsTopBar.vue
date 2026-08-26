@@ -43,7 +43,7 @@ function rangeValue(event: Event) {
     <div class="metrics">
       <span>{{ tr('ИЗВЕСТНОСТЬ') }} <b>{{ state.fame }}</b><em>/ {{ GAME_RULES.fameGoal }}</em></span>
       <span>{{ tr('ЛОМ') }} <b>{{ state.scrap }}</b></span>
-      <span>{{ tr('УГРОЗА') }} <b :class="{ hot: state.threat >= GAME_RULES.elevatedThreat }">{{ state.threat }}</b></span>
+      <span>{{ tr('УГРОЗА') }} <b :class="{ hot: state.corporateThreat >= GAME_RULES.elevatedThreat }">{{ state.corporateThreat }}</b></span>
       <span>{{ tr('ВРЕМЯ') }} <b>{{ formattedTime }}</b></span>
     </div>
     <nav>

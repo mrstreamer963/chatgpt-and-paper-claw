@@ -73,7 +73,7 @@ test('Shorokh confirms a suspicious contact after ten simulated seconds', () => 
 test('a justified Monolith response creates one territorial penalty per owner', () => {
   const state = openRaid()
   const mission = state.missions.find(candidate => candidate.id === state.incident!.missionId)!
-  Object.assign(mission, { x: 84, y: 48 })
+  Object.assign(mission, { x: 74, y: 78, districtId: 'orbital_harbor' })
   state.incident!.threatClass = 'heavy'
   state.incident!.monolithRoll = 1
   const agencyBefore = state.relations.space_agency
@@ -90,6 +90,23 @@ test('a justified Monolith response creates one territorial penalty per owner', 
 // fixture explicitly now that production starts without empty squad templates.
 function createState() {
   const state = createFreshState()
+  state.campaignPhase = 'peace_sandbox'
+  Object.values(state.districts).forEach(district => {
+    district.access = 'operational'
+    district.accessReason = 'district.access.official_contact'
+    district.authorizedTargetIds = []
+  })
+  Object.assign(state.firstShift, {
+    stage: 'complete',
+    stageStartedAt: 0,
+    containerDecision: 'police_handoff',
+    residentialDutyOutcome: 'completed',
+    southNodeOutcome: 'full',
+  })
+  state.missions = [
+    { id: 'a', title: 'mission.a', kind: 'municipal', districtId: 'network_quarter', createdAt: 0, x: 23, y: 25, priority: 1, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] },
+    { id: 'b', title: 'mission.b', kind: 'municipal', districtId: 'residential_ring', createdAt: 0, x: 75, y: 24, priority: 1, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] },
+  ]
   createSquad(state)
   createSquad(state)
   state.squads[0].id = 'alpha'
@@ -291,16 +308,15 @@ test('custom squad names survive save round trips and remain optional in old sav
   assert.equal(deserializeState(JSON.stringify(envelope)).squads[0].customName, undefined)
 })
 
-test('legacy localized default names do not survive migration as custom localization keys', () => {
+test('legacy localized squad-name saves are rejected by the clean schema break', () => {
   const state = createState()
   const envelope = JSON.parse(serializeState(state))
+  envelope.version = 1
   envelope.saveVersion = 1
   envelope.state.squads[0].customName = 'Отряд «Альфа»'
   envelope.state.log = []
 
-  const restored = deserializeState(JSON.stringify(envelope))
-  assert.equal(restored.squads[0].name, 'squad.alpha')
-  assert.equal(restored.squads[0].customName, undefined)
+  assert.throws(() => deserializeState(JSON.stringify(envelope)), /save\.error\.unsupported_version/)
 })
 
 test('adding a staff cat increases dynamic squad capacity', () => {
@@ -384,9 +400,9 @@ test('an auto squad chains a priority mission nearest to its current position', 
   state.raidTriggered = true
   assignCat(state, 'pixel', 'alpha')
   const squad = state.squads[0]
-  const current = { id: 'current', title: 'mission.a', x: 20, y: 20, priority: 1, status: 'assigned' as const, squadIds: [squad.id], contributorSquadIds: [], progress: 29, interruptionPolicy: 'preserve_progress' as const }
-  const farther = { id: 'farther', title: 'mission.b', x: 80, y: 80, priority: 2, status: 'available' as const, squadIds: [], contributorSquadIds: [], progress: 0, interruptionPolicy: 'preserve_progress' as const }
-  const nearby = { id: 'nearby', title: 'mission.c', x: 24, y: 20, priority: 2, status: 'available' as const, squadIds: [], contributorSquadIds: [], progress: 0, interruptionPolicy: 'preserve_progress' as const }
+  const current = { id: 'current', title: 'mission.a', kind: 'municipal' as const, districtId: 'network_quarter' as const, createdAt: 0, x: 20, y: 20, priority: 1, status: 'assigned' as const, squadIds: [squad.id], contributorSquadIds: [], progress: 29, interruptionPolicy: 'preserve_progress' as const }
+  const farther = { id: 'farther', title: 'mission.b', kind: 'municipal' as const, districtId: 'orbital_harbor' as const, createdAt: 0, x: 80, y: 80, priority: 2, status: 'available' as const, squadIds: [], contributorSquadIds: [], progress: 0, interruptionPolicy: 'preserve_progress' as const }
+  const nearby = { id: 'nearby', title: 'mission.c', kind: 'municipal' as const, districtId: 'network_quarter' as const, createdAt: 0, x: 24, y: 20, priority: 2, status: 'available' as const, squadIds: [], contributorSquadIds: [], progress: 0, interruptionPolicy: 'preserve_progress' as const }
   state.missions = [current, farther, nearby]
   squad.phase = 'cleanup'
   squad.missionId = current.id
@@ -399,7 +415,9 @@ test('an auto squad chains a priority mission nearest to its current position', 
   assert.equal(squad.phase, 'outbound')
   assert.equal(squad.missionId, nearby.id)
   assert.deepEqual(squad.routeFrom, { x: current.x, y: current.y })
-  assert.equal(squad.travelDuration, 2)
+  assert.ok(squad.travelDuration > 2)
+  assert.equal(squad.route.at(-1)?.x, nearby.x)
+  assert.equal(squad.route.at(-1)?.y, nearby.y)
   assert.equal(state.missions.some(mission => mission.id === current.id), false)
   assert.equal(nearby.status, 'assigned')
 })
@@ -543,8 +561,9 @@ test('a manual squad marches to an arbitrary point and waits there', () => {
   tick(state, squad.travelDuration / 2)
   assert.equal(squad.phase, 'moving')
   const midpoint = getSquadMapPosition(squad)
-  assert.ok(Math.abs(midpoint.x - 38) < 0.2)
-  assert.ok(Math.abs(midpoint.y - 40.5) < 0.2)
+  assert.ok(squad.route.length > 2)
+  assert.notDeepEqual(midpoint, { x: 46, y: 51 })
+  assert.notDeepEqual(midpoint, { x: 30, y: 30 })
 
   advanceUntil(state, () => squad.phase === 'field', 'Squad did not reach the ordered point')
   assert.equal(squad.phase, 'field')
@@ -581,7 +600,7 @@ test('an arbitrary march survives save and load', () => {
   assert.equal(restored.squads[0].travel, state.squads[0].travel)
 })
 
-test('the application migrates version ten saves after adding squad lifecycle state', () => {
+test.skip('obsolete: version ten migration was removed by the v25 clean schema break', () => {
   const envelope = JSON.parse(serializeState(createState()))
   envelope.version = 10
   envelope.saveVersion = 10
@@ -671,6 +690,7 @@ function openRaid() {
 
 function finishThirdCleanup() {
   const state = createState()
+  state.campaignPhase = 'post_cataclysm'
   assignCat(state, 'pixel', 'alpha')
   state.raidTriggered = true
   state.fame = 30
@@ -697,6 +717,15 @@ function finishThirdCleanupAtContact() {
 
 function prepareWaterFiltersCompetition() {
   const state = finishThirdCleanup()
+  state.urgentOperation = {
+    kind: 'water_filters',
+    status: 'pending',
+    x: 55,
+    y: 58,
+    availableAt: state.time + 15,
+    deadline: state.time + 90,
+    sampleApplied: false,
+  }
   const alpha = state.squads.find(candidate => candidate.id === 'alpha')!
   const bravo = state.squads.find(candidate => candidate.id === 'bravo')!
   const shorokh = state.cats.find(cat => cat.id === 'shorokh')!
@@ -1068,7 +1097,16 @@ test('unsupported and malformed save files are rejected', () => {
   assert.throws(() => deserializeState(JSON.stringify({ format: 'foreign', version: 1 })), /save\.error\.unknown_format/)
 })
 
-test('version one saves migrate their text log into legacy entries', () => {
+test('every pre-map-expansion save version is rejected by the explicit clean break', () => {
+  for (const version of [1, 2, 3, 4, 5, 6, 8, 10, 11, 12, 15, 24]) {
+    const envelope = JSON.parse(serializeState(createState()))
+    envelope.version = version
+    envelope.saveVersion = version
+    assert.throws(() => deserializeCurrentSave(JSON.stringify(envelope)), /save\.error\.unsupported_version/)
+  }
+})
+
+test.skip('obsolete: version one migration was removed by the v25 clean schema break', () => {
   const envelope = JSON.parse(serializeState(createState()))
   envelope.version = 1
   envelope.state.log = ['09:16 · Пиксель назначен в Отряд «Альфа»', '09:15 · Старая запись']
@@ -1077,7 +1115,7 @@ test('version one saves migrate their text log into legacy entries', () => {
   assert.deepEqual(restored.log[1], { time: 900, key: 'log.legacy', params: { text: 'Старая запись' } })
 })
 
-test('version two saves migrate presentation text and discard the saved view', () => {
+test.skip('obsolete: version two migration was removed by the v25 clean schema break', () => {
   const envelope = JSON.parse(serializeState(createState()))
   envelope.version = 2
   envelope.state.activeView = 'base'
@@ -1098,7 +1136,7 @@ test('version two saves migrate presentation text and discard the saved view', (
   assert.deepEqual(restored.log[0].params, { cat: 'cat.marlowe.name', squad: 'squad.alpha' })
 })
 
-test('version three saves resume support that was left paused by the old flow', () => {
+test.skip('obsolete: version three migration was removed by the v25 clean schema break', () => {
   const state = openRaid()
   if (!state.incident) assert.fail('raid was not opened')
   state.incident.supportRoll = 1
@@ -1113,7 +1151,7 @@ test('version three saves resume support that was left paused by the old flow', 
   assert.equal(restored.speed, 1)
 })
 
-test('version four saves migrate the sleeping state', () => {
+test.skip('obsolete: version four migration was removed by the v25 clean schema break', () => {
   const envelope = JSON.parse(serializeState(createState()))
   envelope.version = 4
   envelope.state.cats[0].energy = 20
@@ -1124,7 +1162,7 @@ test('version four saves migrate the sleeping state', () => {
   assert.equal(restored.cats[1].sleeping, false)
 })
 
-test('version five saves enable auto-deploy while migrating squads', () => {
+test.skip('obsolete: version five migration was removed by the v25 clean schema break', () => {
   const envelope = JSON.parse(serializeState(createState()))
   envelope.version = 5
   for (const squad of envelope.state.squads) delete squad.autoDispatch
@@ -1134,7 +1172,7 @@ test('version five saves enable auto-deploy while migrating squads', () => {
   assert.equal(restored.squads.every(squad => squad.autoDispatch), true)
 })
 
-test('version six saves migrate field route state', () => {
+test.skip('obsolete: version six migration was removed by the v25 clean schema break', () => {
   const envelope = JSON.parse(serializeState(createState()))
   envelope.version = 6
   envelope.state.squads[0].phase = 'returning'
@@ -1151,7 +1189,7 @@ test('version six saves migrate field route state', () => {
   assert.equal(restored.squads.length, 1)
 })
 
-test('version eight saves migrate an empty deferred equipment queue', () => {
+test.skip('obsolete: version eight migration was removed by the v25 clean schema break', () => {
   const envelope = JSON.parse(serializeState(createState()))
   envelope.version = 8
   for (const cat of envelope.state.cats) delete cat.pendingEquipment
@@ -1161,13 +1199,11 @@ test('version eight saves migrate an empty deferred equipment queue', () => {
   assert.equal(restored.cats.every(cat => !hasPendingEquipment(cat)), true)
 })
 
-test('an incomplete current-version save is normalized like an open HMR tab', () => {
+test('an incomplete current-version save is rejected instead of silently inventing data', () => {
   const envelope = JSON.parse(serializeState(createState()))
   delete envelope.state.cats[0].pendingEquipment
 
-  const restored = deserializeState(JSON.stringify(envelope))
-
-  assert.deepEqual(restored.cats[0].pendingEquipment, {})
+  assert.throws(() => deserializeState(JSON.stringify(envelope)), /save\.error\.corrupted/)
 })
 
 test('removing a deployed cat is deferred until the current cleanup and return finish', () => {
@@ -1477,7 +1513,7 @@ test('merge chains are unavailable', () => {
   assert.equal(state.squads.length, 3)
 })
 
-test('version eleven mission work migrates from the assigned squad', () => {
+test.skip('obsolete: version eleven migration was removed by the v25 clean schema break', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
   const mission = state.missions[0]
@@ -1496,7 +1532,7 @@ test('version eleven mission work migrates from the assigned squad', () => {
   assert.equal(restored.missions[0].interruptionPolicy, 'preserve_progress')
 })
 
-test('version twelve migrates equal mission squads, incident participants, and empty templates', () => {
+test.skip('obsolete: version twelve migration was removed by the v25 clean schema break', () => {
   const state = createState()
   assignCat(state, 'pixel', 'alpha')
   assignCat(state, 'marlowe', 'bravo')
@@ -1642,17 +1678,17 @@ test('a dispatched squad physically reaches the Ninth Life contact and pauses fo
 
 test('ignoring both Ninth Life deadlines advances the case and raises threat deterministically', () => {
   const state = finishThirdCleanup()
-  const initialThreat = state.threat
+  const initialThreat = state.corporateThreat
 
   tick(state, 60)
   assert.equal(state.storyIncident?.stage, 'dispatch')
   assert.equal(state.storyIncident?.inaction, 'self_evacuating')
-  assert.equal(state.threat, initialThreat + 5)
+  assert.equal(state.corporateThreat, initialThreat + 5)
 
   tick(state, 60)
   assert.equal(state.storyIncident?.stage, 'contact')
   assert.equal(state.storyIncident?.inaction, 'pursued')
-  assert.equal(state.threat, initialThreat + 10)
+  assert.equal(state.corporateThreat, initialThreat + 10)
   assert.equal(state.speed, 0)
 })
 
@@ -1671,7 +1707,7 @@ test('every implemented Ninth Life stage survives a save round trip', () => {
   assert.deepEqual(contact.storyIncident?.participantSquadIds, ['alpha'])
 })
 
-test('version fifteen investigations migrate their initial intel facts', () => {
+test.skip('obsolete: version fifteen migration was removed by the v25 clean schema break', () => {
   const state = finishThirdCleanupAtContact()
   const envelope = JSON.parse(serializeState(state))
   envelope.version = 15
@@ -1781,6 +1817,8 @@ test('a non-specialist water filters response receives the partial reward', () =
   const { state, bravo } = prepareWaterFiltersCompetition()
   const rust = state.cats.find(cat => cat.id === 'rust')!
   assert.equal(equipItem(state, rust.id, 'hands'), true)
+  assert.equal(assignCat(state, rust.id, ''), true)
+  assert.equal(assignCat(state, 'marlowe', bravo.id), true)
   const initialFame = state.fame
   const initialScrap = state.scrap
 
@@ -1810,7 +1848,7 @@ test('sheltering the deserter reaches the goal and opens the final summary', () 
   const state = finishThirdCleanupAtContact()
   assert.equal(resolveNinthLife(state, 'shelter'), true)
   assert.equal(state.fame, 50)
-  assert.equal(state.threat, 40)
+  assert.equal(state.corporateThreat, 40)
   assert.equal(state.storyResolution?.branch, 'story.shelter.branch')
   assert.deepEqual(state.storyResolution?.participantCatIds, ['pixel'])
   assert.equal(state.storyResolution?.facts?.length, 4)
@@ -1850,13 +1888,13 @@ test('Bastion intercepts on a risky shelter order and adds the visible threat co
   squad.members.push(bastion.id)
   bastion.assignedTo = squad.id
   squad.style = 'risky'
-  const initialThreat = state.threat
+  const initialThreat = state.corporateThreat
 
   assert.equal(getNinthLifeIntervention(state, 'shelter')?.threatDelta, 5)
   assert.equal(resolveNinthLife(state, 'shelter'), true)
   assert.equal(state.storyResolution?.intervention, 'bastion_intercept')
   assert.equal(state.storyResolution?.threatDelta, 25)
-  assert.equal(state.threat, initialThreat + 25)
+  assert.equal(state.corporateThreat, initialThreat + 25)
 })
 
 test('Myata has priority when both autonomous intervention conditions are present', () => {
@@ -1939,7 +1977,7 @@ test('Marlowe de-escalates Needle over time and makes sheltering safer', () => {
   const marlowe = state.cats.find(cat => cat.id === 'marlowe')!
   squad.members.push(marlowe.id)
   marlowe.assignedTo = squad.id
-  const initialThreat = state.threat
+  const initialThreat = state.corporateThreat
 
   assert.equal(getNinthLifeVerificationOptions(state).deescalation.available, true)
   assert.equal(verifyNinthLife(state, 'deescalation'), true)
@@ -1953,7 +1991,7 @@ test('Marlowe de-escalates Needle over time and makes sheltering safer', () => {
   assert.equal(getNinthLifeDecisionOptions(state).shelter.threatAdjustment, -5)
   assert.equal(resolveNinthLife(state, 'shelter'), true)
   assert.equal(state.storyResolution?.threatDelta, 15)
-  assert.equal(state.threat, initialThreat + 15)
+  assert.equal(state.corporateThreat, initialThreat + 15)
 })
 
 test('Marlowe de-escalation blocks immediate exploitation and survives a save', () => {
@@ -2041,7 +2079,10 @@ test('each Ninth Life decision schedules its distinct returning consequence', ()
     tick(state, delay)
     assert.equal(state.storyAftermath?.status, 'completed')
     assert.equal(state.log.some(entry => entry.key === `log.story_aftermath.${kind}`), true)
-    if (decision === 'exploit') assert.equal(state.storyResolution?.unlockedLocation, true)
+    if (decision === 'exploit') {
+      assert.equal(state.storyResolution?.unlockedLocation, false)
+      assert.equal(state.storyResolution?.locationKnowledge, 'false_lead')
+    }
   }
 })
 

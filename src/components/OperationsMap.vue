@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { GAME_RULES, HEADQUARTERS, getAssignMissionBlockReason, getCleanupSecondsRemaining, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getReturnSquadBlockReason, getSquadMapPosition, getSquadMinimumEnergy, getWaterFiltersDispatchBlockReason, isActiveAssignedMission, isSquadResting, type LogEntry, type MapPoint, type Mission, type Squad, type State } from '@nine-lives/game-core'
+import { DISTRICT_DEFINITIONS, GAME_RULES, ROUTE_EDGES, ROUTE_NODES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getRelationPresentation, getReturnSquadBlockReason, getSquadMapPosition, getSquadMinimumEnergy, getVisibleHeadquarters, getWaterFiltersDispatchBlockReason, isActiveAssignedMission, isSquadResting, type DistrictId, type LogEntry, type MapPoint, type Mission, type RelationOwnerId, type Squad, type State } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
@@ -24,7 +24,12 @@ const base = { x: 46, y: 51 }
 const { selectedSquadIds, selectedTarget, commandMessage, selectedCount, clearCommand, handleEscape } = useMapSelection()
 const mapGrid = ref<HTMLElement>()
 const selectedHqId = ref<string>()
-const selectedHq = computed(() => HEADQUARTERS.find(hq => hq.id === selectedHqId.value))
+const visibleHeadquarters = computed(() => getVisibleHeadquarters(props.state))
+const visibleRouteEdges = computed(() => ROUTE_EDGES.filter(edge => props.state.hedgehogHqKnowledge === 'confirmed'
+  || (edge.from !== 'metro-depot' && edge.to !== 'metro-depot')))
+const selectedHq = computed(() => visibleHeadquarters.value.find(hq => hq.id === selectedHqId.value))
+const selectedDistrictId = ref<DistrictId>()
+const selectedDistrict = computed(() => DISTRICT_DEFINITIONS.find(district => district.id === selectedDistrictId.value))
 const mapSize = ref({ width: 1000, height: 700 })
 const selectionBox = ref<{ startX: number; startY: number; x: number; y: number; additive: boolean; pointerId: number; dragging: boolean }>()
 let mapResizeObserver: ResizeObserver | undefined
@@ -153,22 +158,52 @@ function finishSelection(event: PointerEvent) {
 onMounted(() => { window.addEventListener('keydown', handleEscape); if (mapGrid.value) { const updateMapSize = () => { if (mapGrid.value) mapSize.value = { width: mapGrid.value.clientWidth, height: mapGrid.value.clientHeight } }; updateMapSize(); mapResizeObserver = new ResizeObserver(updateMapSize); mapResizeObserver.observe(mapGrid.value) } })
 onBeforeUnmount(() => { window.removeEventListener('keydown', handleEscape); mapResizeObserver?.disconnect() })
 function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.time / 60); return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} · ${tr(entry.key, entry.params)}` }
+function polygonPoints(points: readonly MapPoint[]) { return points.map(point => `${point.x},${point.y}`).join(' ') }
+function routeNode(id: string) { return ROUTE_NODES.find(node => node.id === id)! }
+function relationLabel(ownerId: RelationOwnerId) {
+  const presentation = getRelationPresentation(props.state, ownerId)
+  return `${tr(presentation.label)} · ${presentation.value}/${presentation.maximum}`
+}
 </script>
 
 <template>
   <section class="map-view">
     <ActiveMissionRail :state="state" :locale="locale" :selected-mission-id="selectedTarget?.type === 'mission' ? selectedTarget.missionId : undefined" @select="selectMission" />
     <div ref="mapGrid" class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedCount || selectedTarget, 'return-command-active': selectedSquadIds.length > 0 }" @click="selectMapPoint" @pointerdown="beginSelection" @pointermove="updateSelection" @pointerup="finishSelection" @pointercancel="selectionBox = undefined">
+      <svg class="city-schematic" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <g class="district-shapes">
+          <polygon v-for="district in DISTRICT_DEFINITIONS" :key="district.id" :points="polygonPoints(district.polygon)" :class="[`access-${state.districts[district.id].access}`, { 'risk-elevated': state.districts[district.id].risk >= 30, 'risk-severe': state.districts[district.id].risk >= 50 }]" />
+        </g>
+        <g class="arterial-lines">
+          <line v-for="edge in visibleRouteEdges" :key="`${edge.from}-${edge.to}`" :x1="routeNode(edge.from).point.x" :y1="routeNode(edge.from).point.y" :x2="routeNode(edge.to).point.x" :y2="routeNode(edge.to).point.y" />
+        </g>
+      </svg>
+      <button v-for="district in DISTRICT_DEFINITIONS" :key="`district-${district.id}`" type="button" class="district-label" :class="[`access-${state.districts[district.id].access}`, { selected: selectedDistrictId === district.id }]" :style="{ left: `${district.center.x}%`, top: `${district.center.y}%` }" @click.stop="selectedDistrictId = selectedDistrictId === district.id ? undefined : district.id">
+        <b>{{ tr(district.name) }}</b><small>{{ tr(district.arterial) }}</small>
+      </button>
+      <section v-if="selectedDistrict" class="district-card" @click.stop>
+        <button @click="selectedDistrictId = undefined">×</button>
+        <small>{{ tr(`district.access.${state.districts[selectedDistrict.id].access}`) }}</small>
+        <h3>{{ tr(selectedDistrict.name) }}</h3>
+        <p>{{ tr(selectedDistrict.arterial) }}</p>
+        <b v-if="state.districts[selectedDistrict.id].access === 'operational'">{{ tr('district.risk') }}: {{ state.districts[selectedDistrict.id].risk }}</b>
+        <span>{{ tr(state.districts[selectedDistrict.id].accessReason) }}</span>
+      </section>
       <MapRouteLayer :state="state" :base="base" :squad-color="squadColor" :squad-index="squadIndex" />
       <MapSquadLayer :state="state" :selected-squad-ids="selectedSquadIds" :squad-style="squadStyle" :squad-is-available="squadIsAvailable" :field-cat-tooltip="fieldCatTooltip" :squad-color="squadColor" :field-cat="fieldCat" :cat-tokens-url="catTokensUrl" :squad-palette="squadPalette" @select="selectSquad" />
-      <div class="threat-zone" :class="{ elevated: state.threat >= GAME_RULES.elevatedThreat, severe: state.threat >= GAME_RULES.severeThreat }"></div>
+      <div class="threat-zone" :class="{ elevated: state.corporateThreat >= GAME_RULES.elevatedThreat, severe: state.corporateThreat >= GAME_RULES.severeThreat }"></div>
       <div v-for="cordon in state.cordons" :key="cordon.id" class="cordon-zone" :style="{ left: `${cordon.x}%`, top: `${cordon.y}%`, width: `${cordon.radius * 2}%`, aspectRatio: '1' }"><b>{{ tr('map.cordon') }}</b><small>{{ Math.max(0, Math.ceil(cordon.endsAt - state.time)) }} с</small></div>
       <svg v-if="state.monolith.status === 'en_route' && state.monolith.target" class="monolith-route" viewBox="0 0 100 100" preserveAspectRatio="none"><line :x1="state.monolith.from.x" :y1="state.monolith.from.y" :x2="state.monolith.target.x" :y2="state.monolith.target.y" /></svg>
       <div v-if="state.monolith.status === 'en_route'" class="monolith-unit" :style="{ left: `${state.monolith.x}%`, top: `${state.monolith.y}%` }"><span>M</span><b>{{ tr('monolith.unit') }}</b></div>
-      <button v-for="hq in HEADQUARTERS" :key="hq.id" type="button" class="hq-pin" :class="{ monolith: hq.id === 'monolith', selected: selectedHqId === hq.id }" :style="{ left: `${hq.x}%`, top: `${hq.y}%` }" @click.stop="selectedHqId = selectedHqId === hq.id ? undefined : hq.id"><span>{{ hq.id === 'monolith' ? 'M' : '◆' }}</span><small>{{ tr(hq.name) }}</small></button>
-      <section v-if="selectedHq" class="hq-card" @click.stop><button @click="selectedHqId = undefined">×</button><h3>{{ tr(selectedHq.name) }}</h3><p>{{ tr(selectedHq.function) }}</p><b>{{ tr('hq.relation') }}: {{ state.relations[selectedHq.ownerId] }}/100</b><small v-if="state.relationLastEvent[selectedHq.ownerId]">{{ tr(state.relationLastEvent[selectedHq.ownerId]!) }}</small><small v-if="selectedHq.id === 'monolith'">{{ tr(`monolith.status.${state.monolith.status}`) }}</small></section>
+      <template v-for="unit in state.externalUnits" :key="unit.id">
+        <svg v-if="['en_route','returning'].includes(unit.status) && unit.route.length > 1" class="external-unit-route" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline :points="polygonPoints(unit.route)" /></svg>
+        <div v-if="unit.status !== 'available' || (unit.id === 'patrol_12' && state.districts.residential_ring.access === 'operational')" class="external-unit" :class="unit.ownerId" :style="{ left: `${unit.x}%`, top: `${unit.y}%` }"><span>{{ unit.id === 'guard_7' ? 'M' : 'P' }}</span><b>{{ tr(unit.name) }}</b></div>
+      </template>
+      <button v-for="hq in visibleHeadquarters" :key="hq.id" type="button" class="hq-pin" :class="{ monolith: hq.id === 'monolith', hostile: hq.ownerId === 'needle_front', selected: selectedHqId === hq.id }" :style="{ left: `${hq.x}%`, top: `${hq.y}%` }" @click.stop="selectedHqId = selectedHqId === hq.id ? undefined : hq.id"><span>{{ hq.id === 'monolith' ? 'M' : hq.ownerId === 'needle_front' ? '⌁' : '◆' }}</span><small>{{ tr(hq.name) }}</small></button>
+      <section v-if="selectedHq" class="hq-card" @click.stop><button @click="selectedHqId = undefined">×</button><h3>{{ tr(selectedHq.name) }}</h3><p>{{ tr(selectedHq.function) }}</p><b>{{ tr('hq.relation') }}: {{ relationLabel(selectedHq.ownerId) }}</b><small v-if="state.relationLastEvent[selectedHq.ownerId]">{{ tr(state.relationLastEvent[selectedHq.ownerId]!) }}</small><small v-if="selectedHq.id === 'monolith'">{{ tr(`external.status.${state.externalUnits.guard_7.status}`) }}</small><small v-if="selectedHq.id === 'police'">{{ tr(`external.status.${state.externalUnits.patrol_12.status}`) }}</small></section>
       <button type="button" class="base-pin" :class="{ selected: selectedTarget?.type === 'base' }" :aria-label="tr('БАЗА')" @click.stop="selectBase"><strong>NL</strong></button>
-      <button v-if="state.storyIncident" type="button" class="story-pin" :class="{ dispatching: state.storyIncident.stage === 'dispatch' }" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }" :aria-label="tr('Дезертир ждёт решения')" @click.stop="dispatchStory"><span>!</span></button><div v-if="state.storyResolution?.unlockedLocation" class="hedgehog-pin"><span>⌁</span></div>
+      <button v-if="state.storyIncident" type="button" class="story-pin" :class="{ dispatching: state.storyIncident.stage === 'dispatch' }" :style="{ left: `${state.storyIncident.x}%`, top: `${state.storyIncident.y}%` }" :aria-label="tr('Дезертир ждёт решения')" @click.stop="dispatchStory"><span>!</span></button>
+      <div v-if="['search_area','false_lead'].includes(state.hedgehogHqKnowledge)" class="hedgehog-knowledge" :class="state.hedgehogHqKnowledge" style="left: 83%; top: 17%"><span>?</span><b>{{ tr(`hedgehog.knowledge.${state.hedgehogHqKnowledge}`) }}</b></div>
       <div v-if="state.storyObserver && state.storyObserver.status !== 'hidden' && state.storyObserver.status !== 'gone'" class="observer-pin" :class="state.storyObserver.status" :style="{ left: `${state.storyObserver.x}%`, top: `${state.storyObserver.y}%` }" :title="tr('story.observer.title')"><span>◉</span></div>
       <div v-if="state.storyAftermath?.status === 'completed'" class="aftermath-pin" :class="state.storyAftermath.kind" :style="{ left: `${state.storyAftermath.x}%`, top: `${state.storyAftermath.y}%` }" :title="tr(`story.aftermath.${state.storyAftermath.kind}.title`)"><span>◆</span></div>
       <button v-if="state.urgentOperation && !['pending', 'completed', 'failed'].includes(state.urgentOperation.status)" type="button" class="urgent-pin" :class="state.urgentOperation.status" :style="{ left: `${state.urgentOperation.x}%`, top: `${state.urgentOperation.y}%` }" :aria-label="tr('urgent.water_filters.title')" @click.stop="dispatchUrgent"><span>F</span></button>

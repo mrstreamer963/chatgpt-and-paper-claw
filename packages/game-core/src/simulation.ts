@@ -1,4 +1,37 @@
 import { SIMULATION_CONFIG as CONFIG } from './config.ts'
+import {
+  createInitialDistrictStates,
+  createInitialExternalUnits,
+  createInitialFirstShift,
+  getDistrictAtPoint,
+  planOperationalRoute,
+  positionAlongRoute,
+  relationBand,
+  relationMaximum,
+  type CampaignPhase,
+  type ContainerDecision,
+  type DistrictId,
+  type DistrictState,
+  type ExternalUnitId,
+  type ExternalUnitState,
+  type FactionMemoryEvent,
+  type FirstShiftState,
+  type LocationKnowledge,
+  type MapPoint,
+} from './campaign.ts'
+
+export type {
+  CampaignPhase,
+  ContainerDecision,
+  DistrictId,
+  DistrictState,
+  ExternalUnitId,
+  ExternalUnitState,
+  FactionMemoryEvent,
+  FirstShiftState,
+  LocationKnowledge,
+  MapPoint,
+} from './campaign.ts'
 
 export type Speed = 0 | 1 | 5 | 10
 export type SquadStyle = 'careful' | 'balanced' | 'risky'
@@ -48,13 +81,28 @@ export type Mission = {
   interruptionPolicy: MissionInterruptionPolicy
   squadIds: string[]
   contributorSquadIds: string[]
-  kind: 'municipal' | 'monolith_service'
+  kind: 'municipal' | 'monolith_service' | 'police_contact' | 'residential_duty'
+  districtId: DistrictId
+  createdAt: number
+  deadline?: number
 }
 export type MissionSquadRoster = {
   squad: Squad
   members: Cat[]
 }
-export type MapPoint = { x: number; y: number }
+export type OperationalQueueItem = {
+  id: string
+  kind: 'mission' | 'urgent' | 'story'
+  title: string
+  status: string
+  priority: number
+  createdAt: number
+  deadline?: number
+  districtId?: DistrictId
+  missionId?: string
+  progress?: number
+  remainingSeconds?: number
+}
 export type DeployOrder = { type: 'mission'; missionId: string } | { type: 'move'; x: number; y: number }
 export type Phase = 'base' | 'field' | 'moving' | 'outbound' | 'cleanup' | 'incident' | 'support' | 'returning' | 'merging' | 'urgent'
 export type Squad = {
@@ -69,6 +117,7 @@ export type Squad = {
   travelDuration: number
   completed: number
   routeFrom: MapPoint
+  route: MapPoint[]
   restAfterReturn: boolean
   missionId?: string
   target?: Pick<Mission, 'id' | 'title' | 'x' | 'y' | 'priority'>
@@ -79,7 +128,7 @@ export type Squad = {
 }
 export type ContactThreat = 'harmless' | 'armed' | 'heavy'
 export type IncidentCheck = 'observe' | 'recon' | 'scan' | 'contact'
-export type RaidStage = 'decision' | 'checking' | 'support_en_route' | 'support_decision' | 'monolith_en_route'
+export type RaidStage = 'decision' | 'checking' | 'support_en_route' | 'support_decision' | 'monolith_en_route' | 'police_en_route'
 export type RaidIncident = {
   kind: 'raiders'
   stage: RaidStage
@@ -98,11 +147,13 @@ export type RaidIncident = {
   monolithRequested: boolean
   intelConfirmed: boolean
   clues: string[]
+  actualActor: 'bandits' | 'needle_front'
+  knownActor?: 'bandits' | 'needle_front'
   check?: IncidentCheck
   checkEndsAt?: number
 }
-export type RelationOwnerId = 'green_monolith' | 'police' | 'space_agency' | 'chemical_lab' | 'physics_lab' | 'biological_lab' | 'computer_lab' | 'weapon_trader' | 'vehicle_trader'
-export type Headquarters = { id: string; ownerId: RelationOwnerId; name: string; function: string; x: number; y: number }
+export type RelationOwnerId = 'green_monolith' | 'police' | 'space_agency' | 'chemical_lab' | 'physics_lab' | 'biological_lab' | 'computer_lab' | 'shrey_clinic' | 'weapon_trader' | 'vehicle_trader' | 'needle_front'
+export type Headquarters = { id: string; ownerId: RelationOwnerId; districtId: DistrictId; name: string; function: string; x: number; y: number; hidden?: boolean }
 export type Cordon = { id: string; x: number; y: number; radius: number; startedAt: number; endsAt: number; threatClass: ContactThreat; affectedOwnerIds: RelationOwnerId[] }
 export type MonolithState = { status: 'available' | 'en_route'; x: number; y: number; from: MapPoint; target?: MapPoint; travel: number; travelDuration: number; nextServiceAt: number }
 export type NinthLifeDecision = 'shelter' | 'interrogate' | 'escort' | 'exploit'
@@ -139,6 +190,9 @@ export type StoryResolution = {
   branch: string
   outcome: string
   unlockedLocation: boolean
+  locationKnowledge: LocationKnowledge
+  frontRelationDelta: number
+  needleTrustDelta: number
   intervention?: NinthLifeIntervention
   participantCatIds?: string[]
   facts?: StoryFact[]
@@ -163,6 +217,7 @@ export type UrgentOperation = {
   dispatchedSquadId?: string
   workRemaining?: number
   fullReward?: boolean
+  sampleApplied?: boolean
 }
 
 function initialNinthLifeFacts(): StoryFact[] {
@@ -204,7 +259,10 @@ export type GameEvent =
 export type State = {
   fame: number
   scrap: number
-  threat: number
+  corporateThreat: number
+  campaignPhase: CampaignPhase
+  districts: Record<DistrictId, DistrictState>
+  firstShift: FirstShiftState
   speed: Speed
   time: number
   simulationRemainder: number
@@ -226,7 +284,11 @@ export type State = {
   urgentOperation?: UrgentOperation
   relations: Record<RelationOwnerId, number>
   relationLastEvent: Partial<Record<RelationOwnerId, string>>
+  factionMemory: FactionMemoryEvent[]
+  hedgehogHqKnowledge: LocationKnowledge
+  needleTrust: number
   monolith: MonolithState
+  externalUnits: Record<ExternalUnitId, ExternalUnitState>
   cordons: Cordon[]
   finalSummaryVisible: boolean
   finalSummarySeen: boolean
@@ -265,7 +327,7 @@ export type Achievement = {
 }
 
 export const SAVE_FORMAT = 'nine-lives-corp-save'
-export const SAVE_VERSION = 23
+export const SAVE_VERSION = 25
 export const GAME_VERSION = '0.1.0'
 export const SIMULATION_STEP_SECONDS = 0.25
 export type SaveErrorKey =
@@ -337,6 +399,8 @@ export const STORY_DECISION_BALANCE = CONFIG.story.decisions
 const templates: Mission[] = CONFIG.mission.templates.map(template => ({
   ...template,
   kind: 'municipal',
+  districtId: getDistrictAtPoint(template),
+  createdAt: 0,
   status: 'available',
   progress: 0,
   interruptionPolicy: 'preserve_progress',
@@ -344,22 +408,33 @@ const templates: Mission[] = CONFIG.mission.templates.map(template => ({
   contributorSquadIds: [],
 }))
 export const HEADQUARTERS: Headquarters[] = [
-  { id: 'monolith', ownerId: 'green_monolith', name: 'hq.monolith.name', function: 'hq.monolith.function', x: 18, y: 18 },
-  { id: 'police', ownerId: 'police', name: 'hq.police.name', function: 'hq.police.function', x: 72, y: 18 },
-  { id: 'space-agency', ownerId: 'space_agency', name: 'hq.space_agency.name', function: 'hq.space_agency.function', x: 84, y: 48 },
-  { id: 'spaceport', ownerId: 'space_agency', name: 'hq.spaceport.name', function: 'hq.spaceport.function', x: 88, y: 76 },
-  { id: 'chemical-lab', ownerId: 'chemical_lab', name: 'hq.chemical_lab.name', function: 'hq.chemical_lab.function', x: 64, y: 72 },
-  { id: 'physics-lab', ownerId: 'physics_lab', name: 'hq.physics_lab.name', function: 'hq.physics_lab.function', x: 38, y: 18 },
-  { id: 'biological-lab', ownerId: 'biological_lab', name: 'hq.biological_lab.name', function: 'hq.biological_lab.function', x: 16, y: 74 },
-  { id: 'computer-lab', ownerId: 'computer_lab', name: 'hq.computer_lab.name', function: 'hq.computer_lab.function', x: 50, y: 12 },
-  { id: 'weapon-trader', ownerId: 'weapon_trader', name: 'hq.weapon_trader.name', function: 'hq.weapon_trader.function', x: 32, y: 82 },
-  { id: 'vehicle-trader', ownerId: 'vehicle_trader', name: 'hq.vehicle_trader.name', function: 'hq.vehicle_trader.function', x: 58, y: 86 },
+  { id: 'monolith', ownerId: 'green_monolith', districtId: 'north_bastion', name: 'hq.monolith.name', function: 'hq.monolith.function', x: 48, y: 14 },
+  { id: 'police', ownerId: 'police', districtId: 'residential_ring', name: 'hq.police.name', function: 'hq.police.function', x: 75, y: 25 },
+  { id: 'space-agency', ownerId: 'space_agency', districtId: 'orbital_harbor', name: 'hq.space_agency.name', function: 'hq.space_agency.function', x: 70, y: 74 },
+  { id: 'spaceport', ownerId: 'space_agency', districtId: 'orbital_harbor', name: 'hq.spaceport.name', function: 'hq.spaceport.function', x: 81, y: 82 },
+  { id: 'chemical-lab', ownerId: 'chemical_lab', districtId: 'material_contour', name: 'hq.chemical_lab.name', function: 'hq.chemical_lab.function', x: 41, y: 84 },
+  { id: 'physics-lab', ownerId: 'physics_lab', districtId: 'material_contour', name: 'hq.physics_lab.name', function: 'hq.physics_lab.function', x: 53, y: 87 },
+  { id: 'biological-lab', ownerId: 'biological_lab', districtId: 'biomedical_belt', name: 'hq.biological_lab.name', function: 'hq.biological_lab.function', x: 14, y: 73 },
+  { id: 'shrey-clinic', ownerId: 'shrey_clinic', districtId: 'biomedical_belt', name: 'hq.shrey_clinic.name', function: 'hq.shrey_clinic.function', x: 23, y: 81 },
+  { id: 'computer-lab', ownerId: 'computer_lab', districtId: 'network_quarter', name: 'hq.computer_lab.name', function: 'hq.computer_lab.function', x: 14, y: 43 },
+  { id: 'weapon-trader', ownerId: 'weapon_trader', districtId: 'commercial_arc', name: 'hq.weapon_trader.name', function: 'hq.weapon_trader.function', x: 83, y: 43 },
+  { id: 'vehicle-trader', ownerId: 'vehicle_trader', districtId: 'commercial_arc', name: 'hq.vehicle_trader.name', function: 'hq.vehicle_trader.function', x: 89, y: 53 },
+  { id: 'needle-front-depot', ownerId: 'needle_front', districtId: 'residential_ring', name: 'hq.needle_front.name', function: 'hq.needle_front.function', x: 83, y: 17, hidden: true },
 ]
+
+export function getVisibleHeadquarters(state: State) {
+  return HEADQUARTERS.filter(hq => {
+    if (hq.hidden) return state.hedgehogHqKnowledge === 'confirmed'
+    const access = state.districts[hq.districtId].access
+    return access === 'operational' || access === 'contact'
+  })
+}
 
 const initialRelations = (): Record<RelationOwnerId, number> => ({
   green_monolith: CONFIG.raid.monolith.initialTrust, police: 50, space_agency: 50,
   chemical_lab: 50, physics_lab: 50, biological_lab: 50, computer_lab: 50,
-  weapon_trader: 50, vehicle_trader: 50,
+  shrey_clinic: 50, weapon_trader: 50, vehicle_trader: 50,
+  needle_front: CONFIG.factions.needleFront.initialRelation,
 })
 const pendingEvents = new WeakMap<State, GameEvent[]>()
 
@@ -380,7 +455,10 @@ export function createState(): State {
   return {
     fame: CONFIG.initial.fame,
     scrap: CONFIG.initial.scrap,
-    threat: CONFIG.initial.threat,
+    corporateThreat: CONFIG.initial.corporateThreat,
+    campaignPhase: 'peace_first_shift',
+    districts: createInitialDistrictStates(),
+    firstShift: createInitialFirstShift(),
     speed: 0,
     time: 0,
     simulationRemainder: 0,
@@ -390,7 +468,7 @@ export function createState(): State {
     completedMissionCount: 0,
     missions: [
       ...structuredClone(templates.slice(0, CONFIG.mission.initialAvailableCount)),
-      { id: 'monolith-service-1', title: 'mission.monolith_service', kind: 'monolith_service', x: 24, y: 22, priority: 1, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] },
+      { id: 'monolith-service-1', title: 'mission.monolith_service', kind: 'monolith_service', districtId: 'north_bastion', createdAt: 0, deadline: CONFIG.firstShift.monolithDeadline, x: 48, y: 17, priority: 3, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] },
     ],
     missionSerial: 0,
     rngSeed: CONFIG.initial.rngSeed,
@@ -398,7 +476,11 @@ export function createState(): State {
     storyTriggered: false,
     relations: initialRelations(),
     relationLastEvent: {},
-    monolith: { status: 'available', x: CONFIG.map.monolith.x, y: CONFIG.map.monolith.y, from: { ...CONFIG.map.monolith }, travel: 0, travelDuration: 0, nextServiceAt: 0 },
+    factionMemory: [],
+    hedgehogHqKnowledge: 'hidden',
+    needleTrust: 0,
+    monolith: { status: 'available', x: CONFIG.map.monolith.x, y: CONFIG.map.monolith.y, from: { ...CONFIG.map.monolith }, travel: 0, travelDuration: 0, nextServiceAt: 1_000_000_000 },
+    externalUnits: createInitialExternalUnits(),
     cordons: [],
     finalSummaryVisible: false,
     finalSummarySeen: false,
@@ -502,6 +584,7 @@ function isValidSquad(value: unknown) {
     || !['base', 'field', 'moving', 'outbound', 'cleanup', 'incident', 'support', 'returning', 'merging', 'urgent'].includes(value.phase as string)) return false
   if (typeof value.autoDispatch !== 'boolean') return false
   if (!isValidMapPoint(value.routeFrom) || typeof value.restAfterReturn !== 'boolean') return false
+  if (!Array.isArray(value.route) || !value.route.every(isValidMapPoint)) return false
   if (![value.travel, value.travelDuration, value.completed].every(isFiniteNumber)) return false
   return (value.missionId === undefined || typeof value.missionId === 'string')
     && (value.target === undefined || isValidTarget(value.target))
@@ -516,7 +599,10 @@ function isValidSquad(value: unknown) {
 function isValidMission(value: unknown) {
   return isRecord(value) && typeof value.id === 'string' && typeof value.title === 'string'
     && isFiniteNumber(value.x) && isFiniteNumber(value.y) && isFiniteNumber(value.priority)
-    && isFiniteNumber(value.progress) && ['municipal', 'monolith_service'].includes(value.kind as string)
+    && isFiniteNumber(value.progress) && ['municipal', 'monolith_service', 'police_contact', 'residential_duty'].includes(value.kind as string)
+    && Object.keys(createInitialDistrictStates()).includes(String(value.districtId))
+    && isFiniteNumber(value.createdAt)
+    && (value.deadline === undefined || isFiniteNumber(value.deadline))
     && ['preserve_progress', 'reset', 'fail', 'remove', 'scripted'].includes(value.interruptionPolicy as string)
     && ['available', 'assigned', 'completed'].includes(value.status as string)
     && Array.isArray(value.squadIds) && value.squadIds.every(id => typeof id === 'string')
@@ -526,7 +612,7 @@ function isValidMission(value: unknown) {
 function isValidIncident(value: unknown) {
   if (!isRecord(value)) return false
   const rolls = ['supportChance', 'attackChance', 'supportRoll', 'attackRoll', 'injuryRoll', 'injuredMemberRoll']
-  return value.kind === 'raiders' && ['decision', 'checking', 'support_en_route', 'support_decision', 'monolith_en_route'].includes(value.stage as string)
+  return value.kind === 'raiders' && ['decision', 'checking', 'support_en_route', 'support_decision', 'monolith_en_route', 'police_en_route'].includes(value.stage as string)
     && typeof value.missionId === 'string'
     && (value.supportSquadId === undefined || typeof value.supportSquadId === 'string')
     && Array.isArray(value.participantSquadIds) && value.participantSquadIds.every(id => typeof id === 'string')
@@ -535,6 +621,8 @@ function isValidIncident(value: unknown) {
     && isFiniteNumber(value.threatRoll) && isFiniteNumber(value.monolithRoll)
     && typeof value.monolithRequested === 'boolean' && typeof value.intelConfirmed === 'boolean'
     && Array.isArray(value.clues) && value.clues.every(clue => typeof clue === 'string')
+    && ['bandits', 'needle_front'].includes(String(value.actualActor))
+    && (value.knownActor === undefined || ['bandits', 'needle_front'].includes(String(value.knownActor)))
 }
 
 function isValidStoryIncident(value: unknown) {
@@ -560,6 +648,8 @@ function isValidStoryResolution(value: unknown) {
   return isRecord(value) && ['shelter', 'interrogate', 'escort', 'exploit'].includes(value.decision as string)
     && typeof value.title === 'string' && isFiniteNumber(value.fameDelta) && isFiniteNumber(value.threatDelta)
     && typeof value.branch === 'string' && typeof value.outcome === 'string' && typeof value.unlockedLocation === 'boolean'
+    && ['hidden', 'search_area', 'false_lead', 'confirmed'].includes(String(value.locationKnowledge))
+    && isFiniteNumber(value.frontRelationDelta) && isFiniteNumber(value.needleTrustDelta)
     && (value.intervention === undefined || ['myata_retreat', 'bastion_intercept', 'shorokh_false_alarm'].includes(value.intervention as string))
     && (value.participantCatIds === undefined || (Array.isArray(value.participantCatIds) && value.participantCatIds.every(id => typeof id === 'string')))
     && (value.facts === undefined || (Array.isArray(value.facts) && value.facts.every(fact => isRecord(fact)
@@ -587,6 +677,54 @@ function isValidUrgentOperation(value: unknown) {
     && (value.dispatchedSquadId === undefined || typeof value.dispatchedSquadId === 'string')
     && (value.workRemaining === undefined || isFiniteNumber(value.workRemaining))
     && (value.fullReward === undefined || typeof value.fullReward === 'boolean')
+    && (value.sampleApplied === undefined || typeof value.sampleApplied === 'boolean')
+}
+
+function isValidDistrictStates(value: unknown) {
+  if (!isRecord(value)) return false
+  return Object.keys(createInitialDistrictStates()).every(id => {
+    const district = value[id]
+    return isRecord(district)
+      && ['silhouette', 'contact', 'operational', 'isolated'].includes(String(district.access))
+      && isFiniteNumber(district.risk)
+      && typeof district.accessReason === 'string'
+      && (district.openedAt === undefined || isFiniteNumber(district.openedAt))
+      && Array.isArray(district.authorizedTargetIds)
+      && district.authorizedTargetIds.every(targetId => typeof targetId === 'string')
+  })
+}
+
+function isValidFirstShift(value: unknown) {
+  return isRecord(value)
+    && ['monolith', 'container', 'responsibilities', 'summary', 'complete'].includes(String(value.stage))
+    && isFiniteNumber(value.stageStartedAt)
+    && isFiniteNumber(value.monolithDeadline)
+    && typeof value.filterSample === 'boolean'
+    && (value.containerDeadline === undefined || isFiniteNumber(value.containerDeadline))
+    && (value.containerDecision === undefined || ['police_handoff', 'independent_sample', 'call_monolith', 'ignore'].includes(String(value.containerDecision)))
+    && (value.containerSquadId === undefined || typeof value.containerSquadId === 'string')
+    && (value.filterWarningAt === undefined || isFiniteNumber(value.filterWarningAt))
+    && (value.residentialOpenedAt === undefined || isFiniteNumber(value.residentialOpenedAt))
+    && (value.residentialDutyDeadline === undefined || isFiniteNumber(value.residentialDutyDeadline))
+    && (value.residentialDutyOutcome === undefined || ['completed', 'failed'].includes(String(value.residentialDutyOutcome)))
+    && (value.southNodeOutcome === undefined || ['full', 'partial', 'lost'].includes(String(value.southNodeOutcome)))
+}
+
+function isValidExternalUnits(value: unknown) {
+  if (!isRecord(value)) return false
+  return (['guard_7', 'patrol_12'] as const).every(id => {
+    const unit = value[id]
+    return isRecord(unit) && unit.id === id
+      && ['green_monolith', 'police'].includes(String(unit.ownerId))
+      && typeof unit.name === 'string'
+      && isValidMapPoint(unit.home)
+      && [unit.x, unit.y, unit.travel, unit.travelDuration].every(isFiniteNumber)
+      && ['available', 'en_route', 'on_scene', 'returning'].includes(String(unit.status))
+      && Array.isArray(unit.route) && unit.route.every(isValidMapPoint)
+      && (unit.target === undefined || isValidMapPoint(unit.target))
+      && (unit.purpose === undefined || ['container', 'support'].includes(String(unit.purpose)))
+      && (unit.onSceneUntil === undefined || isFiniteNumber(unit.onSceneUntil))
+  })
 }
 
 function isValidLogEntry(value: unknown) {
@@ -854,7 +992,9 @@ function migrateLegacyState(value: unknown, removeLegacyEmptySquads = false) {
 function isValidState(value: unknown): value is State {
   if (!isRecord(value)) return false
   if (![0, 1, 5, 10].includes(value.speed as number)) return false
-  if (![value.fame, value.scrap, value.threat, value.time, value.squadSerial, value.disbandedSquadCleanups, value.completedMissionCount, value.missionSerial, value.rngSeed].every(isFiniteNumber)) return false
+  if (!['peace_first_shift', 'peace_sandbox', 'cataclysm', 'post_cataclysm'].includes(String(value.campaignPhase))) return false
+  if (!isValidDistrictStates(value.districts) || !isValidFirstShift(value.firstShift)) return false
+  if (![value.fame, value.scrap, value.corporateThreat, value.time, value.squadSerial, value.disbandedSquadCleanups, value.completedMissionCount, value.missionSerial, value.rngSeed].every(isFiniteNumber)) return false
   if (!isFiniteNumber(value.simulationRemainder)
     || value.simulationRemainder < 0 || value.simulationRemainder >= SIMULATION_STEP_SECONDS) return false
   if (![value.raidTriggered, value.storyTriggered, value.finalSummaryVisible, value.finalSummarySeen].every(flag => typeof flag === 'boolean')) return false
@@ -862,6 +1002,11 @@ function isValidState(value: unknown): value is State {
   if (!Array.isArray(value.squads) || !value.squads.every(isValidSquad)) return false
   if (!Array.isArray(value.missions) || !value.missions.every(isValidMission)) return false
   if (!isRecord(value.relations) || !Object.keys(initialRelations()).every(key => isFiniteNumber((value.relations as Record<string, unknown>)[key]))) return false
+  if (!Array.isArray(value.factionMemory) || !value.factionMemory.every(memory => isRecord(memory)
+    && typeof memory.kind === 'string' && isFiniteNumber(memory.time))) return false
+  if (!['hidden', 'search_area', 'false_lead', 'confirmed'].includes(String(value.hedgehogHqKnowledge))
+    || !isFiniteNumber(value.needleTrust)
+    || !isValidExternalUnits(value.externalUnits)) return false
   if (!isRecord(value.relationLastEvent) || !isRecord(value.monolith) || !['available', 'en_route'].includes(String(value.monolith.status))
     || ![value.monolith.x, value.monolith.y, value.monolith.travel, value.monolith.travelDuration, value.monolith.nextServiceAt].every(isFiniteNumber)
     || !isValidMapPoint(value.monolith.from) || !Array.isArray(value.cordons)
@@ -922,6 +1067,16 @@ export function serializeState(state: State, pretty = true) {
   // Vite HMR can preserve a pre-migration in-memory state while replacing this module.
   // Normalize it before autosaving so an already open tab does not write an invalid current save.
   state.cats.forEach(cat => { cat.pendingEquipment ??= {} })
+  const hotState = state as State & { threat?: number }
+  state.corporateThreat ??= hotState.threat ?? CONFIG.initial.corporateThreat
+  delete hotState.threat
+  state.campaignPhase ??= 'peace_first_shift'
+  state.districts ??= createInitialDistrictStates()
+  state.firstShift ??= createInitialFirstShift()
+  state.factionMemory ??= []
+  state.hedgehogHqKnowledge ??= 'hidden'
+  state.needleTrust ??= 0
+  state.externalUnits ??= createInitialExternalUnits()
   state.squadSerial ??= Math.max(2, state.squads.length)
   state.disbandedSquadCleanups ??= 0
   state.completedMissionCount ??= state.disbandedSquadCleanups + state.squads.reduce((total, squad) => total + squad.completed, 0)
@@ -929,12 +1084,20 @@ export function serializeState(state: State, pretty = true) {
   state.relations ??= initialRelations()
   state.relationLastEvent ??= {}
   state.cordons ??= []
-  state.monolith ??= { status: 'available', x: 18, y: 18, from: { x: 18, y: 18 }, travel: 0, travelDuration: 0, nextServiceAt: 0 }
+  state.monolith ??= { status: 'available', x: CONFIG.map.monolith.x, y: CONFIG.map.monolith.y, from: { ...CONFIG.map.monolith }, travel: 0, travelDuration: 0, nextServiceAt: 1_000_000_000 }
+  state.squads.forEach(squad => { squad.route ??= [{ ...squad.routeFrom }] })
   if (state.storyIncident) state.storyIncident.facts ??= initialNinthLifeFacts()
+  if (state.storyResolution) {
+    state.storyResolution.locationKnowledge ??= state.storyResolution.unlockedLocation ? 'confirmed' : 'hidden'
+    state.storyResolution.frontRelationDelta ??= 0
+    state.storyResolution.needleTrustDelta ??= 0
+  }
   state.missions.forEach(mission => {
     const legacyMission = mission as Mission & { squadId?: string }
     mission.progress ??= 0
     mission.kind ??= 'municipal'
+    mission.districtId ??= getDistrictAtPoint(mission)
+    mission.createdAt ??= 0
     mission.interruptionPolicy ??= 'preserve_progress'
     mission.squadIds ??= []
     mission.contributorSquadIds ??= []
@@ -960,18 +1123,14 @@ export function deserializeState(payload: string): State {
     throw new SaveError('save.error.invalid_json')
   }
   if (!isRecord(envelope) || envelope.format !== SAVE_FORMAT) throw new SaveError('save.error.unknown_format')
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, SAVE_VERSION].includes(envelope.version as number)) {
+  if (envelope.version !== SAVE_VERSION) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   if (typeof envelope.savedAt !== 'string') throw new SaveError('save.error.invalid_date')
-  const legacyCandidate = envelope.version === 1 ? migrateV1State(envelope.state) : envelope.state
-  const candidate = migrateLegacyState(legacyCandidate, envelope.version !== SAVE_VERSION)
+  const candidate = envelope.state
   if (!isValidState(candidate)) throw new SaveError('save.error.corrupted')
 
   const restored = structuredClone(candidate)
-  if (envelope.version !== SAVE_VERSION && restored.incident?.stage === 'support_en_route' && restored.speed === 0) {
-    restored.speed = 1
-  }
   restored.cats.forEach(cat => {
     cat.equipment = {
       armor: cat.equipment.armor,
@@ -984,7 +1143,7 @@ export function deserializeState(payload: string): State {
   return restored
 }
 
-/** Current-format saves plus the immediately preceding compatible schema. */
+/** Current-format saves only; the early prototype intentionally uses clean schema breaks. */
 export function deserializeCurrentSave(payload: string): State {
   let envelope: unknown
   try {
@@ -997,7 +1156,7 @@ export function deserializeCurrentSave(payload: string): State {
       version: String(isRecord(envelope) ? envelope.gameVersion ?? envelope.version : 'unknown'),
     })
   }
-  if (![10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, SAVE_VERSION].includes(envelope.version as number)) {
+  if (envelope.version !== SAVE_VERSION) {
     throw new SaveError('save.error.unsupported_version', { version: String(envelope.version) })
   }
   return deserializeState(payload)
@@ -1219,6 +1378,7 @@ export function createSquad(state: State) {
     travelDuration: 0,
     completed: 0,
     routeFrom: { ...CONFIG.map.base },
+    route: [{ ...CONFIG.map.base }],
     restAfterReturn: false,
   }
   state.squadSerial = serial
@@ -1438,12 +1598,35 @@ function travelTimeBetween(origin: MapPoint, target: Pick<Mission, 'x' | 'y'>) {
   return Math.max(CONFIG.mission.minimumTravelTime, distanceBetween(origin, target) / CONFIG.mission.mapSpeed)
 }
 
+function routeBetween(state: State, origin: MapPoint, target: MapPoint) {
+  return planOperationalRoute(
+    state.districts,
+    origin,
+    target,
+    state.hedgehogHqKnowledge === 'confirmed' ? ['metro-depot'] : [],
+  )
+    ?? { points: [{ ...origin }, { ...target }], distance: distanceBetween(origin, target) }
+}
+
+function routeTravelTime(state: State, origin: MapPoint, target: MapPoint) {
+  const route = routeBetween(state, origin, target)
+  return Math.max(CONFIG.mission.minimumTravelTime, route.distance / CONFIG.mission.mapSpeed)
+}
+
+function setSquadTravelRoute(state: State, squad: Squad, origin: MapPoint, target: MapPoint) {
+  const route = routeBetween(state, origin, target)
+  squad.routeFrom = { ...origin }
+  squad.route = route.points
+  squad.travel = 0
+  squad.travelDuration = Math.max(CONFIG.mission.minimumTravelTime, route.distance / CONFIG.mission.mapSpeed)
+}
+
 function missionEnergyCostFrom(state: State, squad: Squad, origin: MapPoint, mission: Mission) {
-  const travelToMission = travelTimeBetween(origin, mission)
+  const travelToMission = routeTravelTime(state, origin, mission)
   const estimate = getSquadCleanupEstimate(state, squad)
   const remainingRatio = Math.max(0, CONFIG.mission.cleanupWork - (mission.progress ?? 0)) / CONFIG.mission.cleanupWork
   const cleanup = estimate.energyPerCat * remainingRatio
-  const travelHome = travelTimeBetween(mission, CONFIG.map.base)
+  const travelHome = routeTravelTime(state, mission, CONFIG.map.base)
   return (travelToMission + travelHome) * CONFIG.mission.energyCostPerTravelSecond + cleanup
 }
 
@@ -1513,6 +1696,7 @@ export function splitSquad(state: State, squadId: string, memberIds: string[]) {
     travelDuration: 0,
     completed: 0,
     routeFrom: position,
+    route: [position],
     restAfterReturn: false,
   }
   squad.members = squad.members.filter(id => !selected.includes(id))
@@ -1624,6 +1808,7 @@ function startMission(state: State, squad: Squad, requestedMissionId?: string, o
   const assignableMissions = state.missions
     .filter(candidate => candidate.status !== 'completed'
       && (!requestedMissionId ? candidate.status === 'available' : candidate.id === requestedMissionId)
+      && !getMissionAccessBlockReason(state, candidate)
       && hasEnergyForMissionFrom(state, squad, origin, candidate))
   const mission = requestedMissionId
     ? assignableMissions.find(candidate => candidate.id === requestedMissionId)
@@ -1638,10 +1823,8 @@ function startMission(state: State, squad: Squad, requestedMissionId?: string, o
   squad.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
   delete squad.destination
   squad.phase = 'outbound'
-  squad.routeFrom = { ...origin }
   squad.restAfterReturn = false
-  squad.travel = 0
-  squad.travelDuration = travelTimeBetween(origin, mission)
+  setSquadTravelRoute(state, squad, origin, mission)
   delete squad.mergeTargetSquadId
   delete squad.mergePoint
   delete squad.missionArrivalTime
@@ -1683,6 +1866,8 @@ export function getAssignMissionBlockReason(state: State, squadId: string, missi
   const squad = state.squads.find(candidate => candidate.id === squadId)
   const mission = state.missions.find(candidate => candidate.id === missionId)
   if (!squad || !mission || mission.status === 'completed') return 'dispatch.reason.unavailable'
+  const accessReason = mission ? getMissionAccessBlockReason(state, mission) : undefined
+  if (accessReason) return accessReason
   if (pointInCordon(state, mission)) return 'dispatch.reason.cordon'
   if (mission.squadIds.includes(squad.id)) return undefined
   if (state.incident?.missionId === missionId) return 'dispatch.reason.away'
@@ -1726,6 +1911,13 @@ function isMapCommandPoint(point: MapPoint) {
     && point.x >= 5 && point.x <= 95 && point.y >= 7 && point.y <= 93
 }
 
+export function getMissionAccessBlockReason(state: State, mission: Mission) {
+  const district = state.districts[mission.districtId]
+  if (!district || district.access === 'silhouette' || district.access === 'isolated') return 'dispatch.reason.district_unavailable'
+  if (district.access === 'contact' && !district.authorizedTargetIds.includes(mission.id)) return 'dispatch.reason.corridor_target'
+  return undefined
+}
+
 export function getMoveSquadBlockReason(state: State, squadId: string, destination?: MapPoint) {
   const squad = state.squads.find(candidate => candidate.id === squadId)
   if (!squad) return 'dispatch.reason.unavailable'
@@ -1739,9 +1931,11 @@ export function getMoveSquadBlockReason(state: State, squadId: string, destinati
   if (members.some(cat => !canReceiveWorkOrder(cat))) return 'dispatch.reason.tired'
   if (!destination) return undefined
   if (!isMapCommandPoint(destination)) return 'dispatch.reason.invalid_point'
+  const destinationDistrict = getDistrictAtPoint(destination)
+  if (state.districts[destinationDistrict].access !== 'operational') return 'dispatch.reason.district_unavailable'
   if (pointInCordon(state, destination)) return 'dispatch.reason.cordon'
   const origin = squad.phase === 'field' ? getSquadMapPosition(squad) : CONFIG.map.base
-  const energyCost = (travelTimeBetween(origin, destination) + travelTimeBetween(destination, CONFIG.map.base))
+  const energyCost = (routeTravelTime(state, origin, destination) + routeTravelTime(state, destination, CONFIG.map.base))
     * CONFIG.mission.energyCostPerTravelSecond
   if (members.some(cat => cat.energy + 1e-9 < energyCost)) return 'dispatch.reason.tired'
   return undefined
@@ -1754,13 +1948,11 @@ export function moveSquadToPoint(state: State, squadId: string, destination: Map
   const origin = squad.phase === 'field' ? getSquadMapPosition(squad) : CONFIG.map.base
   membersOf(state, squad).forEach(cat => wakeForWorkOrder(state, cat))
   squad.phase = 'moving'
-  squad.routeFrom = { ...origin }
   squad.destination = { ...destination }
   squad.target = undefined
   squad.missionId = undefined
   squad.restAfterReturn = false
-  squad.travel = 0
-  squad.travelDuration = travelTimeBetween(origin, destination)
+  setSquadTravelRoute(state, squad, origin, destination)
   note(state, 'log.squad_moving', { squad: squad.name })
   return true
 }
@@ -1791,15 +1983,21 @@ function rewardMission(state: State, mission: Mission, contributors: Squad[]) {
   mission.progress = CONFIG.mission.cleanupWork
   if (mission.kind === 'monolith_service') {
     state.relations.green_monolith = Math.min(100, state.relations.green_monolith + 10)
-    state.monolith.nextServiceAt = state.time + 90
+    state.monolith.nextServiceAt = state.time + 1_000_000_000
     note(state, 'log.monolith_service_completed', { trust: state.relations.green_monolith })
     emitEvent(state, { type: 'mission_completed', squadIds: contributors.map(squad => squad.id), missionId: mission.id })
+    beginPoliceContainerContact(state)
     return
   }
   for (const squad of contributors) squad.completed++
   state.completedMissionCount++
   state.scrap += CONFIG.mission.rewardScrap
   state.fame = Math.min(CONFIG.limits.fame, state.fame + CONFIG.mission.rewardFame)
+  if (mission.kind === 'residential_duty') {
+    state.firstShift.residentialDutyOutcome = 'completed'
+    state.districts.residential_ring.risk = Math.max(0, state.districts.residential_ring.risk + CONFIG.firstShift.residentialDuty.riskSuccess)
+    note(state, 'log.first_shift.residential_duty_completed')
+  }
   note(state, 'log.cleanup_completed', {
     squad: contributors.map(squad => getSquadDisplayName(squad)).join(', '),
     scrap: CONFIG.mission.rewardScrap,
@@ -1873,7 +2071,9 @@ function maybeShowFinalSummary(state: State) {
 }
 
 function startNinthLife(state: State, mission: Mission, participants: Squad[]) {
-  if (state.storyTriggered || successfulCleanups(state) < CONFIG.story.successfulCleanupsBeforeTrigger) return
+  if (state.campaignPhase !== 'post_cataclysm'
+    || state.storyTriggered
+    || successfulCleanups(state) < CONFIG.story.successfulCleanupsBeforeTrigger) return
   state.storyTriggered = true
   if (state.speed > 1) state.speed = 1
   state.storyIncident = {
@@ -1895,30 +2095,259 @@ function afterSuccessfulCleanup(state: State, mission: Mission, participants: Sq
   maybeShowFinalSummary(state)
 }
 
-const STORY_OUTCOMES: Record<NinthLifeDecision, Omit<StoryResolution, 'decision' | 'fameDelta' | 'threatDelta'>> = {
+function setDistrictAccess(state: State, districtId: DistrictId, access: DistrictState['access'], reason: string, authorizedTargetIds: string[] = []) {
+  const district = state.districts[districtId]
+  district.access = access
+  district.accessReason = reason
+  district.authorizedTargetIds = [...authorizedTargetIds]
+  if (access === 'operational') district.openedAt ??= state.time
+}
+
+function releaseTimedOutMission(state: State, mission: Mission) {
+  for (const squadId of [...mission.squadIds]) {
+    const squad = state.squads.find(candidate => candidate.id === squadId)
+    if (!squad) continue
+    const origin = getSquadMapPosition(squad)
+    releaseSquadFromMission(state, squad)
+    squad.phase = 'field'
+    squad.routeFrom = origin
+    squad.route = [origin]
+    squad.travel = 0
+    squad.travelDuration = 0
+  }
+  removeMission(state, mission.id)
+}
+
+function beginPoliceContainerContact(state: State) {
+  if (state.firstShift.stage !== 'monolith') return
+  state.firstShift.stage = 'container'
+  state.firstShift.stageStartedAt = state.time
+  state.firstShift.containerDeadline = state.time + CONFIG.firstShift.containerDeadline
+  const mission: Mission = {
+    id: 'police-container',
+    title: 'mission.police_container',
+    kind: 'police_contact',
+    districtId: 'residential_ring',
+    createdAt: state.time,
+    deadline: state.firstShift.containerDeadline,
+    x: 72,
+    y: 29,
+    priority: 4,
+    status: 'available',
+    progress: 0,
+    interruptionPolicy: 'scripted',
+    squadIds: [],
+    contributorSquadIds: [],
+  }
+  state.missions.push(mission)
+  setDistrictAccess(state, 'north_bastion', 'operational', 'district.access.official_contact')
+  setDistrictAccess(state, 'residential_ring', 'contact', 'district.access.police_container', [mission.id])
+  state.speed = 0
+  note(state, 'log.first_shift.police_contact', { seconds: CONFIG.firstShift.containerDeadline })
+}
+
+function reachPoliceContainer(state: State, squad: Squad) {
+  if (state.firstShift.stage !== 'container') return false
+  state.firstShift.containerSquadId = squad.id
+  squad.phase = 'incident'
+  squad.travel = squad.travelDuration
+  state.speed = 0
+  note(state, 'log.first_shift.container_reached', { squad: squad.name })
+  return true
+}
+
+function policeTravelTime(state: State) {
+  const relation = state.relations.police
+  return relation >= 50 ? CONFIG.raid.police.fastTravelTime
+    : relation >= 35 ? CONFIG.raid.police.delayedTravelTime
+      : CONFIG.raid.police.slowTravelTime
+}
+
+function dispatchExternalUnit(state: State, unitId: ExternalUnitId, target: MapPoint, purpose: ExternalUnitState['purpose']) {
+  const unit = state.externalUnits[unitId]
+  if (unit.status !== 'available') return false
+  const planned = planOperationalRoute(state.districts, { x: unit.x, y: unit.y }, target)
+  unit.status = 'en_route'
+  unit.target = { ...target }
+  unit.purpose = purpose
+  unit.route = planned?.points ?? [{ x: unit.x, y: unit.y }, { ...target }]
+  unit.travel = 0
+  delete unit.onSceneUntil
+  unit.travelDuration = unitId === 'patrol_12' ? policeTravelTime(state) : CONFIG.raid.monolith.travelTime
+  note(state, unitId === 'patrol_12' ? 'log.police_dispatched' : 'log.monolith_dispatched', { seconds: unit.travelDuration })
+  return true
+}
+
+function updateExternalUnits(state: State, elapsed: number) {
+  for (const unit of Object.values(state.externalUnits)) {
+    if (unit.status === 'on_scene') {
+      if (state.time + 1e-9 < (unit.onSceneUntil ?? Infinity)) continue
+      const plannedReturn = planOperationalRoute(state.districts, { x: unit.x, y: unit.y }, unit.home)
+      unit.status = 'returning'
+      unit.route = plannedReturn?.points ?? [{ x: unit.x, y: unit.y }, { ...unit.home }]
+      unit.travel = 0
+      unit.travelDuration = unit.id === 'patrol_12' ? policeTravelTime(state) : CONFIG.raid.monolith.travelTime
+      delete unit.onSceneUntil
+      continue
+    }
+    if (!['en_route', 'returning'].includes(unit.status) || !unit.route.length) continue
+    unit.travel += elapsed
+    const ratio = Math.min(1, unit.travel / Math.max(unit.travelDuration, 1e-9))
+    const position = positionAlongRoute(unit.route, ratio)
+    unit.x = position.x
+    unit.y = position.y
+    if (ratio < 1) continue
+    if (unit.status === 'returning') {
+      unit.status = 'available'
+      unit.x = unit.home.x
+      unit.y = unit.home.y
+      unit.route = []
+      delete unit.target
+      delete unit.purpose
+      delete unit.onSceneUntil
+    } else {
+      unit.status = 'on_scene'
+      unit.x = unit.target?.x ?? unit.x
+      unit.y = unit.target?.y ?? unit.y
+      unit.onSceneUntil = state.time + 20
+      note(state, unit.id === 'patrol_12' ? 'log.police_arrived' : 'log.external_monolith_arrived')
+      if (unit.purpose === 'support') finishExternalSupportArrival(state, unit)
+    }
+  }
+}
+
+export function resolvePoliceContainer(state: State, decision: ContainerDecision) {
+  if (state.firstShift.stage !== 'container' || state.firstShift.containerDecision) return false
+  if (decision !== 'ignore' && !state.firstShift.containerSquadId) return false
+  const rules = CONFIG.firstShift.container[decision]
+  state.firstShift.containerDecision = decision
+  state.firstShift.filterSample = rules.sample
+  state.firstShift.residentialOpenedAt = state.time
+  state.firstShift.filterWarningAt = state.time + rules.warningDelay
+  state.firstShift.residentialDutyDeadline = state.time + CONFIG.firstShift.residentialDutyDeadline
+  state.firstShift.stage = 'responsibilities'
+  state.firstShift.stageStartedAt = state.time
+  adjustRelation(state, 'police', rules.policeRelation, `relation.police.container.${decision}`)
+  if (rules.monolithRelation) adjustRelation(state, 'green_monolith', rules.monolithRelation, `relation.monolith.container.${decision}`)
+  setDistrictAccess(state, 'residential_ring', 'operational', 'district.access.official_contact')
+  state.districts.residential_ring.risk = rules.districtRisk
+
+  const containerMission = state.missions.find(mission => mission.kind === 'police_contact')
+  if (containerMission) {
+    const squad = state.squads.find(candidate => candidate.id === state.firstShift.containerSquadId)
+    if (squad) {
+      const point = { x: containerMission.x, y: containerMission.y }
+      detachSquadMissionFields(squad)
+      squad.phase = 'field'
+      squad.routeFrom = point
+      squad.route = [point]
+      squad.travel = 0
+      squad.travelDuration = 0
+    }
+    removeMission(state, containerMission.id)
+  }
+  delete state.firstShift.containerSquadId
+
+  const dutyRules = CONFIG.firstShift.residentialDuty
+  state.missions.push({
+    id: 'residential-duty-1',
+    title: 'mission.residential_duty',
+    kind: 'residential_duty',
+    districtId: 'residential_ring',
+    createdAt: state.time,
+    deadline: state.firstShift.residentialDutyDeadline,
+    x: dutyRules.x,
+    y: dutyRules.y,
+    priority: 3,
+    status: 'available',
+    progress: 0,
+    interruptionPolicy: 'fail',
+    squadIds: [],
+    contributorSquadIds: [],
+  })
+  const filterRules = CONFIG.urgentOperations.waterFilters
+  state.urgentOperation = {
+    kind: 'water_filters',
+    status: 'pending',
+    x: filterRules.x,
+    y: filterRules.y,
+    availableAt: state.firstShift.filterWarningAt,
+    deadline: state.firstShift.residentialOpenedAt + CONFIG.firstShift.southNodeDeadline,
+    sampleApplied: rules.sample,
+  }
+  if (decision === 'police_handoff') dispatchExternalUnit(state, 'patrol_12', { x: 72, y: 29 }, 'container')
+  if (decision === 'call_monolith') dispatchExternalUnit(state, 'guard_7', { x: 72, y: 29 }, 'container')
+  state.speed = 0
+  note(state, `log.first_shift.container.${decision}`, { risk: rules.districtRisk })
+  return true
+}
+
+function maybeShowFirstShiftSummary(state: State) {
+  if (state.firstShift.stage !== 'responsibilities'
+    || !state.firstShift.residentialDutyOutcome
+    || !state.firstShift.southNodeOutcome
+    || state.finalSummaryVisible) return
+  state.firstShift.stage = 'summary'
+  state.firstShift.stageStartedAt = state.time
+  state.finalSummaryVisible = true
+  state.speed = 0
+  note(state, 'log.first_shift.summary_ready')
+  emitEvent(state, { type: 'final_summary_available' })
+}
+
+function updateFirstShift(state: State) {
+  if (state.campaignPhase !== 'peace_first_shift') return
+  if (state.firstShift.stage === 'monolith' && state.time + 1e-9 >= state.firstShift.monolithDeadline) {
+    const mission = state.missions.find(candidate => candidate.kind === 'monolith_service')
+    if (mission && mission.status !== 'completed') {
+      adjustRelation(state, 'green_monolith', -10, 'relation.monolith.service_missed')
+      releaseTimedOutMission(state, mission)
+      note(state, 'log.first_shift.monolith_missed')
+    }
+    beginPoliceContainerContact(state)
+  }
+  if (state.firstShift.stage === 'container' && state.time + 1e-9 >= (state.firstShift.containerDeadline ?? Infinity)) {
+    resolvePoliceContainer(state, 'ignore')
+  }
+  if (state.firstShift.stage !== 'responsibilities') return
+  const duty = state.missions.find(candidate => candidate.kind === 'residential_duty')
+  if (!state.firstShift.residentialDutyOutcome && state.time + 1e-9 >= (state.firstShift.residentialDutyDeadline ?? Infinity)) {
+    if (duty) releaseTimedOutMission(state, duty)
+    state.firstShift.residentialDutyOutcome = 'failed'
+    state.districts.residential_ring.risk = Math.min(100, state.districts.residential_ring.risk + CONFIG.firstShift.residentialDuty.riskFailure)
+    note(state, 'log.first_shift.residential_duty_failed')
+  }
+  maybeShowFirstShiftSummary(state)
+}
+
+const STORY_OUTCOMES: Record<NinthLifeDecision, Pick<StoryResolution, 'title' | 'branch' | 'outcome' | 'unlockedLocation' | 'locationKnowledge'>> = {
   shelter: {
     title: 'story.shelter.title',
     branch: 'story.shelter.branch',
     outcome: 'story.shelter.outcome',
     unlockedLocation: false,
+    locationKnowledge: 'hidden',
   },
   interrogate: {
     title: 'story.interrogate.title',
     branch: 'story.interrogate.branch',
     outcome: 'story.interrogate.outcome',
     unlockedLocation: false,
+    locationKnowledge: 'hidden',
   },
   escort: {
     title: 'story.escort.title',
     branch: 'story.escort.branch',
     outcome: 'story.escort.outcome',
     unlockedLocation: false,
+    locationKnowledge: 'hidden',
   },
   exploit: {
     title: 'story.exploit.title',
     branch: 'story.exploit.branch',
     outcome: 'story.exploit.outcome',
     unlockedLocation: true,
+    locationKnowledge: 'confirmed',
   },
 }
 
@@ -1941,11 +2370,9 @@ export function dispatchNinthLife(state: State, squadId: string) {
   const squad = state.squads.find(candidate => candidate.id === squadId)!
   const origin = getSquadMapPosition(squad)
   releaseSquadFromMission(state, squad)
-  squad.routeFrom = origin
   squad.phase = 'moving'
-  squad.travel = 0
-  squad.travelDuration = travelTimeBetween(origin, story)
   squad.destination = { x: story.x, y: story.y }
+  setSquadTravelRoute(state, squad, origin, story)
   delete squad.mergeTargetSquadId
   delete squad.mergePoint
   delete squad.missionArrivalTime
@@ -2013,12 +2440,19 @@ function setNinthLifeFact(story: StoryIncident, id: NinthLifeFactId, quality: In
 
 function completeNinthLifeVerification(state: State, story: StoryIncident) {
   if (story.verification === 'interview') {
+    const coordinates = story.facts.find(fact => fact.id === 'base_coordinates')
     setNinthLifeFact(story, 'deserter_identity', 'confirmed', 'marlowe')
-    setNinthLifeFact(story, 'base_coordinates', 'estimate', 'marlowe')
+    if (coordinates && ['shorokh', 'field_scan'].includes(coordinates.source)
+      && ['estimate', 'stale'].includes(coordinates.quality)) {
+      setNinthLifeFact(story, 'base_coordinates', 'confirmed', coordinates.source)
+    } else if (coordinates?.quality !== 'confirmed') {
+      setNinthLifeFact(story, 'base_coordinates', 'estimate', 'marlowe')
+    }
   } else if (story.verification === 'recon') {
     const source: IntelSource = ninthLifeParticipantCats(state).some(cat => cat.id === 'shorokh') ? 'shorokh' : 'field_scan'
+    const identityConfirmed = story.facts.some(fact => fact.id === 'deserter_identity' && fact.quality === 'confirmed')
     setNinthLifeFact(story, 'pursuit', 'confirmed', source)
-    setNinthLifeFact(story, 'base_coordinates', 'stale', source)
+    setNinthLifeFact(story, 'base_coordinates', identityConfirmed ? 'confirmed' : 'estimate', source)
     setNinthLifeFact(story, 'border_route', 'confirmed', source)
     if (state.storyObserver) state.storyObserver.status = 'revealed'
   } else {
@@ -2048,17 +2482,6 @@ function reachNinthLifeContact(state: State, squad?: Squad, reason: 'arrival' | 
     const y = Math.max(6, story.y + CONFIG.story.observerOffset.y)
     state.storyObserver = { status: pursuitConfirmed ? 'revealed' : 'hidden', x, y, fromX: x, fromY: y, targetX: story.x, targetY: story.y, movementStartedAt: state.time, movementEndsAt: state.time }
   }
-  if (!state.urgentOperation) {
-    const rules = CONFIG.urgentOperations.waterFilters
-    state.urgentOperation = {
-      kind: 'water_filters',
-      status: 'pending',
-      x: rules.x,
-      y: rules.y,
-      availableAt: state.time + rules.appearanceDelay,
-      deadline: state.time + rules.appearanceDelay + rules.assignmentDeadline,
-    }
-  }
   state.speed = 0
   note(state, squad ? 'log.story_contact' : 'log.story_pursued', squad ? { squad: squad.name } : undefined)
   emitEvent(state, { type: 'story_stage_changed', story: 'ninth_life', stage: 'contact', reason })
@@ -2086,14 +2509,14 @@ function updateNinthLife(state: State) {
     story.stageStartedAt = state.time
     story.deadline = state.time + CONFIG.story.arrivalDeadline
     story.inaction = 'self_evacuating'
-    state.threat = Math.min(CONFIG.limits.threat, state.threat + CONFIG.story.unansweredThreat)
+    state.corporateThreat = Math.min(CONFIG.limits.corporateThreat, state.corporateThreat + CONFIG.story.unansweredThreat)
     note(state, 'log.story_unanswered', { threat: CONFIG.story.unansweredThreat })
     emitEvent(state, { type: 'story_stage_changed', story: 'ninth_life', stage: 'dispatch', reason: 'deadline' })
     return
   }
   if (story.stage === 'dispatch') {
     story.inaction = 'pursued'
-    state.threat = Math.min(CONFIG.limits.threat, state.threat + CONFIG.story.pursuedThreat)
+    state.corporateThreat = Math.min(CONFIG.limits.corporateThreat, state.corporateThreat + CONFIG.story.pursuedThreat)
     reachNinthLifeContact(state, undefined, 'deadline')
   }
 }
@@ -2117,20 +2540,17 @@ export function dispatchWaterFilters(state: State, squadId: string) {
   const squad = state.squads.find(candidate => candidate.id === squadId)!
   const origin = getSquadMapPosition(squad)
   const members = membersOf(state, squad)
-  const hasSpecialist = members.some(cat => ['pixel', 'rust'].includes(cat.id))
-  const hasToolkit = members.some(cat => hasEquipped(cat, 'toolkit'))
+  const hasSpecialist = members.some(cat => cat.tech >= 8)
   releaseSquadFromMission(state, squad)
-  squad.routeFrom = origin
   squad.phase = 'moving'
-  squad.travel = 0
-  squad.travelDuration = travelTimeBetween(origin, operation)
   squad.destination = { x: operation.x, y: operation.y }
+  setSquadTravelRoute(state, squad, origin, operation)
   delete squad.mergeTargetSquadId
   delete squad.mergePoint
   delete squad.missionArrivalTime
   operation.status = 'dispatch'
   operation.dispatchedSquadId = squad.id
-  operation.fullReward = hasSpecialist && hasToolkit
+  operation.fullReward = hasSpecialist
   note(state, 'log.water_filters_dispatched', { squad: squad.name, seconds: Math.ceil(squad.travelDuration) })
   emitEvent(state, { type: 'urgent_operation_dispatched', operation: 'water_filters', squadId: squad.id })
   return true
@@ -2141,7 +2561,9 @@ function startWaterFiltersWork(state: State, squad: Squad) {
   if (!operation || operation.status !== 'dispatch' || operation.dispatchedSquadId !== squad.id) return false
   const rules = CONFIG.urgentOperations.waterFilters
   operation.status = 'active'
-  operation.workRemaining = operation.fullReward ? rules.specialistWorkDuration : rules.standardWorkDuration
+  operation.workRemaining = operation.fullReward
+    ? Math.max(1, rules.specialistWorkDuration - (operation.sampleApplied ? 5 : 0))
+    : rules.standardWorkDuration
   squad.phase = 'urgent'
   note(state, 'log.water_filters_arrived', { squad: squad.name, seconds: operation.workRemaining })
   return true
@@ -2157,6 +2579,9 @@ function completeWaterFilters(state: State, squad: Squad) {
   state.scrap += scrap
   operation.status = 'completed'
   operation.workRemaining = 0
+  if (state.campaignPhase === 'peace_first_shift') {
+    state.firstShift.southNodeOutcome = operation.fullReward ? 'full' : 'partial'
+  }
   squad.phase = 'field'
   squad.routeFrom = { x: operation.x, y: operation.y }
   note(state, operation.fullReward ? 'log.water_filters_completed_full' : 'log.water_filters_completed_partial', { squad: squad.name, fame, scrap })
@@ -2172,12 +2597,43 @@ function updateUrgentOperation(state: State) {
     note(state, 'log.water_filters_started', { seconds: Math.ceil(operation.deadline - state.time) })
     emitEvent(state, { type: 'urgent_operation_started', operation: 'water_filters', deadline: operation.deadline })
   }
-  if (operation.status === 'available' && state.time + 1e-9 >= operation.deadline) {
+  if (!['completed', 'failed'].includes(operation.status) && state.time + 1e-9 >= operation.deadline) {
+    const squad = state.squads.find(candidate => candidate.id === operation.dispatchedSquadId)
+    if (squad) {
+      const position = getSquadMapPosition(squad)
+      squad.phase = 'field'
+      squad.routeFrom = position
+      squad.route = [position]
+      squad.travel = 0
+      squad.travelDuration = 0
+      delete squad.destination
+    }
     operation.status = 'failed'
+    operation.workRemaining = 0
+    if (state.campaignPhase === 'peace_first_shift') state.firstShift.southNodeOutcome = 'lost'
     note(state, 'log.water_filters_failed')
     emitEvent(state, { type: 'urgent_operation_resolved', operation: 'water_filters', outcome: 'failed' })
     maybeShowFinalSummary(state)
   }
+}
+
+function ninthLifeLocationKnowledge(story: StoryIncident, decision: NinthLifeDecision): LocationKnowledge {
+  const identity = story.facts.find(fact => fact.id === 'deserter_identity')
+  const coordinates = story.facts.find(fact => fact.id === 'base_coordinates')
+  if (identity?.quality === 'confirmed' && coordinates?.quality === 'confirmed') return 'confirmed'
+  if (identity?.quality === 'confirmed' && coordinates?.quality === 'estimate') return 'search_area'
+  if (decision === 'exploit') return 'false_lead'
+  return 'hidden'
+}
+
+function ninthLifeFrontDecisionDelta(state: State, story: StoryIncident, decision: NinthLifeDecision) {
+  const borderRouteConfirmed = story.facts.some(fact => fact.id === 'border_route' && fact.quality === 'confirmed')
+  if (decision === 'escort' && borderRouteConfirmed && state.relations.needle_front >= 35) return 0
+  return CONFIG.factions.needleFront.decisions[decision]
+}
+
+function ninthLifeNeedleTrustDelta(decision: NinthLifeDecision) {
+  return decision === 'shelter' || decision === 'escort' ? 10 : -10
 }
 
 export function resolveNinthLife(state: State, decision: NinthLifeDecision) {
@@ -2199,6 +2655,7 @@ export function resolveNinthLife(state: State, decision: NinthLifeDecision) {
 
 function finishNinthLifeResolution(state: State, decision: NinthLifeDecision, forcedIntervention?: NinthLifeIntervention) {
   if (!state.storyIncident || state.storyResolution) return false
+  const story = state.storyIncident
   const balance = CONFIG.story.decisions[decision]
   const decisionOption = getNinthLifeDecisionOptions(state)[decision]
   const decisionThreat = Math.max(0, balance.threat + decisionOption.threatAdjustment)
@@ -2207,8 +2664,28 @@ function finishNinthLifeResolution(state: State, decision: NinthLifeDecision, fo
   const intervention = forcedIntervention ?? preview?.kind
   const interventionThreat = intervention === 'bastion_intercept' ? CONFIG.story.bastionInterventionThreat : 0
   const participantCatIds = ninthLifeParticipantCats(state).map(cat => cat.id)
+  const locationKnowledge = ninthLifeLocationKnowledge(story, decision)
+  const relationBefore = state.relations.needle_front
+  const frontDecisionDelta = ninthLifeFrontDecisionDelta(state, story, decision)
+  const decisionMemory: Record<NinthLifeDecision, FactionMemoryEvent['kind']> = {
+    shelter: 'needle_sheltered', interrogate: 'needle_interrogated', escort: 'needle_escorted', exploit: 'needle_exploited',
+  }
+  rememberNeedleFront(state, decisionMemory[decision], 'residential_ring', 'needle')
+  adjustRelation(state, 'needle_front', frontDecisionDelta, `relation.needle_front.story.${decision}`)
+  if (decision === 'escort') {
+    const truceKept = frontDecisionDelta === 0
+    rememberNeedleFront(state, truceKept ? 'truce_kept' : 'truce_broken', 'residential_ring', 'needle')
+  }
+  if (locationKnowledge === 'confirmed') {
+    adjustRelation(state, 'needle_front', CONFIG.factions.needleFront.exactHqDiscoveryRelation, 'relation.needle_front.hq_compromised')
+    rememberNeedleFront(state, 'hq_compromised', 'residential_ring', 'needle-front-depot')
+  }
+  const frontRelationDelta = state.relations.needle_front - relationBefore
+  const needleTrustDelta = ninthLifeNeedleTrustDelta(decision)
+  state.needleTrust = Math.max(-100, Math.min(100, state.needleTrust + needleTrustDelta))
+  state.hedgehogHqKnowledge = locationKnowledge
   state.fame = Math.min(CONFIG.limits.fame, state.fame + balance.fame)
-  state.threat = Math.min(CONFIG.limits.threat, state.threat + decisionThreat + interventionThreat)
+  state.corporateThreat = Math.min(CONFIG.limits.corporateThreat, state.corporateThreat + decisionThreat + interventionThreat)
   state.storyResolution = {
     decision,
     title: outcome.title,
@@ -2216,20 +2693,29 @@ function finishNinthLifeResolution(state: State, decision: NinthLifeDecision, fo
     threatDelta: decisionThreat + interventionThreat,
     branch: outcome.branch,
     outcome: outcome.outcome,
-    unlockedLocation: false,
+    unlockedLocation: locationKnowledge === 'confirmed',
+    locationKnowledge,
+    frontRelationDelta,
+    needleTrustDelta,
     intervention,
     participantCatIds,
-    facts: structuredClone(state.storyIncident.facts),
-    deescalated: state.storyIncident.deescalated,
-    inaction: state.storyIncident.inaction,
+    facts: structuredClone(story.facts),
+    deescalated: story.deescalated,
+    inaction: story.inaction,
   }
   state.storyIncident = undefined
-  scheduleStoryAftermath(state, decision, outcome.unlockedLocation && intervention !== 'myata_retreat')
+  scheduleStoryAftermath(state, decision, locationKnowledge)
   if (intervention) {
     const catId = intervention === 'myata_retreat' ? 'myata' : intervention === 'bastion_intercept' ? 'bastion' : 'shorokh'
     note(state, `log.story_intervention.${intervention}`, { cat: state.cats.find(cat => cat.id === catId)?.name ?? catId })
   }
   const totalThreat = decisionThreat + interventionThreat
+  note(state, 'log.story_front_consequence', {
+    delta: frontRelationDelta,
+    relation: state.relations.needle_front,
+    trust: state.needleTrust,
+    knowledge: locationKnowledge,
+  })
   note(state, totalThreat ? 'log.story_closed_threat' : 'log.story_closed', { decision: outcome.title, fame: balance.fame, threat: totalThreat })
   emitEvent(state, { type: 'story_resolved', story: 'ninth_life', decision })
   if (state.fame < CONFIG.goal.fame) note(state, 'log.fame_needed', { fame: CONFIG.goal.fame - state.fame })
@@ -2238,7 +2724,7 @@ function finishNinthLifeResolution(state: State, decision: NinthLifeDecision, fo
   return true
 }
 
-function scheduleStoryAftermath(state: State, decision: NinthLifeDecision, canUnlockLocation: boolean) {
+function scheduleStoryAftermath(state: State, decision: NinthLifeDecision, locationKnowledge: LocationKnowledge) {
   const rules = CONFIG.story.aftermath
   const kindByDecision: Record<NinthLifeDecision, StoryAftermathKind> = {
     shelter: 'base_marked', interrogate: 'intercepted_transmission', escort: 'safe_route', exploit: 'false_entrance',
@@ -2248,7 +2734,9 @@ function scheduleStoryAftermath(state: State, decision: NinthLifeDecision, canUn
   }
   const delay = decision === 'interrogate' ? rules.interrogationDelay : rules.defaultDelay
   const target = targetByDecision[decision]
-  const kind = decision === 'exploit' && !canUnlockLocation ? 'intercepted_transmission' : kindByDecision[decision]
+  const kind = decision === 'exploit'
+    ? locationKnowledge === 'false_lead' ? 'false_entrance' : 'intercepted_transmission'
+    : kindByDecision[decision]
   state.storyAftermath = { kind, status: 'pending', dueAt: state.time + delay, x: target.x, y: target.y }
   const observer = state.storyObserver
   if (observer) Object.assign(observer, {
@@ -2275,7 +2763,6 @@ function updateStoryAftermath(state: State) {
     observer.y = observer.targetY
     observer.status = aftermath.kind === 'base_marked' ? 'revealed' : 'gone'
   }
-  if (aftermath.kind === 'false_entrance' && state.storyResolution) state.storyResolution.unlockedLocation = true
   note(state, `log.story_aftermath.${aftermath.kind}`)
   maybeShowFinalSummary(state)
 }
@@ -2311,6 +2798,13 @@ export function getNinthLifeChoicePreviews(state: State) {
   const options = getNinthLifeDecisionOptions(state)
   return (Object.keys(STORY_DECISION_PRESENTATION) as NinthLifeDecision[]).map(id => {
     const intervention = getNinthLifeIntervention(state, id)
+    const story = state.storyIncident
+    const intendedFrontDelta = story
+      ? ninthLifeFrontDecisionDelta(state, story, id)
+        + (ninthLifeLocationKnowledge(story, id) === 'confirmed' ? CONFIG.factions.needleFront.exactHqDiscoveryRelation : 0)
+      : 0
+    const frontRelationDelta = Math.max(0, Math.min(CONFIG.factions.needleFront.maximumRelation,
+      state.relations.needle_front + intendedFrontDelta)) - state.relations.needle_front
     return {
       id,
       ...STORY_DECISION_PRESENTATION[id],
@@ -2318,6 +2812,8 @@ export function getNinthLifeChoicePreviews(state: State) {
       ...options[id],
       intervention,
       totalThreatDelta: STORY_DECISION_BALANCE[id].threat + options[id].threatAdjustment + (intervention?.threatDelta ?? 0),
+      frontRelationDelta,
+      locationKnowledge: story ? ninthLifeLocationKnowledge(story, id) : 'hidden' as LocationKnowledge,
     }
   })
 }
@@ -2347,6 +2843,12 @@ export function continueAfterFinale(state: State) {
   if (!state.finalSummaryVisible) return false
   state.finalSummaryVisible = false
   state.finalSummarySeen = true
+  if (state.campaignPhase === 'peace_first_shift' && state.firstShift.stage === 'summary') {
+    state.firstShift.stage = 'complete'
+    state.firstShift.stageStartedAt = state.time
+    state.campaignPhase = 'peace_sandbox'
+    state.raidTriggered = false
+  }
   note(state, 'log.summary_archived')
   return true
 }
@@ -2361,14 +2863,15 @@ function spawnMission(state: State): Mission {
     const serial = ++state.missionSerial
     const x = generation.x.minimum + (serial * generation.x.multiplier) % generation.x.range
     const y = generation.y.minimum + (serial * generation.y.multiplier) % generation.y.range
+    const districtId = getDistrictAtPoint({ x, y })
     const clear = state.missions.every(mission => Math.hypot(mission.x - x, mission.y - y) > generation.minimumSeparation)
-    if (clear && !pointInCordon(state, { x, y })) return { id: `cleanup-${serial}`, title: label, kind: 'municipal', x, y, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
+    if (state.districts[districtId].access === 'operational' && clear && !pointInCordon(state, { x, y })) return { id: `cleanup-${serial}`, title: label, kind: 'municipal', districtId, createdAt: state.time, x, y, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
   }
   const serial = ++state.missionSerial
-  const fallbackCandidates: MapPoint[] = [{ ...generation.fallback }]
+  const fallbackCandidates: MapPoint[] = [{ ...CONFIG.map.base }]
   for (let y = generation.y.minimum; y <= generation.y.minimum + generation.y.range; y += generation.minimumSeparation) {
     for (let x = generation.x.minimum; x <= generation.x.minimum + generation.x.range; x += generation.minimumSeparation) {
-      fallbackCandidates.push({ x, y })
+      if (state.districts[getDistrictAtPoint({ x, y })].access === 'operational') fallbackCandidates.push({ x, y })
     }
   }
   const fallback = fallbackCandidates.reduce((best, candidate) => {
@@ -2376,7 +2879,7 @@ function spawnMission(state: State): Mission {
     const bestSeparation = Math.min(...state.missions.map(mission => Math.hypot(mission.x - best.x, mission.y - best.y)), Number.POSITIVE_INFINITY)
     return separation > bestSeparation ? candidate : best
   })
-  return { id: `cleanup-${serial}`, title: label, kind: 'municipal', ...fallback, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
+  return { id: `cleanup-${serial}`, title: label, kind: 'municipal', districtId: getDistrictAtPoint(fallback), createdAt: state.time, ...fallback, priority, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] }
 }
 
 function desiredMissionCount(time: number) {
@@ -2385,9 +2888,10 @@ function desiredMissionCount(time: number) {
 }
 
 function reconcileMissionFlow(state: State) {
+  if (state.campaignPhase === 'peace_first_shift') return
   if (state.relations.green_monolith < 100 && state.time >= state.monolith.nextServiceAt
     && !state.missions.some(mission => mission.kind === 'monolith_service')) {
-    state.missions.push({ id: `monolith-service-${++state.missionSerial}`, title: 'mission.monolith_service', kind: 'monolith_service', x: 24, y: 22, priority: 1, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] })
+    state.missions.push({ id: `monolith-service-${++state.missionSerial}`, title: 'mission.monolith_service', kind: 'monolith_service', districtId: 'north_bastion', createdAt: state.time, x: 48, y: 17, priority: 1, status: 'available', progress: 0, interruptionPolicy: 'preserve_progress', squadIds: [], contributorSquadIds: [] })
   }
   const desired = desiredMissionCount(state.time)
   while (state.missions.filter(mission => mission.kind === 'municipal').length < desired) state.missions.push(spawnMission(state))
@@ -2478,6 +2982,62 @@ export function getMissionSquadRosters(state: State, mission: Mission): MissionS
   })
 }
 
+export function getOperationalQueue(state: State): OperationalQueueItem[] {
+  const missions: OperationalQueueItem[] = state.missions
+    .filter(mission => mission.status === 'available' || isActiveAssignedMission(state, mission))
+    .map(mission => {
+      const incident = state.incident?.missionId === mission.id
+      const assigned = mission.status === 'assigned'
+      const workingSquad = assigned
+        ? mission.squadIds.map(id => state.squads.find(squad => squad.id === id)).find(squad => squad?.phase === 'cleanup')
+        : undefined
+      return {
+        id: `mission:${mission.id}`,
+        kind: 'mission',
+        title: mission.title,
+        status: incident ? 'operations.status.incident'
+          : assigned ? workingSquad ? 'missions.in_progress' : 'missions.en_route'
+            : 'missions.available',
+        priority: incident ? 100 : mission.priority * 10 + (assigned ? 2 : 0),
+        createdAt: mission.createdAt,
+        deadline: mission.deadline,
+        districtId: mission.districtId,
+        missionId: mission.id,
+        progress: Math.max(0, Math.min(100, Math.round(mission.progress / CONFIG.mission.cleanupWork * 100))),
+        remainingSeconds: workingSquad ? getCleanupSecondsRemaining(state, workingSquad) : undefined,
+      }
+    })
+  const urgent: OperationalQueueItem[] = state.urgentOperation
+    && ['available', 'dispatch', 'active'].includes(state.urgentOperation.status)
+    ? [{
+        id: 'urgent:water_filters',
+        kind: 'urgent',
+        title: 'urgent.water_filters.title',
+        status: `urgent.status.${state.urgentOperation.status}`,
+        priority: 80,
+        createdAt: state.urgentOperation.availableAt,
+        deadline: state.urgentOperation.deadline,
+        districtId: getDistrictAtPoint(state.urgentOperation),
+      }]
+    : []
+  const story: OperationalQueueItem[] = state.storyIncident
+    ? [{
+        id: 'story:ninth_life',
+        kind: 'story',
+        title: 'story.ninth_life.title',
+        status: `story.status.${state.storyIncident.stage}`,
+        priority: 90,
+        createdAt: state.storyIncident.stageStartedAt,
+        deadline: state.storyIncident.deadline,
+        districtId: getDistrictAtPoint(state.storyIncident),
+      }]
+    : []
+  return [...missions, ...urgent, ...story].sort((left, right) => right.priority - left.priority
+    || (left.deadline ?? Infinity) - (right.deadline ?? Infinity)
+    || left.createdAt - right.createdAt
+    || left.id.localeCompare(right.id))
+}
+
 function actionChance(state: State, squad: Squad, action: 'support' | 'attack') {
   const members = membersOf(state, squad)
   const skillSum = members.reduce((sum, cat) => sum + (action === 'support' ? cat.scouting + cat.perception : cat.combat + cat.reaction), 0)
@@ -2504,6 +3064,7 @@ function incidentCombinedSquad(state: State, participantIds: string[]): Squad {
     travelDuration: 0,
     completed: 0,
     routeFrom: { ...CONFIG.map.base },
+    route: [{ ...CONFIG.map.base }],
     restAfterReturn: false,
   }
 }
@@ -2538,8 +3099,11 @@ function startRaidIncident(state: State, mission: Mission) {
   const participantIds = participants.map(participant => participant.id)
   const combined = incidentCombinedSquad(state, participantIds)
   const threatRoll = randomPercent(state)
-  const threatClass: ContactThreat = threatRoll <= CONFIG.raid.contactThreatRolls.harmlessBelow
-    ? 'harmless' : threatRoll <= CONFIG.raid.contactThreatRolls.armedBelow ? 'armed' : 'heavy'
+  const actualActor: RaidIncident['actualActor'] = state.campaignPhase === 'peace_sandbox' ? 'needle_front' : 'bandits'
+  const threatClass: ContactThreat = actualActor === 'needle_front'
+    ? threatRoll <= CONFIG.raid.contactThreatRolls.armedBelow ? 'armed' : 'heavy'
+    : threatRoll <= CONFIG.raid.contactThreatRolls.harmlessBelow
+      ? 'harmless' : threatRoll <= CONFIG.raid.contactThreatRolls.armedBelow ? 'armed' : 'heavy'
   for (const participant of participants) participant.phase = 'incident'
   state.incident = {
     kind: 'raiders',
@@ -2558,6 +3122,7 @@ function startRaidIncident(state: State, mission: Mission) {
     monolithRequested: false,
     intelConfirmed: false,
     clues: ['incident.clue.movement', 'incident.clue.unclear_numbers'],
+    actualActor,
   }
   note(state, 'log.raid_started', { squad: participants.map(squad => getSquadDisplayName(squad)).join(', ') })
   emitEvent(state, { type: 'incident_started', incident: 'raiders', squadIds: participantIds, missionId: mission.id })
@@ -2567,11 +3132,13 @@ export function getIncidentCheckOptions(state: State) {
   const incident = state.incident
   const cats = incident ? incident.participantSquadIds.flatMap(id => membersOf(state, state.squads.find(s => s.id === id) ?? incidentCombinedSquad(state, []))) : []
   const hasScanner = cats.some(cat => hasEquipped(cat, 'scanner'))
+  const hasMarlowe = cats.some(cat => cat.id === 'marlowe')
+  const frontChannelOpen = incident?.knownActor === 'needle_front' && state.relations.needle_front >= 35
   return {
     observe: { available: incident?.stage === 'decision', seconds: CONFIG.raid.checks.observe, reason: undefined as string | undefined },
     recon: { available: incident?.stage === 'decision' && cats.some(cat => cat.id === 'shorokh'), seconds: CONFIG.raid.checks.recon, reason: 'incident.reason.shorokh' },
     scan: { available: incident?.stage === 'decision' && hasScanner, seconds: CONFIG.raid.checks.scan, reason: 'incident.reason.scanner' },
-    contact: { available: incident?.stage === 'decision' && cats.some(cat => cat.id === 'marlowe'), seconds: CONFIG.raid.checks.contact, reason: 'incident.reason.marlowe' },
+    contact: { available: incident?.stage === 'decision' && (hasMarlowe || frontChannelOpen), seconds: CONFIG.raid.checks.contact, reason: 'incident.reason.marlowe' },
   }
 }
 
@@ -2588,8 +3155,30 @@ export function checkIncident(state: State, check: IncidentCheck) {
 export function getMonolithSupportOption(state: State) {
   const incident = state.incident
   const chance = Math.max(CONFIG.raid.monolith.minimumResponseChance, state.relations.green_monolith)
-  return { available: Boolean(incident?.stage === 'decision' && !incident.monolithRequested && state.monolith.status === 'available'), chance, seconds: CONFIG.raid.monolith.travelTime,
-    reason: incident?.monolithRequested ? 'incident.reason.monolith_used' : state.monolith.status !== 'available' ? 'incident.reason.monolith_busy' : undefined }
+  const unit = state.externalUnits.guard_7
+  return { available: Boolean(incident?.stage === 'decision' && !incident.monolithRequested && unit.status === 'available'), chance, seconds: CONFIG.raid.monolith.travelTime,
+    reason: incident?.monolithRequested ? 'incident.reason.monolith_used' : unit.status !== 'available' ? 'incident.reason.monolith_busy' : undefined }
+}
+
+export function getPoliceSupportOption(state: State) {
+  const incident = state.incident
+  const unit = state.externalUnits.patrol_12
+  return {
+    available: Boolean(incident?.stage === 'decision' && unit.status === 'available'),
+    seconds: policeTravelTime(state),
+    reason: unit.status !== 'available' ? 'incident.reason.police_busy' : undefined,
+  }
+}
+
+export function requestPoliceSupport(state: State) {
+  const incident = state.incident
+  const option = getPoliceSupportOption(state)
+  if (!incident || !option.available) return false
+  const mission = state.missions.find(candidate => candidate.id === incident.missionId)
+  if (!mission || !dispatchExternalUnit(state, 'patrol_12', mission, 'support')) return false
+  incident.stage = 'police_en_route'
+  state.speed = 1
+  return true
 }
 
 export function requestMonolithSupport(state: State) {
@@ -2603,9 +3192,8 @@ export function requestMonolithSupport(state: State) {
   const mission = state.missions.find(candidate => candidate.id === incident.missionId)
   if (!mission) return false
   incident.stage = 'monolith_en_route'
-  Object.assign(state.monolith, { status: 'en_route', x: 18, y: 18, from: { x: 18, y: 18 }, target: { x: mission.x, y: mission.y }, travel: 0, travelDuration: CONFIG.raid.monolith.travelTime })
+  if (!dispatchExternalUnit(state, 'guard_7', mission, 'support')) return false
   state.speed = 1
-  note(state, 'log.monolith_dispatched', { seconds: CONFIG.raid.monolith.travelTime })
   return true
 }
 
@@ -2635,6 +3223,9 @@ function removeMission(state: State, missionId?: string) {
 
 export function getSquadMapPosition(squad: Squad): MapPoint {
   if (squad.phase === 'base') return { ...CONFIG.map.base }
+  if (['returning', 'moving', 'outbound', 'support', 'merging'].includes(squad.phase) && squad.route?.length > 1) {
+    return positionAlongRoute(squad.route, Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9)))
+  }
   if (squad.phase === 'returning') {
     const ratio = Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9))
     return {
@@ -2692,6 +3283,7 @@ function sendHome(squad: Squad, restAfterReturn = false, origin = getSquadMapPos
   squad.phase = 'returning'
   delete squad.destination
   squad.routeFrom = origin
+  squad.route = [{ ...origin }, { ...CONFIG.map.base }]
   squad.restAfterReturn = restAfterReturn
   squad.travel = 0
   squad.travelDuration = travelTimeBetween(origin, CONFIG.map.base)
@@ -2797,6 +3389,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
   if (!mission) return false
 
   if (action === 'escape') {
+    applyNeedleFrontEncounter(state, incident, 5, 'cell_spared', 'relation.needle_front.cell_spared')
     for (const participantId of incident.participantSquadIds) {
       const participant = state.squads.find(squad => squad.id === participantId)
       if (!participant) continue
@@ -2814,6 +3407,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
       && membersOf(state, incidentCombinedSquad(state, incident.participantSquadIds))
         .some(cat => hasEquipped(cat, 'nonlethal_weapon'))
     if (!attackAvailable) return false
+    applyNeedleFrontEncounter(state, incident, -5, 'cell_suppressed', 'relation.needle_front.cell_suppressed')
     if (incident.attackRoll > incident.attackChance) {
       failRaid(state, incident, 'log.raid_attack_failed')
       syncAchievements(state)
@@ -2830,6 +3424,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
   const support = eligibleSupportSquads(state, incident.participantSquadIds).find(squad => squad.id === supportSquadId)
   if (!support) return false
   if (incident.supportRoll > actionChance(state, support, 'support')) {
+    applyNeedleFrontEncounter(state, incident, -5, 'cell_suppressed', 'relation.needle_front.cell_suppressed')
     failRaid(state, incident, 'log.raid_support_failed')
     syncAchievements(state)
     return true
@@ -2841,6 +3436,7 @@ export function resolveRaidDecision(state: State, action: 'escape' | 'attack' | 
   incident.supportSquadId = support.id
   support.phase = 'support'
   support.routeFrom = supportOrigin
+  support.route = routeBetween(state, supportOrigin, mission).points
   support.restAfterReturn = false
   support.target = { id: mission.id, title: mission.title, x: mission.x, y: mission.y, priority: mission.priority }
   support.travel = 0
@@ -2859,6 +3455,14 @@ export function resolveRaidFollowup(state: State, action: 'retreat' | 'continue'
   const support = state.squads.find(squad => squad.id === incident.supportSquadId)
   const mission = state.missions.find(candidate => candidate.id === incident.missionId)
   if (!support || !mission) return false
+
+  applyNeedleFrontEncounter(
+    state,
+    incident,
+    action === 'retreat' ? 5 : -5,
+    action === 'retreat' ? 'cell_spared' : 'cell_suppressed',
+    action === 'retreat' ? 'relation.needle_front.cell_spared' : 'relation.needle_front.cell_suppressed',
+  )
 
   if (action === 'continue') {
     support.missionId = incident.missionId
@@ -2903,6 +3507,7 @@ function arriveAtBase(state: State, squad: Squad) {
   squad.travel = 0
   squad.travelDuration = 0
   squad.routeFrom = { ...CONFIG.map.base }
+  squad.route = [{ ...CONFIG.map.base }]
   squad.restAfterReturn = false
   delete squad.mergeTargetSquadId
   delete squad.mergePoint
@@ -2996,8 +3601,48 @@ function spendTravelEnergy(state: State, squad: Squad, elapsed: number) {
 }
 
 function adjustRelation(state: State, ownerId: RelationOwnerId, delta: number, event: string) {
-  state.relations[ownerId] = Math.max(0, Math.min(100, state.relations[ownerId] + delta))
+  state.relations[ownerId] = Math.max(0, Math.min(relationMaximum(ownerId), state.relations[ownerId] + delta))
   state.relationLastEvent[ownerId] = event
+}
+
+export function getRelationPresentation(state: State, ownerId: RelationOwnerId) {
+  const value = state.relations[ownerId]
+  return {
+    value,
+    maximum: relationMaximum(ownerId),
+    band: relationBand(ownerId, value),
+    label: `relation.band.${relationBand(ownerId, value)}`,
+  }
+}
+
+function rememberNeedleFront(state: State, kind: FactionMemoryEvent['kind'], districtId?: DistrictId, subjectId?: string) {
+  state.factionMemory.push({ kind, time: state.time, districtId, subjectId })
+}
+
+function revealIncidentActor(state: State, incident: RaidIncident) {
+  if (incident.knownActor) return
+  incident.knownActor = incident.actualActor
+  const clue = `incident.actor.${incident.actualActor}`
+  if (!incident.clues.includes(clue)) incident.clues.push(clue)
+  note(state, `log.incident_actor.${incident.actualActor}`)
+}
+
+function applyNeedleFrontEncounter(
+  state: State,
+  incident: RaidIncident,
+  delta: number,
+  memory: FactionMemoryEvent['kind'],
+  event: string,
+) {
+  revealIncidentActor(state, incident)
+  if (incident.actualActor !== 'needle_front') return
+  const before = state.relations.needle_front
+  adjustRelation(state, 'needle_front', delta, event)
+  rememberNeedleFront(state, memory, state.missions.find(mission => mission.id === incident.missionId)?.districtId)
+  note(state, 'log.needle_front_relation', {
+    delta: state.relations.needle_front - before,
+    relation: state.relations.needle_front,
+  })
 }
 
 function createMonolithCordon(state: State, incident: RaidIncident, point: MapPoint) {
@@ -3014,10 +3659,37 @@ function createMonolithCordon(state: State, incident: RaidIncident, point: MapPo
   note(state, 'log.cordon_started', { seconds: rules.seconds, threat: incident.threatClass, affected: affectedOwnerIds.length })
 }
 
+function finishExternalSupportArrival(state: State, unit: ExternalUnitState) {
+  const incident = state.incident
+  if (!incident) return
+  const expectedStage = unit.id === 'patrol_12' ? 'police_en_route' : 'monolith_en_route'
+  if (incident.stage !== expectedStage) return
+  if (unit.id === 'patrol_12') {
+    applyNeedleFrontEncounter(state, incident, -5, 'cell_suppressed', 'relation.needle_front.police_intervention')
+    for (const squad of incidentSquads(state, incident)) squad.phase = 'cleanup'
+    state.incident = undefined
+    note(state, 'log.police_support_resolved')
+    syncAchievements(state)
+    return
+  }
+  const point = { x: unit.x, y: unit.y }
+  applyNeedleFrontEncounter(state, incident, -10, 'heavy_force_used', 'relation.needle_front.heavy_force_used')
+  createMonolithCordon(state, incident, point)
+  for (const squad of incidentSquads(state, incident)) {
+    releaseSquadFromMission(state, squad)
+    sendHome(squad)
+  }
+  removeMission(state, incident.missionId)
+  state.incident = undefined
+  state.speed = 0
+  syncAchievements(state)
+}
+
 function finishMonolithArrival(state: State) {
   const incident = state.incident
   if (!incident || incident.stage !== 'monolith_en_route' || !state.monolith.target) return
   const point = { ...state.monolith.target }
+  applyNeedleFrontEncounter(state, incident, -10, 'heavy_force_used', 'relation.needle_front.heavy_force_used')
   createMonolithCordon(state, incident, point)
   for (const squad of incidentSquads(state, incident)) { releaseSquadFromMission(state, squad); sendHome(squad) }
   removeMission(state, incident.missionId)
@@ -3047,9 +3719,15 @@ function updateIncidentCheck(state: State) {
   else {
     incident.intelConfirmed = true
     incident.clues.push(`incident.clue.confirmed.${incident.threatClass}`)
+    revealIncidentActor(state, incident)
   }
   emitEvent(state, { type: 'incident_checked', check, confirmed: incident.intelConfirmed })
-  if (check === 'contact' && incident.threatClass === 'harmless') {
+  if (check === 'contact' && incident.actualActor === 'needle_front') {
+    applyNeedleFrontEncounter(state, incident, 10, 'cell_negotiated', 'relation.needle_front.cell_negotiated')
+    for (const squad of incidentSquads(state, incident)) squad.phase = 'cleanup'
+    state.incident = undefined
+    note(state, 'log.needle_front_contact_resolved')
+  } else if (check === 'contact' && incident.threatClass === 'harmless') {
     for (const squad of incidentSquads(state, incident)) squad.phase = 'cleanup'
     state.incident = undefined
     note(state, 'log.incident_contact_resolved')
@@ -3065,6 +3743,7 @@ function advanceSimulation(state: State, elapsed: number) {
   state.time += elapsed
   updateIncidentCheck(state)
   updateMonolithAndCordons(state, elapsed)
+  updateExternalUnits(state, elapsed)
   reconcileMissionFlow(state)
   syncCatSleep(state)
   const workingCatId = updateResearch(state, elapsed)
@@ -3135,6 +3814,7 @@ function advanceSimulation(state: State, elapsed: number) {
         squad.travel = 0
         squad.travelDuration = 0
         squad.routeFrom = { ...squad.destination }
+        squad.route = [{ ...squad.destination }]
         delete squad.destination
         squad.phase = 'field'
         if (reachedStoryContact) reachNinthLifeContact(state, squad)
@@ -3165,6 +3845,10 @@ function advanceSimulation(state: State, elapsed: number) {
         if (squad.phase === 'outbound') {
           const mission = state.missions.find(candidate => candidate.id === squad.missionId)
           if (mission?.status === 'assigned' && mission.squadIds.includes(squad.id)) {
+            if (mission.kind === 'police_contact') {
+              reachPoliceContainer(state, squad)
+              break
+            }
             squad.phase = 'cleanup'
           } else {
             detachSquadMissionFields(squad)
@@ -3241,6 +3925,8 @@ function advanceSimulation(state: State, elapsed: number) {
       }
     }
   }
+  updateFirstShift(state)
+  maybeShowFirstShiftSummary(state)
   syncAchievements(state)
 }
 
@@ -3286,7 +3972,9 @@ export type GameCommand =
   | { type: 'recon_incident' }
   | { type: 'scan_incident' }
   | { type: 'contact_incident' }
+  | { type: 'request_police_support' }
   | { type: 'request_monolith_support' }
+  | { type: 'resolve_police_container'; decision: ContainerDecision }
   | { type: 'dispatch_ninth_life'; squadId: string }
   | { type: 'verify_ninth_life'; verification: NinthLifeVerification }
   | { type: 'resolve_ninth_life'; decision: NinthLifeDecision }
@@ -3309,8 +3997,9 @@ export class GameCore {
       case 'set_speed':
         if (command.speed !== 0 && (
           this.world.storyIncident?.stage === 'contact'
+          || Boolean(this.world.firstShift.containerSquadId && !this.world.firstShift.containerDecision)
           || this.world.finalSummaryVisible
-          || (this.world.incident && this.world.incident.stage !== 'support_en_route')
+          || (this.world.incident && !['support_en_route', 'police_en_route', 'monolith_en_route'].includes(this.world.incident.stage))
         )) return false
         this.world.speed = command.speed
         return true
@@ -3337,7 +4026,9 @@ export class GameCore {
       case 'recon_incident': return checkIncident(this.world, 'recon')
       case 'scan_incident': return checkIncident(this.world, 'scan')
       case 'contact_incident': return checkIncident(this.world, 'contact')
+      case 'request_police_support': return requestPoliceSupport(this.world)
       case 'request_monolith_support': return requestMonolithSupport(this.world)
+      case 'resolve_police_container': return resolvePoliceContainer(this.world, command.decision)
       case 'dispatch_ninth_life': return dispatchNinthLife(this.world, command.squadId)
       case 'verify_ninth_life': return verifyNinthLife(this.world, command.verification)
       case 'resolve_ninth_life': return resolveNinthLife(this.world, command.decision)

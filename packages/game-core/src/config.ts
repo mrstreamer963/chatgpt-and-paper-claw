@@ -1,6 +1,6 @@
 export const SIMULATION_CONFIG = {
-  initial: { fame: 20, scrap: 0, threat: 20, rngSeed: 0x9e3779b9 },
-  limits: { fame: 100, threat: 100, energy: 100 },
+  initial: { fame: 20, scrap: 0, corporateThreat: 20, rngSeed: 0x9e3779b9 },
+  limits: { fame: 100, corporateThreat: 100, energy: 100 },
   sleep: {
     sleepAtEnergy: 20,
     wakeForOrderEnergy: 50,
@@ -19,7 +19,7 @@ export const SIMULATION_CONFIG = {
     styleBonus: 10,
   },
   mission: {
-    initialAvailableCount: 2,
+    initialAvailableCount: 0,
     cleanupWork: 30,
     raidTriggerWork: 15,
     rewardScrap: 10,
@@ -63,6 +63,7 @@ export const SIMULATION_CONFIG = {
     contactThreatRolls: { harmlessBelow: 30, armedBelow: 85 },
     checks: { observe: 20, recon: 10, scan: 15, contact: 15 },
     monolith: { travelTime: 12, initialTrust: 70, minimumResponseChance: 10, heavyTrust: 5, armedTrust: -10, harmlessTrust: -20 },
+    police: { fastTravelTime: 8, delayedTravelTime: 12, slowTravelTime: 16 },
   },
   research: {
     duration: 60,
@@ -116,8 +117,8 @@ export const SIMULATION_CONFIG = {
   },
   urgentOperations: {
     waterFilters: {
-      x: 72,
-      y: 62,
+      x: 55,
+      y: 58,
       appearanceDelay: 15,
       assignmentDeadline: 75,
       specialistWorkDuration: 20,
@@ -128,7 +129,28 @@ export const SIMULATION_CONFIG = {
       partialRewardScrap: 5,
     },
   },
-  map: { base: { x: 46, y: 51 }, monolith: { x: 18, y: 18 } },
+  firstShift: {
+    monolithDeadline: 120,
+    containerDeadline: 90,
+    residentialDutyDeadline: 90,
+    southNodeDeadline: 90,
+    container: {
+      police_handoff: { policeRelation: 10, monolithRelation: 0, districtRisk: 15, warningDelay: 15, sample: false },
+      independent_sample: { policeRelation: -5, monolithRelation: 0, districtRisk: 20, warningDelay: 0, sample: true },
+      call_monolith: { policeRelation: -15, monolithRelation: -10, districtRisk: 25, warningDelay: 30, sample: false },
+      ignore: { policeRelation: -15, monolithRelation: 0, districtRisk: 30, warningDelay: 45, sample: false },
+    },
+    residentialDuty: { x: 78, y: 31, riskSuccess: -5, riskFailure: 10 },
+  },
+  factions: {
+    needleFront: {
+      initialRelation: 20,
+      maximumRelation: 50,
+      exactHqDiscoveryRelation: -10,
+      decisions: { shelter: -5, interrogate: -10, escort: -5, exploit: -15 },
+    },
+  },
+  map: { base: { x: 46, y: 51 }, monolith: { x: 48, y: 14 }, police: { x: 75, y: 25 }, hedgehogDepot: { x: 83, y: 17 } },
   cats: [
     { id: 'marlowe', name: 'cat.marlowe.name', role: 'cat.marlowe.role', energy: 88, reaction: 4, combat: 2, tech: 4, perception: 6, scouting: 5, cleanupTrait: 0, supportTrait: 5, attackTrait: 0, injuryTrait: 0 },
     { id: 'pixel', name: 'cat.pixel.name', role: 'cat.pixel.role', energy: 92, reaction: 5, combat: 2, tech: 9, perception: 5, scouting: 4, cleanupTrait: 5, supportTrait: 0, attackTrait: 0, injuryTrait: 0 },

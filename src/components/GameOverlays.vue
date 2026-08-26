@@ -8,6 +8,8 @@ import {
   getRaidOptions,
   getIncidentCheckOptions,
   getMonolithSupportOption,
+  getPoliceSupportOption,
+  type ContainerDecision,
   type IncidentCheck,
   type NinthLifeDecision,
   type NinthLifeFactId,
@@ -25,6 +27,8 @@ const emit = defineEmits<{
   raidFollowup: [action: 'retreat' | 'continue']
   incidentCheck: [check: IncidentCheck]
   monolithSupport: []
+  policeSupport: []
+  containerDecision: [decision: ContainerDecision]
   storyDecision: [decision: NinthLifeDecision]
   storyVerify: [verification: NinthLifeVerification]
   continueFinale: []
@@ -34,9 +38,16 @@ const tr = (key: string, params?: Record<string, string | number>) => translate(
 const raidOptions = computed(() => getRaidOptions(props.state))
 const incidentChecks = computed(() => getIncidentCheckOptions(props.state))
 const monolithOption = computed(() => getMonolithSupportOption(props.state))
+const policeOption = computed(() => getPoliceSupportOption(props.state))
 const incidentSquads = computed(() => props.state.incident?.participantSquadIds
   .map(id => props.state.squads.find(squad => squad.id === id)).filter(Boolean) ?? [])
 const supportSquad = computed(() => props.state.squads.find(squad => squad.id === props.state.incident?.supportSquadId))
+const incidentTitle = computed(() => props.state.incident?.knownActor
+  ? `incident.actor.${props.state.incident.knownActor}.title`
+  : 'incident.suspicious.title')
+const incidentDescription = computed(() => props.state.incident?.knownActor
+  ? `incident.actor.${props.state.incident.knownActor}.description`
+  : 'incident.suspicious.description')
 const storySquads = computed(() => props.state.storyIncident?.participantSquadIds
   .map(id => props.state.squads.find(squad => squad.id === id)).filter(Boolean) ?? [])
 const squadName = (squad?: State['squads'][number]) => squad ? squadDisplayName(props.locale, squad) : ''
@@ -72,16 +83,36 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
     </section>
   </div>
 
-  <div v-if="!newGameConfirmOpen && state.incident && !['support_en_route', 'checking', 'monolith_en_route'].includes(state.incident.stage)" class="incident-overlay">
+  <div v-if="!newGameConfirmOpen && state.firstShift.stage === 'container' && state.firstShift.containerSquadId && !state.firstShift.containerDecision" class="incident-overlay">
+    <section class="incident-card container-card" role="dialog" aria-modal="true" aria-labelledby="container-title">
+      <div class="incident-kicker"><span></span> {{ tr('first_shift.container.kicker') }}</div>
+      <h1 id="container-title">{{ tr('first_shift.container.title') }}</h1>
+      <p>{{ tr('first_shift.container.description') }}</p>
+      <div class="incident-intel">
+        <small>{{ tr('incident.intel.label') }}</small>
+        <span>{{ tr('first_shift.container.clue.markings') }}</span>
+        <span>{{ tr('first_shift.container.clue.reagent') }}</span>
+        <b>{{ tr('first_shift.container.truth') }}</b>
+      </div>
+      <div class="incident-actions container-actions">
+        <button class="choice safe" @click="emit('containerDecision', 'police_handoff')"><span><b>{{ tr('first_shift.container.police') }}</b><small>{{ tr('first_shift.container.police.description') }}</small></span><strong>+10</strong></button>
+        <button class="choice" @click="emit('containerDecision', 'independent_sample')"><span><b>{{ tr('first_shift.container.sample') }}</b><small>{{ tr('first_shift.container.sample.description') }}</small></span><strong>−5</strong></button>
+        <button class="choice monolith" @click="emit('containerDecision', 'call_monolith')"><span><b>{{ tr('first_shift.container.monolith') }}</b><small>{{ tr('first_shift.container.monolith.description') }}</small></span><strong>−15</strong></button>
+        <button class="choice danger" @click="emit('containerDecision', 'ignore')"><span><b>{{ tr('first_shift.container.ignore') }}</b><small>{{ tr('first_shift.container.ignore.description') }}</small></span><strong>→</strong></button>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="!newGameConfirmOpen && state.incident && !['support_en_route', 'checking', 'monolith_en_route', 'police_en_route'].includes(state.incident.stage)" class="incident-overlay">
     <section class="incident-card" role="dialog" aria-modal="true" aria-labelledby="incident-title">
       <div class="incident-kicker"><span></span> {{ tr('НЕШТАТНАЯ СИТУАЦИЯ · ВРЕМЯ ОСТАНОВЛЕНО') }}</div>
       <template v-if="state.incident.stage === 'decision'">
-        <h1 id="incident-title">{{ tr('incident.suspicious.title') }}</h1><p>{{ tr('incident.suspicious.description', { squad: squadNames(incidentSquads) }) }}</p>
+        <h1 id="incident-title">{{ tr(incidentTitle) }}</h1><p>{{ tr(incidentDescription, { squad: squadNames(incidentSquads) }) }}</p>
         <div class="incident-intel"><small>{{ tr('incident.intel.label') }}</small><span v-for="clue in state.incident.clues" :key="clue">{{ tr(clue) }}</span><b v-if="state.incident.intelConfirmed">{{ tr(`incident.threat.${state.incident.threatClass}`) }}</b></div>
         <div class="incident-checks">
           <button v-for="check in (['observe','recon','scan','contact'] as IncidentCheck[])" :key="check" :disabled="!incidentChecks[check].available" @click="emit('incidentCheck', check)"><b>{{ tr(`incident.check.${check}`) }}</b><small>{{ tr(incidentChecks[check].available ? `incident.check.${check}.description` : incidentChecks[check].reason ?? '') }}</small></button>
         </div>
-        <div class="incident-facts"><span>{{ tr('ОТРЯДЫ') }} <b>{{ tr('cats.count', { count: incidentSquads.reduce((total, squad) => total + (squad?.members.length ?? 0), 0) }) }}</b></span><span>{{ tr('ПРОГРЕСС') }} <b>{{ Math.round(GAME_RULES.raidTriggerWork / GAME_RULES.cleanupWork * 100) }}%</b></span><span>{{ tr('НАГРАДА ПОД УГРОЗОЙ') }} <b>{{ tr('scrap.count', { count: GAME_RULES.cleanupRewardScrap }) }}</b></span></div>
+        <div class="incident-facts"><span>{{ tr('ОТРЯДЫ') }} <b>{{ tr('cats.count', { count: incidentSquads.reduce((total, squad) => total + (squad?.members.length ?? 0), 0) }) }}</b></span><span>{{ tr('ПРОГРЕСС') }} <b>{{ Math.round(GAME_RULES.raidTriggerWork / GAME_RULES.cleanupWork * 100) }}%</b></span><span>{{ tr('НАГРАДА ПОД УГРОЗОЙ') }} <b>{{ tr('scrap.count', { count: GAME_RULES.cleanupRewardScrap }) }}</b></span><span v-if="state.incident.knownActor === 'needle_front'">{{ tr('hq.relation') }} <b>{{ state.relations.needle_front }}/50</b></span></div>
         <div class="incident-actions">
           <button class="choice safe" @click="emit('raidDecision', 'escape')"><span><b>{{ tr('Сбежать') }}</b><small>{{ tr('Миссия отменится без добычи и ранений.') }}</small></span><strong>{{ GAME_RULES.guaranteedChance }}%</strong></button>
           <button class="choice" :disabled="!raidOptions?.attack.available" @click="emit('raidDecision', 'attack')"><span><b>{{ tr('Напасть') }}</b><small>{{ tr(raidOptions?.attack.available ? 'Использовать нелетальное оружие и вытеснить рейдеров.' : raidOptions?.attack.reason ?? '') }}</small></span><strong>{{ raidOptions?.attack.chance ? `${raidOptions.attack.chance}%` : tr('ЗАКРЫТО') }}</strong></button>
@@ -92,6 +123,7 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
               <strong>{{ candidate.chance }}%</strong>
             </button>
             <button v-if="!raidOptions?.support.available" class="choice support" disabled><span><b>{{ tr('Укрыться и запросить поддержку') }}</b><small>{{ tr(raidOptions?.support.reason ?? '') }}</small></span><strong>{{ tr('НЕТ') }}</strong></button>
+            <button class="choice police" :disabled="!policeOption.available" @click="emit('policeSupport')"><span><b>{{ tr('incident.police.request') }}</b><small>{{ tr(policeOption.available ? 'incident.police.description' : policeOption.reason ?? '') }}</small></span><strong>{{ policeOption.seconds }} {{ tr('seconds.short') }}</strong></button>
             <button class="choice monolith" :disabled="!monolithOption.available" @click="emit('monolithSupport')"><span><b>{{ tr('incident.monolith.request') }}</b><small>{{ tr(monolithOption.available ? 'incident.monolith.description' : monolithOption.reason ?? '') }}</small></span><strong>{{ monolithOption.chance }}%</strong></button>
           </div>
         </div>
@@ -109,7 +141,7 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
       <div class="story-heading"><div class="story-kicker">{{ tr('ВХОДЯЩЕЕ ДЕЛО · ВРЕМЯ ОСТАНОВЛЕНО') }}</div><h1 id="story-title">{{ tr('Девятая жизнь') }}</h1><p>{{ tr('story.description', { squad: squadNames(storySquads) }) }}</p><div class="witness-line"><span>{{ tr('СВИДЕТЕЛЬ') }}</span><b>{{ tr('Позывной «Игла»') }}</b><i>{{ tr('показания не подтверждены') }}</i></div></div>
       <div class="story-intel"><div v-for="fact in state.storyIncident.facts" :key="fact.id"><span>{{ tr(factLabels[fact.id]) }}</span><b>{{ tr(`intel.quality.${fact.quality}`) }}</b><small>{{ tr(`intel.source.${fact.source}`) }}</small></div></div>
       <div class="story-verification"><button :disabled="!verificationOptions.interview.available" @click="emit('storyVerify', 'interview')"><b>{{ tr('story.verify.interview') }}</b><small>{{ tr(verificationOptions.interview.available ? 'story.verify.interview.description' : verificationOptions.interview.reason ?? '') }}</small></button><button :disabled="!verificationOptions.recon.available" @click="emit('storyVerify', 'recon')"><b>{{ tr('story.verify.recon') }}</b><small>{{ tr(verificationOptions.recon.available ? 'story.verify.recon.description' : verificationOptions.recon.reason ?? '') }}</small></button><button :disabled="!verificationOptions.deescalation.available" @click="emit('storyVerify', 'deescalation')"><b>{{ tr('story.verify.deescalation') }}</b><small>{{ tr(verificationOptions.deescalation.available ? 'story.verify.deescalation.description' : verificationOptions.deescalation.reason ?? '') }}</small></button></div>
-      <div class="story-choices"><button v-for="(choice, index) in storyChoices" :key="choice.id" class="story-choice" :class="[choice.tone, { intervention: choice.intervention }]" :disabled="!choice.available" @click="emit('storyDecision', choice.id)"><span class="choice-index">0{{ index + 1 }}</span><span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(choice.available ? choice.description : choice.reason ?? choice.description) }}</em><mark v-if="choice.intervention">{{ tr(choice.intervention.reason) }}</mark></span><span class="choice-impact"><b>+{{ choice.fame }}</b><small>{{ tr('известность') }}</small><strong :class="{ quiet: !choice.totalThreatDelta }">{{ choice.totalThreatDelta ? `+${choice.totalThreatDelta}` : '±0' }}</strong><small>{{ tr('угроза') }}</small></span></button></div>
+      <div class="story-choices"><button v-for="(choice, index) in storyChoices" :key="choice.id" class="story-choice" :class="[choice.tone, { intervention: choice.intervention }]" :disabled="!choice.available" @click="emit('storyDecision', choice.id)"><span class="choice-index">0{{ index + 1 }}</span><span class="choice-copy"><small>{{ tr(choice.tag) }}</small><b>{{ tr(choice.title) }}</b><em>{{ tr(choice.available ? choice.description : choice.reason ?? choice.description) }}</em><em class="knowledge-preview">{{ tr('story.location.preview', { result: tr(`location.knowledge.${choice.locationKnowledge}`) }) }}</em><mark v-if="choice.intervention">{{ tr(choice.intervention.reason) }}</mark></span><span class="choice-impact"><b>+{{ choice.fame }}</b><small>{{ tr('известность') }}</small><strong :class="{ quiet: !choice.totalThreatDelta }">{{ choice.totalThreatDelta ? `+${choice.totalThreatDelta}` : '±0' }}</strong><small>{{ tr('угроза') }}</small><strong class="front" :class="{ quiet: !choice.frontRelationDelta }">{{ choice.frontRelationDelta > 0 ? `+${choice.frontRelationDelta}` : choice.frontRelationDelta || '±0' }}</strong><small>{{ tr('faction.needle_front.short') }}</small></span></button></div>
       <footer><span>{{ tr('Решение нельзя отменить') }}</span><span>{{ tr('Каждый вариант открывает отдельную будущую ветку') }}</span><button class="story-reset" @click="emit('newGame')">{{ tr('reset.open') }}</button></footer>
     </section>
   </div>
@@ -117,14 +149,35 @@ const finalVerifiedFacts = computed(() => props.state.storyResolution?.facts?.fi
   <div v-if="!newGameConfirmOpen && state.finalSummaryVisible && state.storyResolution" class="final-overlay">
     <section class="final-card" role="dialog" aria-modal="true" aria-labelledby="final-title">
       <div class="final-stamp">{{ tr('ДЕЛО ЗАКРЫТО') }}</div><div class="final-kicker">NINE LIVES CORP · {{ tr('ОПЕРАТИВНАЯ СВОДКА 09') }}</div><h1 id="final-title">{{ tr('Девятая жизнь') }}</h1><p class="final-lead">{{ tr(state.storyResolution.outcome) }}</p>
-      <div class="final-metrics"><div><small>{{ tr('ИЗВЕСТНОСТЬ') }}</small><b>{{ state.fame }}</b><span>{{ tr('final.goal_complete', { fame: GAME_RULES.fameGoal }) }}</span></div><div><small>{{ tr('ЛОКАЛЬНАЯ УГРОЗА') }}</small><b>{{ state.threat }}</b><span>{{ tr(state.threat >= GAME_RULES.severeThreat ? 'ВЫСОКАЯ' : state.threat >= GAME_RULES.elevatedThreat ? 'ПОВЫШЕННАЯ' : 'СТАБИЛЬНАЯ') }}</span></div><div><small>{{ tr('УСПЕШНЫЕ УБОРКИ') }}</small><b>{{ totalRuns }}</b><span>{{ tr('АВТОНОМНЫЙ ЦИКЛ РАБОТАЕТ') }}</span></div></div>
+      <div class="final-metrics"><div><small>{{ tr('ИЗВЕСТНОСТЬ') }}</small><b>{{ state.fame }}</b><span>{{ tr('final.goal_complete', { fame: GAME_RULES.fameGoal }) }}</span></div><div><small>{{ tr('УГРОЗА КОРПОРАЦИИ') }}</small><b>{{ state.corporateThreat }}</b><span>{{ tr(state.corporateThreat >= GAME_RULES.severeThreat ? 'ВЫСОКАЯ' : state.corporateThreat >= GAME_RULES.elevatedThreat ? 'ПОВЫШЕННАЯ' : 'СТАБИЛЬНАЯ') }}</span></div><div><small>{{ tr('УСПЕШНЫЕ УБОРКИ') }}</small><b>{{ totalRuns }}</b><span>{{ tr('АВТОНОМНЫЙ ЦИКЛ РАБОТАЕТ') }}</span></div></div>
       <div class="final-timeline">
         <article><span>01</span><small>{{ tr('final.story.contact') }}</small><h2>{{ finalParticipants }}</h2><p>{{ tr(state.storyResolution.inaction ? `final.story.inaction.${state.storyResolution.inaction}` : 'final.story.arrived_in_time') }}</p></article>
         <article><span>02</span><small>{{ tr('final.story.intel') }}</small><h2>{{ tr('final.story.intel_result', { confirmed: finalConfirmedFacts, verified: finalVerifiedFacts }) }}</h2><p>{{ tr(state.storyResolution.deescalated ? 'final.story.deescalated' : 'final.story.not_deescalated') }}</p></article>
         <article><span>03</span><small>{{ tr('final.story.behavior') }}</small><h2>{{ tr(state.storyResolution.intervention ? `story.intervention.${state.storyResolution.intervention}.result` : 'final.story.no_intervention') }}</h2></article>
         <article class="decision"><span>04</span><small>{{ tr('ПРИНЯТОЕ РЕШЕНИЕ') }}</small><h2>{{ tr(state.storyResolution.title) }}</h2><p>{{ tr('Открыта будущая ветка:') }} <b>{{ tr(state.storyResolution.branch) }}</b></p><div><i>{{ tr('fame.delta', { fame: state.storyResolution.fameDelta }) }}</i><i :class="{ calm: !state.storyResolution.threatDelta }">{{ tr(state.storyResolution.threatDelta ? 'threat.delta' : 'угроза без изменений', { threat: state.storyResolution.threatDelta }) }}</i></div></article>
-        <article><span>05</span><small>{{ tr('final.story.aftermath') }}</small><h2>{{ tr(`story.aftermath.${state.storyAftermath?.kind}.title`) }}</h2><p>{{ tr(`final.story.aftermath.${state.storyAftermath?.kind}`) }}</p></article>
-        <article><span>06</span><small>{{ tr('final.story.south_junction') }}</small><h2>{{ tr(`final.story.urgent_status.${state.urgentOperation?.status}`) }}</h2><p>{{ tr(state.urgentOperation?.status === 'completed' ? state.urgentOperation.fullReward ? 'final.story.urgent.full' : 'final.story.urgent.partial' : 'final.story.urgent.failed') }}</p></article>
+        <article><span>05</span><small>{{ tr('final.story.location') }}</small><h2>{{ tr(`location.knowledge.${state.storyResolution.locationKnowledge}`) }}</h2><p>{{ tr(`location.knowledge.${state.storyResolution.locationKnowledge}.description`) }}</p></article>
+        <article><span>06</span><small>{{ tr('final.story.politics') }}</small><h2>{{ tr('final.story.front_relation', { relation: state.relations.needle_front }) }}</h2><p>{{ tr('final.story.front_delta', { delta: state.storyResolution.frontRelationDelta, trust: state.needleTrust }) }}</p></article>
+      </div>
+      <button class="continue-button" @click="emit('continueFinale')">{{ tr('Продолжить в песочнице') }} <span>→</span></button>
+    </section>
+  </div>
+
+  <div v-if="!newGameConfirmOpen && state.finalSummaryVisible && state.campaignPhase === 'peace_first_shift' && state.firstShift.stage === 'summary'" class="final-overlay">
+    <section class="final-card first-shift-summary" role="dialog" aria-modal="true" aria-labelledby="shift-summary-title">
+      <div class="final-stamp">{{ tr('first_shift.summary.stamp') }}</div>
+      <div class="final-kicker">NINE LIVES CORP · {{ tr('first_shift.summary.kicker') }}</div>
+      <h1 id="shift-summary-title">{{ tr('first_shift.summary.title') }}</h1>
+      <p class="final-lead">{{ tr(`first_shift.summary.container.${state.firstShift.containerDecision}`) }}</p>
+      <div class="final-metrics">
+        <div><small>{{ tr('district.residential_ring.name') }}</small><b>{{ state.districts.residential_ring.risk }}</b><span>{{ tr('district.risk') }}</span></div>
+        <div><small>{{ tr('hq.police.name') }}</small><b>{{ state.relations.police }}</b><span>{{ tr('hq.relation') }}</span></div>
+        <div><small>{{ tr('first_shift.summary.south_node') }}</small><b>{{ tr(`first_shift.outcome.${state.firstShift.southNodeOutcome}`) }}</b><span>{{ tr('first_shift.summary.persistent') }}</span></div>
+      </div>
+      <div class="final-timeline">
+        <article><span>01</span><small>{{ tr('hq.monolith.name') }}</small><h2>{{ tr('first_shift.summary.monolith') }}</h2><p>{{ tr(state.relations.green_monolith >= 70 ? 'first_shift.summary.monolith_success' : 'first_shift.summary.monolith_missed') }}</p></article>
+        <article><span>02</span><small>{{ tr('first_shift.container.title') }}</small><h2>{{ tr(`first_shift.choice.${state.firstShift.containerDecision}`) }}</h2><p>{{ tr(`first_shift.summary.warning.${state.firstShift.containerDecision}`) }}</p></article>
+        <article><span>03</span><small>{{ tr('mission.residential_duty') }}</small><h2>{{ tr(`first_shift.outcome.${state.firstShift.residentialDutyOutcome}`) }}</h2><p>{{ tr('first_shift.summary.responsibility') }}</p></article>
+        <article class="decision"><span>04</span><small>{{ tr('first_shift.summary.south_node') }}</small><h2>{{ tr(`first_shift.outcome.${state.firstShift.southNodeOutcome}`) }}</h2><p>{{ tr(state.firstShift.filterSample ? 'first_shift.summary.sample_helped' : 'first_shift.summary.no_sample') }}</p></article>
       </div>
       <button class="continue-button" @click="emit('continueFinale')">{{ tr('Продолжить в песочнице') }} <span>→</span></button>
     </section>

@@ -27,9 +27,10 @@ test('field equipment is reserved and applied only after the dynamically formed 
 
   await page.getByRole('button', { name: 'Карта', exact: true }).click()
   await page.getByRole('button', { name: /×10/ }).click()
-  const operationLog = page.locator('.map-view aside')
+  const operationLog = page.locator('.map-view > aside').last()
   await expect(operationLog).toContainText('Пиксель получит «Аптечка» после возвращения')
-  await expect(operationLog).toContainText('Отряд «Альфа» закончил уборку', { timeout: 20_000 })
+  await expect(operationLog).toContainText('Служебная уборка выполнена · доверие Монолита', { timeout: 20_000 })
+  await page.getByRole('button', { name: /×10/ }).click()
   await expect(operationLog).toContainText('Пиксель: отложенное оснащение выдано', { timeout: 20_000 })
 
   await page.getByRole('button', { name: 'База', exact: true }).click()
@@ -40,8 +41,8 @@ test('field equipment is reserved and applied only after the dynamically formed 
 
 test('two field cats can reserve equipment independently', async ({ page }) => {
   await page.goto('/')
-  await formSquadAtPoint(page, ['Пиксель'], 72, 72)
-  await formSquadAtPoint(page, ['Марлоу'], 66, 66)
+  await formSquadAtPoint(page, ['Пиксель'], 55, 57)
+  await formSquadAtPoint(page, ['Марлоу'], 39, 55)
   await page.getByRole('button', { name: 'База', exact: true }).click()
 
   const pixelCard = await openEquipment(page, 'Пиксель')

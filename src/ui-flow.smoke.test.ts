@@ -11,6 +11,7 @@ import {
   dispatchNinthLife,
   equipItem,
   getAchievements,
+  resolvePoliceContainer,
   resolveNinthLife,
   resolveRaidDecision,
   resolveRaidFollowup,
@@ -70,6 +71,41 @@ test('active mission rail shows every assigned squad with its full cat roster', 
   assert.match(html, /mission-squad-members[^>]*>Марлоу · Шорох · Мята/)
 })
 
+test('First Shift renders the container choice and its causal summary', async () => {
+  const GameOverlays = await loadComponent('/src/components/GameOverlays.vue')
+  const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
+  const state = createState()
+  state.firstShift.stage = 'container'
+  state.firstShift.containerDeadline = 60
+  state.firstShift.containerSquadId = 'alpha'
+
+  let html = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 0 })
+  assert.match(html, /Контейнер с муниципальной маркировкой/)
+  assert.match(html, /Передать Полиции/)
+  assert.match(html, /Взять образец/)
+  assert.match(html, /Вызвать Монолит/)
+  assert.match(html, /Не вмешиваться/)
+
+  assert.equal(resolvePoliceContainer(state, 'independent_sample'), true)
+  state.speed = 1
+  tick(state, 0.25)
+  const mapHtml = await render(OperationsMap, { state, locale: 'ru' })
+  assert.match(mapHtml, /Жилое кольцо/)
+  assert.match(mapHtml, /Авария в жилом дворе/)
+  assert.match(mapHtml, /Фильтры для Южного узла/)
+
+  state.firstShift.stage = 'summary'
+  state.firstShift.residentialDutyOutcome = 'completed'
+  state.firstShift.southNodeOutcome = 'full'
+  state.finalSummaryVisible = true
+  html = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: false, totalRuns: 2 })
+  assert.match(html, /ПРИЧИННАЯ СВОДКА/)
+  assert.match(html, /Первая смена/)
+  assert.match(html, /Образец сохранён/)
+  assert.match(html, /Сохранённый образец сократил время ремонта/)
+  assert.match(html, /Продолжить в песочнице/)
+})
+
 test('UI smoke: a prepared operation renders every blocking stage through the final report', async () => {
   const BaseOperations = await loadComponent('/src/components/BaseOperations.vue')
   const GameOverlays = await loadComponent('/src/components/GameOverlays.vue')
@@ -104,6 +140,18 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(baseHtml, /class="cat-squad-name">Отряд «Браво»<\/small>/)
   assert.match(baseHtml, /Пиксель/)
 
+  state.campaignPhase = 'peace_sandbox'
+  state.firstShift.stage = 'complete'
+  const raidMission = state.missions[0]
+  raidMission.kind = 'municipal'
+  raidMission.status = 'assigned'
+  raidMission.progress = 14
+  raidMission.squadIds = ['alpha']
+  raidMission.contributorSquadIds = []
+  const alpha = state.squads[0]
+  alpha.phase = 'cleanup'
+  alpha.missionId = raidMission.id
+  alpha.target = { id: raidMission.id, title: raidMission.title, x: raidMission.x, y: raidMission.y, priority: raidMission.priority }
   state.squads[0].completed = 2
   state.completedMissionCount = 2
   state.fame = 30
@@ -124,6 +172,7 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(overlayHtml, /Поддержка прибыла/)
 
   assert.equal(resolveRaidFollowup(state, 'continue'), true)
+  state.campaignPhase = 'post_cataclysm'
   state.speed = 1
   tick(state, 3)
   assert.ok(state.storyIncident)
@@ -138,10 +187,7 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(overlayHtml, /Новая игра \/ сброс прогресса/)
 
   assert.equal(verifyNinthLife(state, 'recon'), true)
-  tick(state, 15)
-  const urgentMapHtml = await render(OperationsMap, { state, locale: 'ru' })
-  assert.match(urgentMapHtml, /Фильтры для Южного узла/)
-  tick(state, 15)
+  tick(state, 30)
   assert.equal(state.storyIncident?.stage, 'contact')
 
   const resetOverlayHtml = await render(GameOverlays, { state, locale: 'ru', newGameConfirmOpen: true, totalRuns: 3 })
@@ -158,8 +204,8 @@ test('UI smoke: a prepared operation renders every blocking stage through the fi
   assert.match(overlayHtml, /КОНТАКТ/)
   assert.match(overlayHtml, /ПРОВЕРКА СВЕДЕНИЙ/)
   assert.match(overlayHtml, /ПОВЕДЕНИЕ ОТРЯДА/)
-  assert.match(overlayHtml, /ПОЛЕВОЕ ПОСЛЕДСТВИЕ/)
-  assert.match(overlayHtml, /ЮЖНЫЙ УЗЕЛ/)
+  assert.match(overlayHtml, /ЗНАНИЕ О HQ/)
+  assert.match(overlayHtml, /ПОЛИТИЧЕСКИЙ ИТОГ/)
   assert.match(overlayHtml, /Продолжить в песочнице/)
 })
 
@@ -183,8 +229,8 @@ test('completed mission disappears while its squad route continues from the squa
 
   const html = await render(OperationsMap, { state, locale: 'ru' })
   assert.doesNotMatch(html, /cleanup-pin/)
-  assert.match(html, /<line[^>]*x1="23"[^>]*y1="25"[^>]*x2="46"[^>]*y2="51"/)
-  assert.match(html, /class="[^"]*squad-formation"[^>]*style="left:23%;top:25%/)
+  assert.match(html, new RegExp(`<polyline[^>]*points="${mission.x},${mission.y} 46,51"`))
+  assert.match(html, new RegExp(`class="[^"]*squad-formation"[^>]*style="left:${mission.x}%;top:${mission.y}%`))
 
   mission.status = 'assigned'
   const legacyHtml = await render(OperationsMap, { state, locale: 'ru' })
@@ -204,7 +250,7 @@ test('an idle field squad draws its return route without a mission target', asyn
 
   const html = await render(OperationsMap, { state, locale: 'ru' })
 
-  assert.match(html, /<line[^>]*x1="30"[^>]*y1="35"[^>]*x2="46"[^>]*y2="51"/)
+  assert.match(html, /<polyline[^>]*points="30,35 46,51"/)
 })
 
 test('queued equipment remains visible in its orange slot without extra status text', async () => {
@@ -344,7 +390,7 @@ test('an arbitrary march renders its route and destination status', async () => 
   squad.travelDuration = 10
 
   const html = await render(OperationsMap, { state, locale: 'ru' })
-  assert.match(html, /<line[^>]*x1="45"[^>]*y1="40"[^>]*x2="70"[^>]*y2="60"/)
+  assert.match(html, /<polyline[^>]*points="45,40 70,60"/)
   assert.match(html, /Следует к точке · 5 с/)
 })
 

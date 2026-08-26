@@ -7,16 +7,13 @@ import {
   assignCat,
   assignSquadToMission,
   drainEvents,
-  dispatchNinthLife,
+  dispatchWaterFilters,
   equipItem,
   getAchievements,
-  resolveNinthLife,
-  resolveRaidDecision,
-  resolveRaidFollowup,
+  resolvePoliceContainer,
   selectResearch,
   successfulCleanups,
   tick,
-  moveSquadToPoint,
   type State,
 } from '../src/simulation.ts'
 
@@ -28,7 +25,7 @@ function advanceUntil(state: State, condition: () => boolean, message: string, m
   assert.fail(message)
 }
 
-test('smoke: a new operation reaches and archives the Ninth Life finale', () => {
+test('smoke: a new operation completes and archives the First Shift causal report', () => {
   const state = createState()
 
   assert.equal(equipItem(state, 'pixel', 'hands', 'toolkit'), true)
@@ -39,60 +36,43 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
   assert.equal(createSquad(state), true)
   for (const catId of ['pixel', 'rust', 'bastion']) assert.equal(assignCat(state, catId, 'squad-1'), true)
   for (const catId of ['marlowe', 'shorokh', 'myata']) assert.equal(assignCat(state, catId, 'squad-2'), true)
+  state.squads.forEach(squad => { squad.autoDispatch = false })
   assert.equal(assignSquadToMission(state, 'squad-1', state.missions[0].id), true)
-  state.squads[1].autoDispatch = false
-  assert.equal(moveSquadToPoint(state, 'squad-2', { x: 46, y: 55 }), true)
-  const operationsSquad = state.squads[0]
-  const supportSquad = state.squads[1]
-  operationsSquad.autoDispatch = true
 
   state.speed = 10
-  advanceUntil(state, () => Boolean(state.incident), 'The scripted raider incident did not open')
-
-  assert.equal(successfulCleanups(state), 2)
-  assert.equal(state.incident?.stage, 'decision')
+  advanceUntil(state, () => state.firstShift.stage === 'container', 'The Police container contact did not open')
   assert.equal(state.speed, 0)
-  if (!state.incident) assert.fail('The raider incident is missing')
-  state.incident.supportRoll = 1
-
-  assert.equal(resolveRaidDecision(state, 'support', supportSquad.id), true)
-  assert.equal(state.incident.stage, 'support_en_route')
-  assert.equal(state.speed, 1)
-
-  advanceUntil(
-    state,
-    () => state.incident?.stage === 'support_decision',
-    'The support squad did not arrive',
-  )
-
-  assert.equal(state.speed, 0)
-  assert.equal(resolveRaidFollowup(state, 'continue'), true)
-  assert.equal(successfulCleanups(state), 2)
+  const container = state.missions.find(mission => mission.kind === 'police_contact')!
+  assert.equal(state.districts.residential_ring.access, 'contact')
+  assert.equal(assignSquadToMission(state, 'squad-2', container.id), true)
   state.speed = 10
-  advanceUntil(state, () => Boolean(state.storyIncident), 'The supported cleanup did not finish')
-  assert.equal(successfulCleanups(state), 3)
-  assert.equal(state.storyIncident?.kind, 'ninth_life')
+  advanceUntil(state, () => Boolean(state.firstShift.containerSquadId), 'The squad did not reach the Police container')
+  assert.equal(state.speed, 0)
+  assert.equal(resolvePoliceContainer(state, 'independent_sample'), true)
+  assert.equal(state.districts.residential_ring.access, 'operational')
+  assert.equal(state.firstShift.filterSample, true)
+  const duty = state.missions.find(mission => mission.kind === 'residential_duty')!
+  assert.equal(assignSquadToMission(state, 'squad-2', duty.id), true)
+  state.speed = 1
+  tick(state, 0.25)
+  state.speed = 0
+  assert.equal(dispatchWaterFilters(state, 'squad-1'), true)
+  state.speed = 10
+  advanceUntil(state, () => state.finalSummaryVisible, 'The First Shift causal report did not open')
 
-  assert.equal(dispatchNinthLife(state, supportSquad.id), true)
-  advanceUntil(state, () => state.storyIncident?.stage === 'contact', 'The squad did not reach the deserter')
-
-  assert.equal(resolveNinthLife(state, 'shelter'), true)
-  assert.equal(state.fame, 50)
-  assert.equal(state.threat, 40)
-  assert.equal(state.finalSummaryVisible, false)
-  advanceUntil(state, () => state.finalSummaryVisible, 'The field aftermath did not reach the final report')
   assert.equal(state.finalSummaryVisible, true)
+  assert.equal(state.firstShift.stage, 'summary')
+  assert.equal(state.firstShift.residentialDutyOutcome, 'completed')
+  assert.equal(state.firstShift.southNodeOutcome, 'full')
+  assert.equal(successfulCleanups(state), 1)
   const eventTypes = drainEvents(state).map(event => event.type)
   const requiredEventOrder = [
     'achievement_unlocked',
     'research_started',
     'mission_started',
     'mission_completed',
-    'incident_started',
-    'support_requested',
-    'support_arrived',
-    'story_started',
-    'story_resolved',
+    'urgent_operation_dispatched',
+    'urgent_operation_resolved',
     'final_summary_available',
   ] as const
   let eventCursor = -1
@@ -102,10 +82,11 @@ test('smoke: a new operation reaches and archives the Ninth Life finale', () => 
   }
   assert.deepEqual(
     getAchievements(state).filter(achievement => achievement.completed).map(achievement => achievement.id),
-    ['first_squad', 'field_kit', 'first_cleanup', 'research_started', 'raiders_resolved', 'ninth_life_closed'],
+    ['first_squad', 'field_kit', 'first_cleanup', 'research_started'],
   )
 
   assert.equal(continueAfterFinale(state), true)
   assert.equal(state.finalSummaryVisible, false)
   assert.equal(state.finalSummarySeen, true)
+  assert.equal(state.campaignPhase, 'peace_sandbox')
 })

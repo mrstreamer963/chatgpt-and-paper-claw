@@ -30,7 +30,7 @@ export async function orderSelectedToPoint(page: Page, x = 72, y = 72) {
   await page.mouse.click(bounds.x + bounds.width * x / 100, bounds.y + bounds.height * y / 100)
 }
 
-export async function formSquadAtPoint(page: Page, names: string[], x = 72, y = 72) {
+export async function formSquadAtPoint(page: Page, names: string[], x = 52, y = 58) {
   await selectBaseCats(page, names)
   await orderSelectedToPoint(page, x, y)
   await expect.poll(() => readWorld(page, state => state.squads.length)).toBeGreaterThan(0)

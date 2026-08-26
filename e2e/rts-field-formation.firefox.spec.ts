@@ -10,7 +10,7 @@ test.beforeEach(async ({ page }) => {
 
 test('field cats render separately but select and move as one squad', async ({ page }) => {
   await page.goto('/')
-  await formSquadAtPoint(page, ['Марлоу', 'Пиксель', 'Ржа'], 82, 78)
+  await formSquadAtPoint(page, ['Марлоу', 'Пиксель', 'Ржа'], 55, 57)
   await waitForSquadPhase(page, 'squad-1', ['moving'])
 
   const formation = page.locator('.squad-formation.squad-1')
@@ -35,7 +35,7 @@ test('field cats render separately but select and move as one squad', async ({ p
 
 test('a selection box touching one field cat selects its whole squad once', async ({ page }) => {
   await page.goto('/')
-  await formSquadAtPoint(page, ['Марлоу', 'Пиксель', 'Ржа'], 78, 76)
+  await formSquadAtPoint(page, ['Марлоу', 'Пиксель', 'Ржа'], 53, 58)
   await waitForSquadPhase(page, 'squad-1', ['moving', 'field'])
 
   const member = page.locator('.squad-formation.squad-1 .field-cat-marker').first()
