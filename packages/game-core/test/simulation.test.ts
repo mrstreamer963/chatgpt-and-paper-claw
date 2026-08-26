@@ -302,6 +302,24 @@ test('disbanding only accepts an empty idle non-final squad', () => {
   assert.equal(disbandSquad(state, 'bravo'), true)
 })
 
+test('a completed urgent operation does not prevent disbanding its former squad', () => {
+  const state = createState()
+  const squad = state.squads[0]
+  state.urgentOperation = {
+    kind: 'water_filters',
+    status: 'completed',
+    x: 55,
+    y: 58,
+    availableAt: 44.25,
+    deadline: 119.25,
+    dispatchedSquadId: squad.id,
+  }
+
+  assert.equal(getDisbandSquadBlockReason(state, squad.id), undefined)
+  assert.equal(disbandSquad(state, squad.id), true)
+  assert.equal(deserializeState(serializeState(state)).squads.some(candidate => candidate.id === squad.id), false)
+})
+
 test('squads can be renamed in any phase with trimmed unique names', () => {
   const state = createState()
   state.squads[0].phase = 'incident'

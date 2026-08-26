@@ -924,6 +924,10 @@ function migrateLegacyState(value: unknown, removeLegacyEmptySquads = false) {
   if (Array.isArray(migrated.squads)) {
     for (const squad of migrated.squads) if (isRecord(squad)) delete squad.progress
   }
+  if (isRecord(migrated.urgentOperation)
+    && ['completed', 'failed'].includes(String(migrated.urgentOperation.status))) {
+    delete migrated.urgentOperation.dispatchedSquadId
+  }
   if (isRecord(migrated.incident)) {
     const participants = Array.isArray(migrated.incident.participantSquadIds)
       ? migrated.incident.participantSquadIds.filter(id => typeof id === 'string')
@@ -1036,6 +1040,7 @@ function isValidState(value: unknown): value is State {
   if (value.incident && isValidIncident(value.incident)
     && (value.incident as RaidIncident).participantSquadIds.some(id => !squadIds.has(id))) return false
   if (value.urgentOperation && isValidUrgentOperation(value.urgentOperation)
+    && ['dispatch', 'active'].includes((value.urgentOperation as UrgentOperation).status)
     && (value.urgentOperation as UrgentOperation).dispatchedSquadId
     && !squadIds.has((value.urgentOperation as UrgentOperation).dispatchedSquadId!)) return false
   if (!isRecord(value.inventory)) return false
@@ -1409,7 +1414,8 @@ export function getDisbandSquadBlockReason(state: State, squadId: string) {
   if (state.incident?.supportSquadId === squadId || state.incident?.participantSquadIds.includes(squadId)
     || state.storyIncident?.participantSquadIds.includes(squadId)
     || state.storyIncident?.dispatchedSquadId === squadId
-    || state.urgentOperation?.dispatchedSquadId === squadId) return 'squad.manage.reason.incident'
+    || (state.urgentOperation?.dispatchedSquadId === squadId
+      && ['dispatch', 'active'].includes(state.urgentOperation.status))) return 'squad.manage.reason.incident'
   return undefined
 }
 
@@ -2581,6 +2587,7 @@ function completeWaterFilters(state: State, squad: Squad) {
   state.scrap += scrap
   operation.status = 'completed'
   operation.workRemaining = 0
+  delete operation.dispatchedSquadId
   if (state.campaignPhase === 'peace_first_shift') {
     state.firstShift.southNodeOutcome = operation.fullReward ? 'full' : 'partial'
   }
@@ -2612,6 +2619,7 @@ function updateUrgentOperation(state: State) {
     }
     operation.status = 'failed'
     operation.workRemaining = 0
+    delete operation.dispatchedSquadId
     if (state.campaignPhase === 'peace_first_shift') state.firstShift.southNodeOutcome = 'lost'
     note(state, 'log.water_filters_failed')
     emitEvent(state, { type: 'urgent_operation_resolved', operation: 'water_filters', outcome: 'failed' })
