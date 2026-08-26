@@ -140,7 +140,7 @@
 .map-squad-list strong { color: #b8c5bc; font-size: 8px; font-weight: 500; }
 .map-squad-list .squad-energy.tired { color: #ed745c; text-shadow: 0 0 9px #d7463344; }
 .map-squad-list small { margin-top: 3px; color: #7e8c87; font-size: 7px; line-height: 1.3; }
-.map-squad-list .squad-member-names { color: #a9b6b0; letter-spacing: .15px; }
+.map-squad-list .squad-member-names { color: #a9b6b0; letter-spacing: .15px; white-space: nowrap; }
 .map-squad-list > button > span:last-child small { color: #b97a67; }
 
 .cleanup-pin.assigned {
@@ -458,7 +458,7 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .squad-config-summary span { margin: 0; }
 .squad-config-summary b, .squad-config-summary small { display: block; }
 .squad-config-summary small { margin-top: 3px; color: #80908a; font-size: 8px; }
-.squad-config-summary .squad-member-names { overflow: visible; color: #a9b6b0; line-height: 1.35; white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+.squad-config-summary .squad-member-names { overflow: visible; color: #a9b6b0; line-height: 1.35; white-space: nowrap; text-overflow: clip; }
 .squad-config-summary strong { color: #d2a15f; font-size: 16px; font-weight: 400; }
 .squad-config-details { display: grid; grid-template-columns: minmax(0, 1fr) 112px; align-items: center; gap: 9px; padding: 0 10px 10px; }
 .squad-config select { width: 100%; padding: 6px; font-size: 9px; }

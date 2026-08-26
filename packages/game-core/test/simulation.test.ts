@@ -853,6 +853,10 @@ test('an active research order wakes a sleeping specialist at fifty', () => {
 test('open achievements unlock once and stay completed', () => {
   const state = createState()
   assert.equal(getAchievements(state).filter(achievement => achievement.completed).length, 0)
+  assert.equal(getAchievements(state).some(achievement => achievement.id === 'ninth_life_closed'), false)
+  state.campaignPhase = 'post_cataclysm'
+  assert.equal(getAchievements(state).some(achievement => achievement.id === 'ninth_life_closed'), true)
+  state.campaignPhase = 'peace_first_shift'
 
   assignCat(state, 'pixel', 'alpha')
   assert.equal(getAchievements(state).find(achievement => achievement.id === 'first_squad')?.completed, true)

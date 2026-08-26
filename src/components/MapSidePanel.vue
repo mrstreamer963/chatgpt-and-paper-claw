@@ -27,8 +27,7 @@ function squadMembersText(squad: Squad) {
     .map(memberId => props.state.cats.find(cat => cat.id === memberId))
     .filter((cat): cat is State['cats'][number] => Boolean(cat))
     .map(cat => tr(cat.name))
-  const visibleNames = names.slice(0, 3).join(' · ')
-  return names.length > 3 ? `${visibleNames} +${names.length - 3}` : visibleNames
+  return names.join(' · ')
 }
 </script>
 

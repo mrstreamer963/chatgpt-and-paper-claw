@@ -358,13 +358,13 @@ test('a manual field squad shows its waiting state only in the command list', as
   assert.match(html, /left:30%;top:35%/)
 })
 
-test('the command list summarizes long squad rosters', async () => {
+test('the command list shows the full squad roster', async () => {
   const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
   const state = createState()
   state.squads[0].members = ['marlowe', 'pixel', 'rust', 'shorokh', 'bastion']
 
   const html = await render(OperationsMap, { state, locale: 'ru' })
-  assert.match(html, /class="squad-member-names">Марлоу · Пиксель · Ржа \+2<\/small>/)
+  assert.match(html, /class="squad-member-names">Марлоу · Пиксель · Ржа · Шорох · Бастион<\/small>/)
 })
 
 test('forming squads does not automatically expand the first squad', async () => {

@@ -529,10 +529,12 @@ export function syncAchievements(state: State) {
 }
 
 export function getAchievements(state: State): Achievement[] {
-  return ACHIEVEMENT_DEFINITIONS.map(achievement => ({
-    ...achievement,
-    completed: state.achievements.completedIds.includes(achievement.id),
-  }))
+  return ACHIEVEMENT_DEFINITIONS
+    .filter(achievement => achievement.id !== 'ninth_life_closed' || state.campaignPhase === 'post_cataclysm')
+    .map(achievement => ({
+      ...achievement,
+      completed: state.achievements.completedIds.includes(achievement.id),
+    }))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
