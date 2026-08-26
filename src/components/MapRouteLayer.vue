@@ -14,8 +14,30 @@ function routeFallback(squad: Squad) {
   if (squad.phase === 'merging') return [point, squad.mergePoint ?? point]
   return [point, squad.target ?? point]
 }
+function distance(a: { x: number; y: number }, b: { x: number; y: number }) {
+  return Math.hypot(b.x - a.x, b.y - a.y)
+}
 function routePoints(squad: Squad) {
-  const points = squad.route.length > 1 ? squad.route : routeFallback(squad)
+  if (squad.route.length <= 1) return routeFallback(squad).map(point => `${point.x},${point.y}`).join(' ')
+
+  const progress = Math.max(0, Math.min(1, squad.travel / Math.max(squad.travelDuration, 1e-9)))
+  const lengths = squad.route.slice(1).map((point, index) => distance(squad.route[index], point))
+  const total = lengths.reduce((sum, length) => sum + length, 0)
+  let remaining = total * progress
+  let segment = 0
+  while (segment < lengths.length - 1 && remaining > lengths[segment]) {
+    remaining -= lengths[segment]
+    segment += 1
+  }
+  const segmentLength = lengths[segment]
+  const start = squad.route[segment]
+  const end = squad.route[segment + 1]
+  const ratio = segmentLength > 0 ? remaining / segmentLength : 0
+  const current = {
+    x: start.x + (end.x - start.x) * ratio,
+    y: start.y + (end.y - start.y) * ratio,
+  }
+  const points = [current, ...squad.route.slice(segment + 1)]
   return points.map(point => `${point.x},${point.y}`).join(' ')
 }
 function missionLink(squad: Squad) { const point = position(squad); return { x1: point.x, y1: point.y, x2: squad.target?.x ?? point.x, y2: squad.target?.y ?? point.y } }
