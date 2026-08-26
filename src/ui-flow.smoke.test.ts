@@ -71,6 +71,18 @@ test('active mission rail shows every assigned squad with its full cat roster', 
   assert.match(html, /mission-squad-members[^>]*>Марлоу · Шорох · Мята/)
 })
 
+test('debug route nodes are rendered only when the session option is enabled', async () => {
+  const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')
+  const state = createState()
+  const regularHtml = await render(OperationsMap, { state, locale: 'ru' })
+  const debugHtml = await render(OperationsMap, { state, locale: 'ru', highlightRouteNodes: true })
+
+  assert.doesNotMatch(regularHtml, /debug-route-node/)
+  assert.match(debugHtml, /debug-route-node/)
+  assert.match(debugHtml, />base</)
+  assert.match(debugHtml, />metro-depot</)
+})
+
 test('First Shift renders the container choice and its causal summary', async () => {
   const GameOverlays = await loadComponent('/src/components/GameOverlays.vue')
   const OperationsMap = await loadComponent('/src/components/OperationsMap.vue')

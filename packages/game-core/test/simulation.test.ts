@@ -439,7 +439,11 @@ test('an auto squad chains a priority mission nearest to its current position', 
   assert.equal(squad.phase, 'outbound')
   assert.equal(squad.missionId, nearby.id)
   assert.deepEqual(squad.routeFrom, { x: current.x, y: current.y })
-  assert.ok(squad.travelDuration > 2)
+  assert.equal(squad.travelDuration, 2)
+  assert.deepEqual(squad.route, [
+    { x: current.x, y: current.y },
+    { x: nearby.x, y: nearby.y },
+  ])
   assert.equal(squad.route.at(-1)?.x, nearby.x)
   assert.equal(squad.route.at(-1)?.y, nearby.y)
   assert.equal(state.missions.some(mission => mission.id === current.id), false)

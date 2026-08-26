@@ -151,13 +151,14 @@
 .cleanup-pin.assigned span {
   border-color: #78df91;
   color: #78df91;
-  box-shadow: 0 0 16px #48bf6a88;
+  box-shadow: none;
 }
 
 .cleanup-pin > span svg { width: 21px; height: 21px; }
 
 button.cleanup-pin { z-index: 6; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; overflow: visible; transform: translate(-50%, -50%); }
 button.cleanup-pin > span { left: 50%; top: 50%; }
+button.cleanup-pin:not(.enhanced-alert):not(.assigned) > span { animation: none; box-shadow: none; }
 button.cleanup-pin:hover > span,
 button.cleanup-pin.selected > span { border-style: solid; box-shadow: 0 0 24px #e6a34ccc; }
 button.cleanup-pin:focus-visible > span { outline: 2px solid #f4d195; outline-offset: 4px; }
@@ -427,6 +428,18 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .sound-panel > footer button:hover:not(:disabled) { border-color: #a37a4b; color: #e5bd7c; }
 .sound-panel > footer button.active { border-color: #865043; background: #41251f; color: #e58a70; }
 .sound-panel button:disabled { cursor: not-allowed; opacity: .35; }
+.debug-control { position: relative; flex: 0 0 auto; }
+.debug-toggle { padding: 7px 9px; border-color: #66563f; color: #c9a86f; font-size: 9px; letter-spacing: .6px; }
+.debug-toggle.active { border-color: #d39a4f; background: #3b2d1c; color: #ffd48e; }
+.debug-panel { position: absolute; z-index: 40; top: calc(100% + 14px); right: 0; width: 260px; padding: 14px; border: 1px solid #695b46; background: #171e20; box-shadow: 0 14px 35px #000b; }
+.debug-panel header { margin-bottom: 12px; color: #bd8d54; font-size: 8px; letter-spacing: 1.6px; }
+.debug-panel label { display: flex; align-items: center; gap: 9px; color: #c3cbc5; font-size: 9px; cursor: pointer; }
+.debug-panel input { accent-color: #d49151; }
+.debug-route-nodes { position: absolute; inset: 0; z-index: 8; pointer-events: none; }
+.debug-route-node { position: absolute; transform: translate(-50%,-50%); color: #6fffd0; }
+.debug-route-node span { display: block; width: 11px; height: 11px; border: 2px solid currentColor; border-radius: 50%; background: #10251f; box-shadow: 0 0 12px currentColor; }
+.debug-route-node b { position: absolute; top: 12px; left: 7px; padding: 2px 4px; background: #07110ed9; color: currentColor; font-size: 7px; white-space: nowrap; }
+.debug-route-node.hidden { color: #ff77cb; }
 
 .room:is(button) {
   width: 100%;

@@ -34,6 +34,17 @@ test('the city starts as known silhouettes with only sanctioned operational corr
   assert.equal(queue[0].deadline, 120)
 })
 
+test('travel within an operational district uses the direct route instead of detouring through a graph node', () => {
+  const state = createState()
+  const origin = { x: 46, y: 51 }
+  const cleanup = { x: 47, y: 39 }
+
+  const route = planOperationalRoute(state.districts, origin, cleanup)
+
+  assert.deepEqual(route?.points, [origin, cleanup])
+  assert.equal(route?.distance, Math.hypot(cleanup.x - origin.x, cleanup.y - origin.y))
+})
+
 test('all four container decisions open the district but preserve distinct causal consequences', () => {
   const expected = {
     police_handoff: { police: 60, monolith: 70, risk: 15, delay: 15, sample: false },

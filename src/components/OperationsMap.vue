@@ -11,7 +11,7 @@ import MapSquadLayer from './MapSquadLayer.vue'
 import MapSidePanel from './MapSidePanel.vue'
 import ActiveMissionRail from './ActiveMissionRail.vue'
 
-const props = defineProps<{ state: State; locale: Locale }>()
+const props = withDefaults(defineProps<{ state: State; locale: Locale; highlightRouteNodes?: boolean }>(), { highlightRouteNodes: false })
 const emit = defineEmits<{
   assign: [squadIds: string[], missionId: string]
   move: [squadIds: string[], x: number, y: number]
@@ -178,6 +178,9 @@ function relationLabel(ownerId: RelationOwnerId) {
           <line v-for="edge in visibleRouteEdges" :key="`${edge.from}-${edge.to}`" :x1="routeNode(edge.from).point.x" :y1="routeNode(edge.from).point.y" :x2="routeNode(edge.to).point.x" :y2="routeNode(edge.to).point.y" />
         </g>
       </svg>
+      <div v-if="highlightRouteNodes" class="debug-route-nodes" aria-hidden="true">
+        <div v-for="node in ROUTE_NODES" :key="`debug-${node.id}`" class="debug-route-node" :class="{ hidden: node.id === 'metro-depot' }" :style="{ left: `${node.point.x}%`, top: `${node.point.y}%` }"><span></span><b>{{ node.id }}</b></div>
+      </div>
       <button v-for="district in DISTRICT_DEFINITIONS" :key="`district-${district.id}`" type="button" class="district-label" :class="[`access-${state.districts[district.id].access}`, { selected: selectedDistrictId === district.id }]" :style="{ left: `${district.center.x}%`, top: `${district.center.y}%` }" @click.stop="selectedDistrictId = selectedDistrictId === district.id ? undefined : district.id">
         <b>{{ tr(district.name) }}</b><small>{{ tr(district.arterial) }}</small>
       </button>
@@ -207,7 +210,7 @@ function relationLabel(ownerId: RelationOwnerId) {
       <div v-if="state.storyObserver && state.storyObserver.status !== 'hidden' && state.storyObserver.status !== 'gone'" class="observer-pin" :class="state.storyObserver.status" :style="{ left: `${state.storyObserver.x}%`, top: `${state.storyObserver.y}%` }" :title="tr('story.observer.title')"><span>◉</span></div>
       <div v-if="state.storyAftermath?.status === 'completed'" class="aftermath-pin" :class="state.storyAftermath.kind" :style="{ left: `${state.storyAftermath.x}%`, top: `${state.storyAftermath.y}%` }" :title="tr(`story.aftermath.${state.storyAftermath.kind}.title`)"><span>◆</span></div>
       <button v-if="state.urgentOperation && !['pending', 'completed', 'failed'].includes(state.urgentOperation.status)" type="button" class="urgent-pin" :class="state.urgentOperation.status" :style="{ left: `${state.urgentOperation.x}%`, top: `${state.urgentOperation.y}%` }" :aria-label="tr('urgent.water_filters.title')" @click.stop="dispatchUrgent"><span>F</span></button>
-      <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id, 'enhanced-alert': mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
+      <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id, 'enhanced-alert': mission.deadline !== undefined && mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
       <button v-for="mission in state.missions.filter(mission => isActiveAssignedMission(state, mission))" :key="`assigned-${mission.id}`" type="button" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id, selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
       <div v-if="selectedCount || selectedTarget || commandMessage" class="command-hint"><span>{{ tr(selectedCount ? 'dispatch.command.choose_target_count' : 'dispatch.command.choose_squad', { count: selectedCount }) }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
       <div v-if="selectionBox?.dragging" class="selection-box" :style="selectionBoxStyle()"></div>

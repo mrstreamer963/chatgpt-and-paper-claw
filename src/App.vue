@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { getAchievements, successfulCleanups } from '@nine-lives/game-core'
 import { squadDisplayName, translate } from './i18n'
 import { useGameSession } from './useGameSession'
@@ -55,6 +55,12 @@ const {
 } = useGameSession()
 
 const basePanel = ref<'teams' | 'lab' | 'achievements'>('teams')
+const debugPanelOpen = ref(false)
+const DEBUG_ROUTE_NODES_COOKIE = 'nine-lives-debug-route-nodes'
+const highlightRouteNodes = ref(document.cookie.split('; ').some(cookie => cookie === `${DEBUG_ROUTE_NODES_COOKIE}=1`))
+watch(highlightRouteNodes, enabled => {
+  document.cookie = `${DEBUG_ROUTE_NODES_COOKIE}=${enabled ? '1' : '0'}; Max-Age=31536000; Path=/; SameSite=Lax`
+})
 const tr = (key: string, params?: Record<string, string | number>) => translate(locale.value, key, params)
 const totalRuns = computed(() => successfulCleanups(state.value))
 const formattedTime = computed(() => `${String(9 + Math.floor(state.value.time / 3600)).padStart(2, '0')}:${String(Math.floor(state.value.time / 60) % 60).padStart(2, '0')}`)
@@ -99,6 +105,8 @@ async function resetProgress() {
       :audio-started="audioStarted"
       :audio-unavailable="audioUnavailable"
       :formatted-time="formattedTime"
+      :debug-panel-open="debugPanelOpen"
+      :highlight-route-nodes="highlightRouteNodes"
       @navigate="activeView = $event"
       @locale="locale = $event"
       @sound-panel="soundSettingsOpen = $event"
@@ -106,6 +114,8 @@ async function resetProgress() {
       @toggle-muted="toggleMuted"
       @test-signal="testSignal"
       @speed="setSpeed"
+      @debug-panel="debugPanelOpen = $event"
+      @highlight-route-nodes="highlightRouteNodes = $event"
     />
 
     <div v-if="eventToast" class="achievement-toast" :class="`toast-${eventToast.tone}`" role="status" aria-live="assertive"><span>{{ eventToast.tone === 'achievement' ? '✓' : '!' }}</span><div><small>{{ tr(eventToast.label) }}</small><b>{{ tr(eventToast.title) }}</b></div></div>
@@ -119,7 +129,7 @@ async function resetProgress() {
 
     <div v-if="state.incident?.stage === 'support_en_route'" class="support-strip"><span class="alert-dot"></span><b>{{ tr('support.en_route', { squad: supportSquadName }) }}</b><span>{{ tr('support.eta', { seconds: supportSeconds }) }}</span><button v-if="state.speed === 0" @click="setSpeed(1)">{{ tr('Продолжить на ×1') }}</button></div>
 
-    <OperationsMap v-if="activeView === 'map'" :state="state" :locale="locale" @assign="assignSquadsToMission" @move="moveSquadsToPoint" @return-home="returnSquadsToBase" @dispatch-story="dispatchNinthLife" @dispatch-urgent="dispatchWaterFilters" />
+    <OperationsMap v-if="activeView === 'map'" :state="state" :locale="locale" :highlight-route-nodes="highlightRouteNodes" @assign="assignSquadsToMission" @move="moveSquadsToPoint" @return-home="returnSquadsToBase" @dispatch-story="dispatchNinthLife" @dispatch-urgent="dispatchWaterFilters" />
     <BaseOperations
       v-else
       :state="state"

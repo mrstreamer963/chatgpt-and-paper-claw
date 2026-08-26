@@ -12,6 +12,8 @@ const props = defineProps<{
   audioStarted: boolean
   audioUnavailable: boolean
   formattedTime: string
+  debugPanelOpen: boolean
+  highlightRouteNodes: boolean
 }>()
 
 const emit = defineEmits<{
@@ -22,6 +24,8 @@ const emit = defineEmits<{
   toggleMuted: []
   testSignal: []
   speed: [speed: Speed]
+  debugPanel: [open: boolean]
+  highlightRouteNodes: [enabled: boolean]
 }>()
 
 const tr = (key: string, params?: Record<string, string | number>) => translate(props.locale, key, params)
@@ -88,6 +92,16 @@ function rangeValue(event: Event) {
           <button :class="{ active: soundPreferences.muted }" @click="emit('toggleMuted')">{{ tr(soundPreferences.muted ? 'sound.enable' : 'sound.mute') }}</button>
           <button :disabled="soundPreferences.muted || soundPreferences.master === 0 || soundPreferences.signals === 0" @click="emit('testSignal')">{{ tr('sound.test') }}</button>
         </footer>
+      </section>
+    </div>
+    <div class="debug-control">
+      <button class="debug-toggle" :class="{ active: debugPanelOpen }" :aria-expanded="debugPanelOpen" @click="emit('debugPanel', !debugPanelOpen)">Debug</button>
+      <section v-if="debugPanelOpen" class="debug-panel" :aria-label="tr('debug.settings')">
+        <header>{{ tr('debug.settings') }}</header>
+        <label>
+          <input type="checkbox" :checked="highlightRouteNodes" @change="emit('highlightRouteNodes', ($event.target as HTMLInputElement).checked)">
+          <span>{{ tr('debug.highlight_route_nodes') }}</span>
+        </label>
       </section>
     </div>
     <div class="speed">

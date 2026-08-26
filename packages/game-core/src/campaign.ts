@@ -180,8 +180,15 @@ export function planOperationalRoute(
   destination: MapPoint,
   allowedHiddenNodeIds: readonly string[] = [],
 ): PlannedRoute | undefined {
+  const originDistrict = getDistrictAtPoint(origin)
   const destinationDistrict = getDistrictAtPoint(destination)
   if (districts[destinationDistrict].access === 'isolated' || districts[destinationDistrict].access === 'silhouette') return undefined
+  if (originDistrict === destinationDistrict && districts[destinationDistrict].access === 'operational') {
+    return {
+      points: [{ x: origin.x, y: origin.y }, { x: destination.x, y: destination.y }],
+      distance: segmentDistance(origin, destination),
+    }
+  }
   const allowedHiddenNodes = new Set(allowedHiddenNodeIds)
   const availableNodes = ROUTE_NODES.filter(node => routeNodeAvailable(node, districts, destinationDistrict, allowedHiddenNodes))
   const originNode = nearestNode(origin, availableNodes)
