@@ -23,6 +23,8 @@ const tr = (key: string, params?: Record<string, string | number>) => translate(
 const base = { x: 46, y: 51 }
 const { selectedSquadIds, selectedTarget, commandMessage, selectedCount, clearCommand, handleEscape } = useMapSelection()
 const mapGrid = ref<HTMLElement>()
+const mapZoom = ref(1)
+const mapPan = ref({ x: 0, y: 0 })
 const selectedHqId = ref<string>()
 const visibleHeadquarters = computed(() => getVisibleHeadquarters(props.state))
 const visibleRouteEdges = computed(() => ROUTE_EDGES.filter(edge => props.state.hedgehogHqKnowledge === 'confirmed'
@@ -131,11 +133,45 @@ function dispatchUrgent() {
   clearCommand()
 }
 
+function clampMapPan(zoom = mapZoom.value, pan = mapPan.value) {
+  const width = mapSize.value.width, height = mapSize.value.height
+  return { x: Math.min(0, Math.max(width * (1 - zoom), pan.x)), y: Math.min(0, Math.max(height * (1 - zoom), pan.y)) }
+}
+function mapCanvasStyle() {
+  const inverse = 1 / mapZoom.value
+  return {
+    transform: `translate(${mapPan.value.x}px, ${mapPan.value.y}px) scale(${mapZoom.value})`,
+    '--map-inverse-zoom': `${inverse}`,
+    '--district-stroke': `${.45 * inverse}px`, '--quarter-stroke': `${.34 * inverse}px`, '--local-street-stroke': `${.32 * inverse}px`,
+    '--arterial-stroke': `${.55 * inverse}px`, '--edge-local-stroke': `${.42 * inverse}px`, '--inner-ring-stroke': `${.9 * inverse}px`,
+    '--outer-ring-stroke': `${1.05 * inverse}px`, '--radial-stroke': `${.8 * inverse}px`, '--shortcut-stroke': `${.65 * inverse}px`,
+    '--monolith-route-stroke': `${.35 * inverse}px`, '--external-route-stroke': `${.45 * inverse}px`,
+    '--dash-local-street': `${.65 * inverse}px ${.45 * inverse}px`, '--dash-edge-local': `${1.2 * inverse}px ${1 * inverse}px`,
+    '--dash-shortcut': `${2 * inverse}px ${1.1 * inverse}px`, '--dash-external': `${1.5 * inverse}px ${1 * inverse}px`,
+    '--dash-isolated': `${2 * inverse}px ${1.5 * inverse}px`,
+  }
+}
+function resetMapZoom() { mapZoom.value = 1; mapPan.value = { x: 0, y: 0 } }
+function zoomMap(event: WheelEvent) {
+  if (!mapGrid.value) return
+  const bounds = mapGrid.value.getBoundingClientRect()
+  const cursor = { x: event.clientX - bounds.left, y: event.clientY - bounds.top }
+  const previousZoom = mapZoom.value
+  const nextZoom = Math.max(1, Math.min(2.5, previousZoom * Math.exp(-event.deltaY * 0.0015)))
+  if (Math.abs(nextZoom - previousZoom) < 0.001) return
+  const content = { x: (cursor.x - mapPan.value.x) / previousZoom, y: (cursor.y - mapPan.value.y) / previousZoom }
+  mapZoom.value = nextZoom
+  mapPan.value = clampMapPan(nextZoom, { x: cursor.x - content.x * nextZoom, y: cursor.y - content.y * nextZoom })
+}
+function screenToMapPoint(clientX: number, clientY: number, element: HTMLElement): MapPoint {
+  const bounds = element.getBoundingClientRect()
+  return { x: ((clientX - bounds.left - mapPan.value.x) / mapZoom.value) / bounds.width * 100, y: ((clientY - bounds.top - mapPan.value.y) / mapZoom.value) / bounds.height * 100 }
+}
 function selectMapPoint(event: MouseEvent) {
   if (suppressMapClick) { suppressMapClick = false; return }
   if (!selectedCount.value) return
-  const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect()
-  const point: MapPoint = { x: Math.max(5, Math.min(95, (event.clientX - bounds.left) / bounds.width * 100)), y: Math.max(7, Math.min(93, (event.clientY - bounds.top) / bounds.height * 100)) }
+  const rawPoint = screenToMapPoint(event.clientX, event.clientY, event.currentTarget as HTMLElement)
+  const point: MapPoint = { x: Math.max(5, Math.min(95, rawPoint.x)), y: Math.max(7, Math.min(93, rawPoint.y)) }
   const actors = [...selectedSquadIds.value], blockedSquads: string[] = [], reasons: string[] = []
   actors.forEach(squadId => {
     const reason = getMoveSquadBlockReason(props.state, squadId)
@@ -149,7 +185,7 @@ function squadEnergy(squad: Squad) { return getSquadMinimumEnergy(props.state, s
 function squadIsAvailable(squad: Squad) { return !getMoveSquadBlockReason(props.state, squad.id) }
 
 function selectionBoxStyle() { const box = selectionBox.value; return box ? { left: `${Math.min(box.startX, box.x)}%`, top: `${Math.min(box.startY, box.y)}%`, width: `${Math.abs(box.x - box.startX)}%`, height: `${Math.abs(box.y - box.startY)}%` } : {} }
-function pointerPoint(event: PointerEvent, element: HTMLElement) { const bounds = element.getBoundingClientRect(); return { x: (event.clientX - bounds.left) / bounds.width * 100, y: (event.clientY - bounds.top) / bounds.height * 100 } }
+function pointerPoint(event: PointerEvent, element: HTMLElement) { return screenToMapPoint(event.clientX, event.clientY, element) }
 function beginSelection(event: PointerEvent) { if (event.button !== 0 || (event.target as HTMLElement).closest('button,.split-panel,.command-hint')) return; const element = event.currentTarget as HTMLElement, point = pointerPoint(event, element); selectionBox.value = { startX: point.x, startY: point.y, x: point.x, y: point.y, additive: event.shiftKey, pointerId: event.pointerId, dragging: false }; element.setPointerCapture(event.pointerId) }
 function updateSelection(event: PointerEvent) { const box = selectionBox.value; if (!box || box.pointerId !== event.pointerId) return; const point = pointerPoint(event, event.currentTarget as HTMLElement); box.x = point.x; box.y = point.y; if (Math.hypot(box.x - box.startX, box.y - box.startY) > 0.8) box.dragging = true }
 function finishSelection(event: PointerEvent) {
@@ -157,7 +193,7 @@ function finishSelection(event: PointerEvent) {
   if (box.dragging) { const left = Math.min(box.startX, box.x), right = Math.max(box.startX, box.x), top = Math.min(box.startY, box.y), bottom = Math.max(box.startY, box.y); const squadIds = props.state.squads.filter(squad => squad.phase !== 'base').filter(squad => formationIntersectsBox(squad, left, right, top, bottom)).map(squad => squad.id); selectedSquadIds.value = box.additive ? [...new Set([...selectedSquadIds.value, ...squadIds])] : squadIds; suppressMapClick = true }
   selectionBox.value = undefined
 }
-onMounted(() => { window.addEventListener('keydown', handleEscape); if (mapGrid.value) { const updateMapSize = () => { if (mapGrid.value) mapSize.value = { width: mapGrid.value.clientWidth, height: mapGrid.value.clientHeight } }; updateMapSize(); mapResizeObserver = new ResizeObserver(updateMapSize); mapResizeObserver.observe(mapGrid.value) } })
+onMounted(() => { window.addEventListener('keydown', handleEscape); if (mapGrid.value) { const updateMapSize = () => { if (mapGrid.value) { mapSize.value = { width: mapGrid.value.clientWidth, height: mapGrid.value.clientHeight }; mapPan.value = clampMapPan() } }; updateMapSize(); mapResizeObserver = new ResizeObserver(updateMapSize); mapResizeObserver.observe(mapGrid.value) } })
 onBeforeUnmount(() => { window.removeEventListener('keydown', handleEscape); mapResizeObserver?.disconnect() })
 function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.time / 60); return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} · ${tr(entry.key, entry.params)}` }
 function polygonPoints(points: readonly MapPoint[]) { return points.map(point => `${point.x},${point.y}`).join(' ') }
@@ -171,7 +207,8 @@ function relationLabel(ownerId: RelationOwnerId) {
 <template>
   <section class="map-view">
     <ActiveMissionRail :state="state" :locale="locale" :selected-mission-id="selectedTarget?.type === 'mission' ? selectedTarget.missionId : undefined" @select="selectMission" />
-    <div ref="mapGrid" class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedCount || selectedTarget, 'return-command-active': selectedSquadIds.length > 0 }" @click="selectMapPoint" @pointerdown="beginSelection" @pointermove="updateSelection" @pointerup="finishSelection" @pointercancel="selectionBox = undefined">
+    <div ref="mapGrid" class="map-grid" :class="{ 'incident-active': state.incident, 'command-active': selectedCount || selectedTarget, 'return-command-active': selectedSquadIds.length > 0 }" @click="selectMapPoint" @wheel.prevent="zoomMap" @pointerdown="beginSelection" @pointermove="updateSelection" @pointerup="finishSelection" @pointercancel="selectionBox = undefined">
+      <div class="map-canvas" :style="mapCanvasStyle()">
       <svg class="city-schematic" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
         <g class="district-shapes">
           <polygon v-for="district in DISTRICT_DEFINITIONS" :key="district.id" :points="polygonPoints(district.polygon)" :class="[`access-${state.districts[district.id].access}`, { 'risk-elevated': state.districts[district.id].risk >= 30, 'risk-severe': state.districts[district.id].risk >= 50 }]" />
@@ -201,7 +238,7 @@ function relationLabel(ownerId: RelationOwnerId) {
         <b v-if="state.districts[selectedDistrict.id].access === 'operational'">{{ tr('district.risk') }}: {{ state.districts[selectedDistrict.id].risk }}</b>
         <span>{{ tr(state.districts[selectedDistrict.id].accessReason) }}</span>
       </section>
-      <MapRouteLayer :state="state" :base="base" :squad-color="squadColor" :squad-index="squadIndex" />
+      <MapRouteLayer :state="state" :base="base" :map-zoom="mapZoom" :squad-color="squadColor" :squad-index="squadIndex" />
       <MapSquadLayer :state="state" :selected-squad-ids="selectedSquadIds" :squad-style="squadStyle" :squad-is-available="squadIsAvailable" :field-cat-tooltip="fieldCatTooltip" :squad-color="squadColor" :field-cat="fieldCat" :cat-tokens-url="catTokensUrl" :squad-palette="squadPalette" @select="selectSquad" />
       <div class="threat-zone" :class="{ elevated: state.corporateThreat >= GAME_RULES.elevatedThreat, severe: state.corporateThreat >= GAME_RULES.severeThreat }"></div>
       <div v-for="cordon in state.cordons" :key="cordon.id" class="cordon-zone" :style="{ left: `${cordon.x}%`, top: `${cordon.y}%`, width: `${cordon.radius * 2}%`, aspectRatio: '1' }"><b>{{ tr('map.cordon') }}</b><small>{{ Math.max(0, Math.ceil(cordon.endsAt - state.time)) }} с</small></div>
@@ -221,8 +258,10 @@ function relationLabel(ownerId: RelationOwnerId) {
       <button v-if="state.urgentOperation && !['pending', 'completed', 'failed'].includes(state.urgentOperation.status)" type="button" class="urgent-pin" :class="state.urgentOperation.status" :style="{ left: `${state.urgentOperation.x}%`, top: `${state.urgentOperation.y}%` }" :aria-label="tr('urgent.water_filters.title')" @click.stop="dispatchUrgent"><span>F</span></button>
       <button v-for="mission in state.missions.filter(mission => mission.status === 'available')" :key="mission.id" type="button" class="cleanup-pin" :class="{ selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id, 'enhanced-alert': mission.deadline !== undefined && mission.priority > 1 && state.research.nodes.emergency_dispatch.completed }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
       <button v-for="mission in state.missions.filter(mission => isActiveAssignedMission(state, mission))" :key="`assigned-${mission.id}`" type="button" class="cleanup-pin assigned" :class="{ danger: state.incident?.missionId === mission.id, selected: selectedTarget?.type === 'mission' && selectedTarget.missionId === mission.id }" :style="{ left: `${mission.x}%`, top: `${mission.y}%` }" :aria-label="tr('dispatch.select_mission', { mission: mission.title })" @click.stop="selectMission(mission)"><span><svg viewBox="0 0 32 32" aria-hidden="true"><use :href="`${uiIconsUrl}#icon-cleanup`" /></svg></span></button>
-      <div v-if="selectedCount || selectedTarget || commandMessage" class="command-hint"><span>{{ tr(selectedCount ? 'dispatch.command.choose_target_count' : 'dispatch.command.choose_squad', { count: selectedCount }) }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
       <div v-if="selectionBox?.dragging" class="selection-box" :style="selectionBoxStyle()"></div>
+      </div>
+      <div class="map-zoom" @click.stop @pointerdown.stop><span>{{ Math.round(mapZoom * 100) }}%</span><button type="button" :disabled="mapZoom === 1" :aria-label="tr('map.zoom.reset')" @click="resetMapZoom">1:1</button></div>
+      <div v-if="selectedCount || selectedTarget || commandMessage" class="command-hint"><span>{{ tr(selectedCount ? 'dispatch.command.choose_target_count' : 'dispatch.command.choose_squad', { count: selectedCount }) }}</span><button type="button" :aria-label="tr('dispatch.command.cancel')" @click.stop="clearCommand">×</button><small v-if="commandMessage">{{ tr(commandMessage) }}</small></div>
     </div>
     <MapSidePanel :state="state" :locale="locale" :selected-squad-ids="selectedSquadIds" :squad-is-available="squadIsAvailable" :squad-command-reason="squadCommandReason" :squad-energy="squadEnergy" :squad-label="squadLabel" @select="selectSquad" />
   </section>

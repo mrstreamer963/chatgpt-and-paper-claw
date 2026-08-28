@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { getSquadMapPosition, type Squad, type State } from '@nine-lives/game-core'
 
-const props = defineProps<{ state: State; base: { x: number; y: number }; squadColor: (squad: Squad) => string; squadIndex: (squad: Squad) => number }>()
+const props = defineProps<{ state: State; base: { x: number; y: number }; mapZoom: number; squadColor: (squad: Squad) => string; squadIndex: (squad: Squad) => number }>()
 
 function position(squad: Squad) {
   const point = getSquadMapPosition(squad, props.state.simulationRemainder)
@@ -41,11 +41,17 @@ function routePoints(squad: Squad) {
   return points.map(point => `${point.x},${point.y}`).join(' ')
 }
 function missionLink(squad: Squad) { const point = position(squad); return { x1: point.x, y1: point.y, x2: squad.target?.x ?? point.x, y2: squad.target?.y ?? point.y } }
+function routeStyle(squad: Squad) {
+  const dash = 3 + props.squadIndex(squad) % 4
+  const gap = 2 + props.squadIndex(squad) % 3
+  return { stroke: props.squadColor(squad), strokeWidth: `${1.6 / props.mapZoom}px`, strokeDasharray: `${dash / props.mapZoom}px ${gap / props.mapZoom}px` }
+}
+function missionLinkStyle(squad: Squad) { return { stroke: props.squadColor(squad), strokeWidth: `${1 / props.mapZoom}px`, strokeDasharray: `${1.5 / props.mapZoom}px ${2 / props.mapZoom}px` } }
 </script>
 
 <template>
   <svg class="route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-    <polyline v-for="squad in state.squads.filter(candidate => ['returning', 'moving', 'merging'].includes(candidate.phase) || (candidate.target && ['outbound', 'support'].includes(candidate.phase)))" :key="`route-${squad.id}`" :points="routePoints(squad)" :style="{ stroke: squadColor(squad), strokeDasharray: `${3 + squadIndex(squad) % 4} ${2 + squadIndex(squad) % 3}` }" />
-    <line v-for="squad in state.squads.filter(candidate => candidate.target && ['cleanup', 'incident'].includes(candidate.phase))" :key="`mission-link-${squad.id}`" class="mission-link" v-bind="missionLink(squad)" :style="{ stroke: squadColor(squad) }" />
+    <polyline v-for="squad in state.squads.filter(candidate => ['returning', 'moving', 'merging'].includes(candidate.phase) || (candidate.target && ['outbound', 'support'].includes(candidate.phase)))" :key="`route-${squad.id}`" :points="routePoints(squad)" :style="routeStyle(squad)" />
+    <line v-for="squad in state.squads.filter(candidate => candidate.target && ['cleanup', 'incident'].includes(candidate.phase))" :key="`mission-link-${squad.id}`" class="mission-link" v-bind="missionLink(squad)" :style="missionLinkStyle(squad)" />
   </svg>
 </template>
