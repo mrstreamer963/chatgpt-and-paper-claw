@@ -126,12 +126,28 @@ export function getDistrictAtPoint(point: MapPoint): DistrictId {
 }
 
 export type RouteNode = { id: string; point: MapPoint; districtId: DistrictId }
-export type RouteEdge = { from: string; to: string }
+export type RouteEdgeKind = 'local' | 'inner_ring' | 'outer_ring' | 'radial' | 'shortcut'
+export type RouteEdge = { from: string; to: string; kind: RouteEdgeKind }
 export type PlannedRoute = { points: MapPoint[]; distance: number }
 
 export const ROUTE_NODES: readonly RouteNode[] = [
   { id: 'base', point: { x: 46, y: 51 }, districtId: 'service_core' },
-  { id: 'core-north', point: { x: 47, y: 37 }, districtId: 'service_core' },
+  { id: 'core-north', point: { x: 46, y: 39 }, districtId: 'service_core' },
+  { id: 'core-east', point: { x: 58, y: 49 }, districtId: 'service_core' },
+  { id: 'core-south', point: { x: 48, y: 62 }, districtId: 'service_core' },
+  { id: 'core-west', point: { x: 34, y: 51 }, districtId: 'service_core' },
+  { id: 'north-gate', point: { x: 47, y: 31 }, districtId: 'north_bastion' },
+  { id: 'east-gate', point: { x: 64, y: 48 }, districtId: 'commercial_arc' },
+  { id: 'south-gate', point: { x: 49, y: 68 }, districtId: 'material_contour' },
+  { id: 'west-gate', point: { x: 29, y: 50 }, districtId: 'network_quarter' },
+  { id: 'ring-northwest', point: { x: 28, y: 20 }, districtId: 'network_quarter' },
+  { id: 'ring-north', point: { x: 48, y: 20 }, districtId: 'north_bastion' },
+  { id: 'ring-northeast', point: { x: 69, y: 19 }, districtId: 'residential_ring' },
+  { id: 'ring-east', point: { x: 80, y: 43 }, districtId: 'commercial_arc' },
+  { id: 'ring-southeast', point: { x: 75, y: 69 }, districtId: 'orbital_harbor' },
+  { id: 'ring-south', point: { x: 48, y: 78 }, districtId: 'material_contour' },
+  { id: 'ring-southwest', point: { x: 23, y: 70 }, districtId: 'biomedical_belt' },
+  { id: 'ring-west', point: { x: 17, y: 45 }, districtId: 'network_quarter' },
   { id: 'monolith', point: { x: 48, y: 14 }, districtId: 'north_bastion' },
   { id: 'residential', point: { x: 75, y: 25 }, districtId: 'residential_ring' },
   { id: 'commercial', point: { x: 86, y: 49 }, districtId: 'commercial_arc' },
@@ -143,20 +159,54 @@ export const ROUTE_NODES: readonly RouteNode[] = [
 ] as const
 
 export const ROUTE_EDGES: readonly RouteEdge[] = [
-  { from: 'base', to: 'core-north' },
-  { from: 'core-north', to: 'monolith' },
-  { from: 'base', to: 'residential' },
-  { from: 'base', to: 'network' },
-  { from: 'base', to: 'material' },
-  { from: 'base', to: 'orbital' },
-  { from: 'monolith', to: 'residential' },
-  { from: 'residential', to: 'commercial' },
-  { from: 'commercial', to: 'orbital' },
-  { from: 'orbital', to: 'material' },
-  { from: 'material', to: 'biomedical' },
-  { from: 'biomedical', to: 'network' },
-  { from: 'network', to: 'monolith' },
-  { from: 'residential', to: 'metro-depot' },
+  { from: 'core-north', to: 'core-east', kind: 'inner_ring' },
+  { from: 'core-east', to: 'core-south', kind: 'inner_ring' },
+  { from: 'core-south', to: 'core-west', kind: 'inner_ring' },
+  { from: 'core-west', to: 'core-north', kind: 'inner_ring' },
+  { from: 'base', to: 'core-north', kind: 'local' },
+  { from: 'base', to: 'core-east', kind: 'local' },
+  { from: 'base', to: 'core-south', kind: 'local' },
+  { from: 'base', to: 'core-west', kind: 'local' },
+
+  { from: 'ring-northwest', to: 'ring-north', kind: 'outer_ring' },
+  { from: 'ring-north', to: 'ring-northeast', kind: 'outer_ring' },
+  { from: 'ring-northeast', to: 'ring-east', kind: 'outer_ring' },
+  { from: 'ring-east', to: 'ring-southeast', kind: 'outer_ring' },
+  { from: 'ring-southeast', to: 'ring-south', kind: 'outer_ring' },
+  { from: 'ring-south', to: 'ring-southwest', kind: 'outer_ring' },
+  { from: 'ring-southwest', to: 'ring-west', kind: 'outer_ring' },
+  { from: 'ring-west', to: 'ring-northwest', kind: 'outer_ring' },
+
+  { from: 'core-north', to: 'north-gate', kind: 'radial' },
+  { from: 'north-gate', to: 'ring-north', kind: 'radial' },
+  { from: 'core-east', to: 'east-gate', kind: 'radial' },
+  { from: 'east-gate', to: 'ring-east', kind: 'radial' },
+  { from: 'core-south', to: 'south-gate', kind: 'radial' },
+  { from: 'south-gate', to: 'ring-south', kind: 'radial' },
+  { from: 'core-west', to: 'west-gate', kind: 'radial' },
+  { from: 'west-gate', to: 'ring-west', kind: 'radial' },
+
+  { from: 'monolith', to: 'ring-north', kind: 'local' },
+  { from: 'monolith', to: 'north-gate', kind: 'local' },
+  { from: 'residential', to: 'ring-northeast', kind: 'local' },
+  { from: 'residential', to: 'ring-east', kind: 'local' },
+  { from: 'commercial', to: 'ring-east', kind: 'local' },
+  { from: 'commercial', to: 'ring-southeast', kind: 'local' },
+  { from: 'orbital', to: 'ring-southeast', kind: 'local' },
+  { from: 'orbital', to: 'ring-south', kind: 'local' },
+  { from: 'material', to: 'ring-south', kind: 'local' },
+  { from: 'material', to: 'ring-southwest', kind: 'local' },
+  { from: 'biomedical', to: 'ring-southwest', kind: 'local' },
+  { from: 'biomedical', to: 'ring-west', kind: 'local' },
+  { from: 'network', to: 'ring-west', kind: 'local' },
+  { from: 'network', to: 'ring-northwest', kind: 'local' },
+
+  { from: 'north-gate', to: 'ring-northeast', kind: 'shortcut' },
+  { from: 'east-gate', to: 'ring-northeast', kind: 'shortcut' },
+  { from: 'east-gate', to: 'ring-southeast', kind: 'shortcut' },
+  { from: 'south-gate', to: 'ring-southwest', kind: 'shortcut' },
+  { from: 'west-gate', to: 'ring-northwest', kind: 'shortcut' },
+  { from: 'residential', to: 'metro-depot', kind: 'shortcut' },
 ] as const
 
 function routeNodeAvailable(node: RouteNode, districts: DistrictStates, destinationDistrict: DistrictId, allowedHiddenNodeIds: ReadonlySet<string>) {

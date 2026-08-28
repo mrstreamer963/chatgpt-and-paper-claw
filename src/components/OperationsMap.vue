@@ -175,7 +175,7 @@ function relationLabel(ownerId: RelationOwnerId) {
           <polygon v-for="district in DISTRICT_DEFINITIONS" :key="district.id" :points="polygonPoints(district.polygon)" :class="[`access-${state.districts[district.id].access}`, { 'risk-elevated': state.districts[district.id].risk >= 30, 'risk-severe': state.districts[district.id].risk >= 50 }]" />
         </g>
         <g class="arterial-lines">
-          <line v-for="edge in visibleRouteEdges" :key="`${edge.from}-${edge.to}`" :x1="routeNode(edge.from).point.x" :y1="routeNode(edge.from).point.y" :x2="routeNode(edge.to).point.x" :y2="routeNode(edge.to).point.y" />
+          <line v-for="edge in visibleRouteEdges" :key="`${edge.from}-${edge.to}`" :class="`edge-${edge.kind}`" :x1="routeNode(edge.from).point.x" :y1="routeNode(edge.from).point.y" :x2="routeNode(edge.to).point.x" :y2="routeNode(edge.to).point.y" />
         </g>
       </svg>
       <div v-if="highlightRouteNodes" class="debug-route-nodes" aria-hidden="true">

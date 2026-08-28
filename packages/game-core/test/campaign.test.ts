@@ -16,7 +16,22 @@ import {
   type State,
   type StoryFact,
 } from '../src/simulation.ts'
-import { planOperationalRoute } from '../src/campaign.ts'
+import { DISTRICT_DEFINITIONS, ROUTE_EDGES, ROUTE_NODES, planOperationalRoute } from '../src/campaign.ts'
+
+test('the city transport graph has seven outer districts, a complete orbital road, radials, and special links', () => {
+  assert.equal(DISTRICT_DEFINITIONS.length, 8, 'service core plus seven outer districts')
+  assert.ok(ROUTE_NODES.length >= 20 && ROUTE_NODES.length <= 30)
+
+  const outerRing = ROUTE_EDGES.filter(edge => edge.kind === 'outer_ring')
+  const ringNodeIds = new Set(outerRing.flatMap(edge => [edge.from, edge.to]))
+  assert.equal(ringNodeIds.size, 8)
+  for (const nodeId of ringNodeIds) {
+    assert.equal(outerRing.filter(edge => edge.from === nodeId || edge.to === nodeId).length, 2)
+  }
+
+  assert.ok(ROUTE_EDGES.filter(edge => edge.kind === 'radial').length >= 4)
+  assert.ok(ROUTE_EDGES.filter(edge => edge.kind === 'shortcut').length >= 5)
+})
 
 test('the city starts as known silhouettes with only sanctioned operational corridors', () => {
   const state = createState()

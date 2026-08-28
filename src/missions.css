@@ -675,7 +675,12 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .district-shapes .access-isolated { fill:#4b24232e; stroke:#cb655f70; stroke-dasharray:2 1.5; }
 .district-shapes .risk-elevated { fill:#65452e45; stroke:#d28a5b8c; }
 .district-shapes .risk-severe { fill:#712d293f; stroke:#e563597f; }
-.arterial-lines line { stroke:#849c9766; stroke-width:.55; stroke-dasharray:1.6 1.1; vector-effect:non-scaling-stroke; }
+.arterial-lines line { stroke:#849c9755; stroke-width:.55; vector-effect:non-scaling-stroke; }
+.arterial-lines .edge-local { stroke:#78908a48; stroke-width:.42; stroke-dasharray:1.2 1; }
+.arterial-lines .edge-inner_ring { stroke:#d0a86578; stroke-width:.9; }
+.arterial-lines .edge-outer_ring { stroke:#7fb8ad78; stroke-width:1.05; }
+.arterial-lines .edge-radial { stroke:#9cb6af70; stroke-width:.8; }
+.arterial-lines .edge-shortcut { stroke:#cf8c6670; stroke-width:.65; stroke-dasharray:2 1.1; }
 .district-label { position:absolute; z-index:1; display:grid; gap:2px; min-width:104px; padding:4px 7px; transform:translate(-50%,-50%); border:0; background:#101719a8; color:#78908b; text-align:center; text-transform:uppercase; letter-spacing:.6px; }
 .district-label b { font:600 8px Oswald,sans-serif; }.district-label small { font-size:6px; opacity:.72; }
 .district-label.access-silhouette { opacity:.46; }.district-label.access-contact { color:#d1ae72; }.district-label.access-operational { color:#91c8c1; }
