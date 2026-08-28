@@ -16,7 +16,7 @@ import {
   type State,
   type StoryFact,
 } from '../src/simulation.ts'
-import { DISTRICT_DEFINITIONS, ROUTE_EDGES, ROUTE_NODES, planOperationalRoute } from '../src/campaign.ts'
+import { CITY_PLACES, CITY_QUARTERS, DISTRICT_DEFINITIONS, LOCAL_STREETS, ROUTE_EDGES, ROUTE_NODES, planOperationalRoute } from '../src/campaign.ts'
 
 test('the city transport graph has seven outer districts, a complete orbital road, radials, and special links', () => {
   assert.equal(DISTRICT_DEFINITIONS.length, 8, 'service core plus seven outer districts')
@@ -31,6 +31,16 @@ test('the city transport graph has seven outer districts, a complete orbital roa
 
   assert.ok(ROUTE_EDGES.filter(edge => edge.kind === 'radial').length >= 4)
   assert.ok(ROUTE_EDGES.filter(edge => edge.kind === 'shortcut').length >= 5)
+})
+
+test('the hybrid city gives every district physical quarters and local streets without making them dynamic state', () => {
+  assert.ok(CITY_QUARTERS.length >= 25 && CITY_QUARTERS.length <= 35)
+  for (const district of DISTRICT_DEFINITIONS) {
+    assert.ok(CITY_QUARTERS.filter(quarter => quarter.districtId === district.id).length >= 3)
+    assert.ok(LOCAL_STREETS.some(street => street.districtId === district.id))
+  }
+  assert.ok(CITY_PLACES.filter(place => place.kind === 'square').length >= 4)
+  assert.ok(CITY_QUARTERS.some(quarter => quarter.significant))
 })
 
 test('the city starts as known silhouettes with only sanctioned operational corridors', () => {

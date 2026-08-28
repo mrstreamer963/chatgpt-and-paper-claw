@@ -29,6 +29,28 @@ export type DistrictDefinition = {
   polygon: MapPoint[]
 }
 
+export type CityQuarterRole = 'civic' | 'housing' | 'industrial' | 'commercial' | 'medical' | 'infrastructure' | 'research' | 'transit'
+export type CityQuarterDefinition = {
+  id: string
+  districtId: DistrictId
+  role: CityQuarterRole
+  polygon: MapPoint[]
+  significant?: boolean
+}
+export type CityPlaceKind = 'square' | 'interchange' | 'bridge' | 'tunnel' | 'checkpoint'
+export type CityPlaceDefinition = {
+  id: string
+  districtId: DistrictId
+  kind: CityPlaceKind
+  name: string
+  point: MapPoint
+}
+export type LocalStreetDefinition = {
+  id: string
+  districtId: DistrictId
+  points: MapPoint[]
+}
+
 export const DISTRICT_DEFINITIONS: readonly DistrictDefinition[] = [
   {
     id: 'service_core',
@@ -86,6 +108,80 @@ export const DISTRICT_DEFINITIONS: readonly DistrictDefinition[] = [
     center: { x: 14, y: 43 },
     polygon: [{ x: 6, y: 14 }, { x: 32, y: 8 }, { x: 37, y: 34 }, { x: 30, y: 64 }, { x: 5, y: 61 }],
   },
+] as const
+
+export const CITY_QUARTERS: readonly CityQuarterDefinition[] = [
+  { id: 'core-administration', districtId: 'service_core', role: 'civic', significant: true, polygon: [{ x: 39, y: 42 }, { x: 46, y: 39 }, { x: 52, y: 43 }, { x: 49, y: 49 }, { x: 41, y: 49 }] },
+  { id: 'core-garages', districtId: 'service_core', role: 'transit', significant: true, polygon: [{ x: 49, y: 49 }, { x: 57, y: 45 }, { x: 59, y: 52 }, { x: 54, y: 59 }, { x: 48, y: 56 }] },
+  { id: 'core-workshops', districtId: 'service_core', role: 'industrial', polygon: [{ x: 38, y: 51 }, { x: 46, y: 49 }, { x: 48, y: 57 }, { x: 43, y: 63 }, { x: 35, y: 59 }] },
+  { id: 'core-utility-yard', districtId: 'service_core', role: 'infrastructure', polygon: [{ x: 32, y: 43 }, { x: 39, y: 40 }, { x: 40, y: 50 }, { x: 35, y: 57 }, { x: 30, y: 52 }] },
+
+  { id: 'bastion-command', districtId: 'north_bastion', role: 'civic', significant: true, polygon: [{ x: 42, y: 8 }, { x: 52, y: 8 }, { x: 54, y: 16 }, { x: 47, y: 20 }, { x: 40, y: 16 }] },
+  { id: 'bastion-barracks', districtId: 'north_bastion', role: 'housing', polygon: [{ x: 32, y: 9 }, { x: 41, y: 8 }, { x: 40, y: 18 }, { x: 34, y: 24 }] },
+  { id: 'bastion-armory', districtId: 'north_bastion', role: 'industrial', polygon: [{ x: 54, y: 8 }, { x: 63, y: 9 }, { x: 60, y: 22 }, { x: 53, y: 19 }] },
+  { id: 'bastion-south-works', districtId: 'north_bastion', role: 'infrastructure', polygon: [{ x: 35, y: 23 }, { x: 47, y: 20 }, { x: 59, y: 23 }, { x: 52, y: 32 }, { x: 38, y: 29 }] },
+
+  { id: 'residential-old-courts', districtId: 'residential_ring', role: 'housing', significant: true, polygon: [{ x: 66, y: 10 }, { x: 77, y: 12 }, { x: 75, y: 21 }, { x: 67, y: 23 }] },
+  { id: 'residential-garden-blocks', districtId: 'residential_ring', role: 'housing', polygon: [{ x: 78, y: 12 }, { x: 90, y: 14 }, { x: 91, y: 24 }, { x: 80, y: 23 }] },
+  { id: 'residential-civic-square', districtId: 'residential_ring', role: 'civic', significant: true, polygon: [{ x: 69, y: 24 }, { x: 78, y: 21 }, { x: 84, y: 27 }, { x: 79, y: 34 }, { x: 69, y: 33 }] },
+  { id: 'residential-east-estates', districtId: 'residential_ring', role: 'housing', polygon: [{ x: 84, y: 25 }, { x: 92, y: 25 }, { x: 92, y: 35 }, { x: 81, y: 37 }, { x: 79, y: 34 }] },
+
+  { id: 'commercial-market', districtId: 'commercial_arc', role: 'commercial', significant: true, polygon: [{ x: 74, y: 40 }, { x: 84, y: 38 }, { x: 86, y: 47 }, { x: 79, y: 52 }, { x: 72, y: 48 }] },
+  { id: 'commercial-finance', districtId: 'commercial_arc', role: 'commercial', polygon: [{ x: 85, y: 38 }, { x: 94, y: 37 }, { x: 94, y: 49 }, { x: 87, y: 48 }] },
+  { id: 'commercial-warehouses', districtId: 'commercial_arc', role: 'transit', polygon: [{ x: 79, y: 53 }, { x: 87, y: 49 }, { x: 94, y: 51 }, { x: 93, y: 61 }, { x: 82, y: 61 }] },
+  { id: 'commercial-west-shops', districtId: 'commercial_arc', role: 'commercial', polygon: [{ x: 65, y: 43 }, { x: 73, y: 40 }, { x: 72, y: 49 }, { x: 78, y: 54 }, { x: 69, y: 60 }, { x: 63, y: 52 }] },
+
+  { id: 'orbital-terminal', districtId: 'orbital_harbor', role: 'transit', significant: true, polygon: [{ x: 70, y: 68 }, { x: 81, y: 66 }, { x: 86, y: 74 }, { x: 79, y: 81 }, { x: 69, y: 78 }] },
+  { id: 'orbital-freight', districtId: 'orbital_harbor', role: 'industrial', polygon: [{ x: 82, y: 65 }, { x: 93, y: 65 }, { x: 91, y: 79 }, { x: 86, y: 75 }] },
+  { id: 'orbital-agency-campus', districtId: 'orbital_harbor', role: 'research', significant: true, polygon: [{ x: 62, y: 67 }, { x: 70, y: 66 }, { x: 68, y: 79 }, { x: 75, y: 85 }, { x: 64, y: 89 }, { x: 59, y: 78 }] },
+  { id: 'orbital-launch-services', districtId: 'orbital_harbor', role: 'infrastructure', polygon: [{ x: 79, y: 82 }, { x: 88, y: 79 }, { x: 91, y: 91 }, { x: 76, y: 91 }, { x: 74, y: 86 }] },
+
+  { id: 'material-foundries', districtId: 'material_contour', role: 'industrial', polygon: [{ x: 38, y: 69 }, { x: 48, y: 66 }, { x: 53, y: 75 }, { x: 46, y: 80 }, { x: 37, y: 77 }] },
+  { id: 'material-physics-campus', districtId: 'material_contour', role: 'research', significant: true, polygon: [{ x: 49, y: 66 }, { x: 58, y: 66 }, { x: 61, y: 80 }, { x: 53, y: 76 }] },
+  { id: 'material-reclamation', districtId: 'material_contour', role: 'industrial', polygon: [{ x: 35, y: 78 }, { x: 46, y: 81 }, { x: 46, y: 92 }, { x: 34, y: 92 }] },
+  { id: 'material-depot', districtId: 'material_contour', role: 'transit', polygon: [{ x: 47, y: 80 }, { x: 60, y: 81 }, { x: 62, y: 92 }, { x: 47, y: 92 }] },
+
+  { id: 'biomedical-clinic', districtId: 'biomedical_belt', role: 'medical', significant: true, polygon: [{ x: 12, y: 64 }, { x: 23, y: 63 }, { x: 28, y: 71 }, { x: 21, y: 77 }, { x: 11, y: 74 }] },
+  { id: 'biomedical-labs', districtId: 'biomedical_belt', role: 'research', polygon: [{ x: 24, y: 63 }, { x: 31, y: 64 }, { x: 36, y: 72 }, { x: 29, y: 78 }] },
+  { id: 'biomedical-sanatorium', districtId: 'biomedical_belt', role: 'medical', polygon: [{ x: 9, y: 75 }, { x: 21, y: 78 }, { x: 20, y: 89 }, { x: 9, y: 88 }] },
+  { id: 'biomedical-cold-storage', districtId: 'biomedical_belt', role: 'infrastructure', polygon: [{ x: 22, y: 79 }, { x: 30, y: 76 }, { x: 34, y: 91 }, { x: 21, y: 90 }] },
+
+  { id: 'network-exchange', districtId: 'network_quarter', role: 'infrastructure', significant: true, polygon: [{ x: 10, y: 20 }, { x: 21, y: 17 }, { x: 27, y: 25 }, { x: 21, y: 32 }, { x: 10, y: 30 }] },
+  { id: 'network-data-campus', districtId: 'network_quarter', role: 'research', polygon: [{ x: 22, y: 16 }, { x: 31, y: 13 }, { x: 34, y: 27 }, { x: 28, y: 26 }] },
+  { id: 'network-media-blocks', districtId: 'network_quarter', role: 'commercial', polygon: [{ x: 9, y: 32 }, { x: 21, y: 33 }, { x: 24, y: 44 }, { x: 16, y: 50 }, { x: 7, y: 46 }] },
+  { id: 'network-relay-yards', districtId: 'network_quarter', role: 'infrastructure', polygon: [{ x: 23, y: 31 }, { x: 33, y: 29 }, { x: 31, y: 48 }, { x: 25, y: 45 }] },
+] as const
+
+export const CITY_PLACES: readonly CityPlaceDefinition[] = [
+  { id: 'nine-lives-square', districtId: 'service_core', kind: 'square', name: 'place.nine_lives_square', point: { x: 46, y: 51 } },
+  { id: 'north-gate-place', districtId: 'north_bastion', kind: 'checkpoint', name: 'place.north_gate', point: { x: 47, y: 31 } },
+  { id: 'seven-lamps-square', districtId: 'residential_ring', kind: 'square', name: 'place.seven_lamps', point: { x: 78, y: 28 } },
+  { id: 'market-square', districtId: 'commercial_arc', kind: 'square', name: 'place.market_square', point: { x: 82, y: 48 } },
+  { id: 'orbital-interchange', districtId: 'orbital_harbor', kind: 'interchange', name: 'place.orbital_interchange', point: { x: 76, y: 70 } },
+  { id: 'foundry-junction', districtId: 'material_contour', kind: 'interchange', name: 'place.foundry_junction', point: { x: 49, y: 78 } },
+  { id: 'clinic-square', districtId: 'biomedical_belt', kind: 'square', name: 'place.clinic_square', point: { x: 22, y: 72 } },
+  { id: 'relay-square', districtId: 'network_quarter', kind: 'square', name: 'place.relay_square', point: { x: 20, y: 43 } },
+  { id: 'residential-bridge', districtId: 'residential_ring', kind: 'bridge', name: 'place.residential_bridge', point: { x: 69, y: 19 } },
+  { id: 'old-metro-tunnel', districtId: 'residential_ring', kind: 'tunnel', name: 'place.old_metro_tunnel', point: { x: 83, y: 17 } },
+] as const
+
+export const LOCAL_STREETS: readonly LocalStreetDefinition[] = [
+  { id: 'core-cross', districtId: 'service_core', points: [{ x: 32, y: 48 }, { x: 46, y: 51 }, { x: 59, y: 55 }] },
+  { id: 'core-service', districtId: 'service_core', points: [{ x: 39, y: 38 }, { x: 42, y: 50 }, { x: 41, y: 64 }] },
+  { id: 'bastion-west-road', districtId: 'north_bastion', points: [{ x: 34, y: 10 }, { x: 39, y: 20 }, { x: 43, y: 30 }] },
+  { id: 'bastion-east-road', districtId: 'north_bastion', points: [{ x: 58, y: 9 }, { x: 55, y: 20 }, { x: 51, y: 31 }] },
+  { id: 'residential-north-street', districtId: 'residential_ring', points: [{ x: 66, y: 16 }, { x: 78, y: 18 }, { x: 91, y: 20 }] },
+  { id: 'residential-south-street', districtId: 'residential_ring', points: [{ x: 67, y: 31 }, { x: 79, y: 29 }, { x: 91, y: 31 }] },
+  { id: 'commercial-boulevard', districtId: 'commercial_arc', points: [{ x: 65, y: 48 }, { x: 80, y: 48 }, { x: 94, y: 45 }] },
+  { id: 'commercial-service-road', districtId: 'commercial_arc', points: [{ x: 69, y: 58 }, { x: 81, y: 54 }, { x: 93, y: 57 }] },
+  { id: 'orbital-terminal-road', districtId: 'orbital_harbor', points: [{ x: 61, y: 72 }, { x: 76, y: 72 }, { x: 91, y: 71 }] },
+  { id: 'orbital-freight-road', districtId: 'orbital_harbor', points: [{ x: 65, y: 86 }, { x: 78, y: 82 }, { x: 90, y: 86 }] },
+  { id: 'material-works-road', districtId: 'material_contour', points: [{ x: 34, y: 75 }, { x: 48, y: 76 }, { x: 61, y: 76 }] },
+  { id: 'material-depot-road', districtId: 'material_contour', points: [{ x: 38, y: 88 }, { x: 49, y: 82 }, { x: 60, y: 88 }] },
+  { id: 'biomedical-clinic-road', districtId: 'biomedical_belt', points: [{ x: 9, y: 69 }, { x: 22, y: 72 }, { x: 34, y: 70 }] },
+  { id: 'biomedical-service-road', districtId: 'biomedical_belt', points: [{ x: 12, y: 85 }, { x: 21, y: 78 }, { x: 32, y: 85 }] },
+  { id: 'network-relay-road', districtId: 'network_quarter', points: [{ x: 9, y: 26 }, { x: 21, y: 27 }, { x: 33, y: 22 }] },
+  { id: 'network-media-road', districtId: 'network_quarter', points: [{ x: 8, y: 41 }, { x: 20, y: 42 }, { x: 31, y: 39 }] },
 ] as const
 
 export function createInitialDistrictStates(): DistrictStates {

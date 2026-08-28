@@ -675,12 +675,29 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .district-shapes .access-isolated { fill:#4b24232e; stroke:#cb655f70; stroke-dasharray:2 1.5; }
 .district-shapes .risk-elevated { fill:#65452e45; stroke:#d28a5b8c; }
 .district-shapes .risk-severe { fill:#712d293f; stroke:#e563597f; }
+.city-quarters polygon { fill:#17232642; stroke:#91a49d24; stroke-width:.34; vector-effect:non-scaling-stroke; }
+.city-quarters .significant { fill:#37504d3d; stroke:#a4beb65a; }
+.city-quarters .role-industrial,.city-quarters .role-infrastructure { fill:#35362f38; }
+.city-quarters .role-commercial { fill:#42382e35; }
+.city-quarters .role-medical,.city-quarters .role-research { fill:#273d4138; }
+.city-quarters .access-silhouette { opacity:.26; }
+.city-quarters .access-contact { opacity:.48; }
+.city-quarters .access-isolated { opacity:.36; }
+.local-streets polyline { fill:none; stroke:#81938d32; stroke-width:.32; stroke-dasharray:.65 .45; vector-effect:non-scaling-stroke; }
+.local-streets .access-silhouette { opacity:.22; }
+.local-streets .access-contact { opacity:.46; }
 .arterial-lines line { stroke:#849c9755; stroke-width:.55; vector-effect:non-scaling-stroke; }
 .arterial-lines .edge-local { stroke:#78908a48; stroke-width:.42; stroke-dasharray:1.2 1; }
 .arterial-lines .edge-inner_ring { stroke:#d0a86578; stroke-width:.9; }
 .arterial-lines .edge-outer_ring { stroke:#7fb8ad78; stroke-width:1.05; }
 .arterial-lines .edge-radial { stroke:#9cb6af70; stroke-width:.8; }
 .arterial-lines .edge-shortcut { stroke:#cf8c6670; stroke-width:.65; stroke-dasharray:2 1.1; }
+.city-place { position:absolute; z-index:1; width:0; height:0; pointer-events:none; }
+.city-place span { position:absolute; left:0; top:0; width:6px; height:6px; transform:translate(-50%,-50%) rotate(45deg); border:1px solid #89aaa1a0; background:#182123; box-shadow:0 0 7px #79a89b44; }
+.city-place b { position:absolute; left:7px; top:-5px; width:max-content; max-width:92px; color:#82948e; font-size:5.5px; font-weight:500; letter-spacing:.45px; line-height:1.25; text-transform:uppercase; opacity:.7; }
+.city-place.kind-interchange span { border-radius:50%; transform:translate(-50%,-50%); }
+.city-place.kind-bridge span,.city-place.kind-tunnel span { border-color:#c9906f; }
+.city-place.kind-checkpoint span { border-color:#c8a05e; }
 .district-label { position:absolute; z-index:1; display:grid; gap:2px; min-width:104px; padding:4px 7px; transform:translate(-50%,-50%); border:0; background:#101719a8; color:#78908b; text-align:center; text-transform:uppercase; letter-spacing:.6px; }
 .district-label b { font:600 8px Oswald,sans-serif; }.district-label small { font-size:6px; opacity:.72; }
 .district-label.access-silhouette { opacity:.46; }.district-label.access-contact { color:#d1ae72; }.district-label.access-operational { color:#91c8c1; }

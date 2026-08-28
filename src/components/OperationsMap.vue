@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { DISTRICT_DEFINITIONS, GAME_RULES, ROUTE_EDGES, ROUTE_NODES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getRelationPresentation, getReturnSquadBlockReason, getSquadMapPosition, getSquadMinimumEnergy, getVisibleHeadquarters, getWaterFiltersDispatchBlockReason, isActiveAssignedMission, isSquadResting, type DistrictId, type LogEntry, type MapPoint, type Mission, type RelationOwnerId, type Squad, type State } from '@nine-lives/game-core'
+import { CITY_PLACES, CITY_QUARTERS, DISTRICT_DEFINITIONS, GAME_RULES, LOCAL_STREETS, ROUTE_EDGES, ROUTE_NODES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getRelationPresentation, getReturnSquadBlockReason, getSquadMapPosition, getSquadMinimumEnergy, getVisibleHeadquarters, getWaterFiltersDispatchBlockReason, isActiveAssignedMission, isSquadResting, type DistrictId, type LogEntry, type MapPoint, type Mission, type RelationOwnerId, type Squad, type State } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
@@ -27,6 +27,8 @@ const selectedHqId = ref<string>()
 const visibleHeadquarters = computed(() => getVisibleHeadquarters(props.state))
 const visibleRouteEdges = computed(() => ROUTE_EDGES.filter(edge => props.state.hedgehogHqKnowledge === 'confirmed'
   || (edge.from !== 'metro-depot' && edge.to !== 'metro-depot')))
+const visibleCityPlaces = computed(() => CITY_PLACES.filter(place => props.state.districts[place.districtId].access === 'operational'
+  && (place.id !== 'old-metro-tunnel' || props.state.hedgehogHqKnowledge === 'confirmed')))
 const selectedHq = computed(() => visibleHeadquarters.value.find(hq => hq.id === selectedHqId.value))
 const selectedDistrictId = ref<DistrictId>()
 const selectedDistrict = computed(() => DISTRICT_DEFINITIONS.find(district => district.id === selectedDistrictId.value))
@@ -174,10 +176,17 @@ function relationLabel(ownerId: RelationOwnerId) {
         <g class="district-shapes">
           <polygon v-for="district in DISTRICT_DEFINITIONS" :key="district.id" :points="polygonPoints(district.polygon)" :class="[`access-${state.districts[district.id].access}`, { 'risk-elevated': state.districts[district.id].risk >= 30, 'risk-severe': state.districts[district.id].risk >= 50 }]" />
         </g>
+        <g class="city-quarters">
+          <polygon v-for="quarter in CITY_QUARTERS" :key="quarter.id" :points="polygonPoints(quarter.polygon)" :class="[`role-${quarter.role}`, `access-${state.districts[quarter.districtId].access}`, { significant: quarter.significant }]" />
+        </g>
+        <g class="local-streets">
+          <polyline v-for="street in LOCAL_STREETS" :key="street.id" :points="polygonPoints(street.points)" :class="`access-${state.districts[street.districtId].access}`" />
+        </g>
         <g class="arterial-lines">
           <line v-for="edge in visibleRouteEdges" :key="`${edge.from}-${edge.to}`" :class="`edge-${edge.kind}`" :x1="routeNode(edge.from).point.x" :y1="routeNode(edge.from).point.y" :x2="routeNode(edge.to).point.x" :y2="routeNode(edge.to).point.y" />
         </g>
       </svg>
+      <div v-for="place in visibleCityPlaces" :key="place.id" class="city-place" :class="`kind-${place.kind}`" :style="{ left: `${place.point.x}%`, top: `${place.point.y}%` }"><span></span><b>{{ tr(place.name) }}</b></div>
       <div v-if="highlightRouteNodes" class="debug-route-nodes" aria-hidden="true">
         <div v-for="node in ROUTE_NODES" :key="`debug-${node.id}`" class="debug-route-node" :class="{ hidden: node.id === 'metro-depot' }" :style="{ left: `${node.point.x}%`, top: `${node.point.y}%` }"><span></span><b>{{ node.id }}</b></div>
       </div>
