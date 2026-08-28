@@ -58,7 +58,7 @@
 }
 .base-pin strong { left: 50%; top: 31.5px; }
 
-.squad-formation { position: absolute; z-index: 4; width: 0; height: 0; transform: translate(-50%, -50%); pointer-events: none; }
+.squad-formation { position: absolute; z-index: 7; width: 0; height: 0; transform: translate(-50%, -50%); pointer-events: none; }
 .field-cat-marker { position: absolute; width: 38px; min-width: 0; height: 44px; padding: 0; transform: translate(-50%, -50%); border: 0; background: transparent; color: var(--squad-color); pointer-events: auto; }
 .field-cat-marker > span { position: absolute; left: 50%; bottom: 1px; width: 30px; height: 12px; transform: translateX(-50%); border: 1px solid color-mix(in srgb, var(--squad-color) 72%, transparent); border-radius: 50%; background: color-mix(in srgb, var(--squad-color) 18%, transparent); box-shadow: 0 2px 5px #000b; }
 .field-cat-marker svg { position: relative; width: 34px; height: 34px; overflow: visible; filter: drop-shadow(0 3px 4px #000c); }
