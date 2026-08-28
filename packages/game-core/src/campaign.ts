@@ -223,7 +223,7 @@ export function getDistrictAtPoint(point: MapPoint): DistrictId {
 
 export type RouteNode = { id: string; point: MapPoint; districtId: DistrictId }
 export type RouteEdgeKind = 'local' | 'inner_ring' | 'outer_ring' | 'radial' | 'shortcut'
-export type RouteEdge = { from: string; to: string; kind: RouteEdgeKind }
+export type RouteEdge = { from: string; to: string; kind: RouteEdgeKind; bend?: number }
 export type PlannedRoute = { points: MapPoint[]; distance: number }
 
 export const ROUTE_NODES: readonly RouteNode[] = [
@@ -273,14 +273,14 @@ export const ROUTE_EDGES: readonly RouteEdge[] = [
   { from: 'ring-southwest', to: 'ring-west', kind: 'outer_ring' },
   { from: 'ring-west', to: 'ring-northwest', kind: 'outer_ring' },
 
-  { from: 'core-north', to: 'north-gate', kind: 'radial' },
-  { from: 'north-gate', to: 'ring-north', kind: 'radial' },
-  { from: 'core-east', to: 'east-gate', kind: 'radial' },
-  { from: 'east-gate', to: 'ring-east', kind: 'radial' },
-  { from: 'core-south', to: 'south-gate', kind: 'radial' },
-  { from: 'south-gate', to: 'ring-south', kind: 'radial' },
-  { from: 'core-west', to: 'west-gate', kind: 'radial' },
-  { from: 'west-gate', to: 'ring-west', kind: 'radial' },
+  { from: 'core-north', to: 'north-gate', kind: 'radial', bend: -2.2 },
+  { from: 'north-gate', to: 'ring-north', kind: 'radial', bend: 1.65 },
+  { from: 'core-east', to: 'east-gate', kind: 'radial', bend: -1.7 },
+  { from: 'east-gate', to: 'ring-east', kind: 'radial', bend: 2.35 },
+  { from: 'core-south', to: 'south-gate', kind: 'radial', bend: -1.85 },
+  { from: 'south-gate', to: 'ring-south', kind: 'radial', bend: 2.15 },
+  { from: 'core-west', to: 'west-gate', kind: 'radial', bend: -2.1 },
+  { from: 'west-gate', to: 'ring-west', kind: 'radial', bend: 1.75 },
 
   { from: 'monolith', to: 'ring-north', kind: 'local' },
   { from: 'monolith', to: 'north-gate', kind: 'local' },
@@ -305,6 +305,44 @@ export const ROUTE_EDGES: readonly RouteEdge[] = [
   { from: 'residential', to: 'metro-depot', kind: 'shortcut' },
 ] as const
 
+const DEFAULT_EDGE_BEND: Record<RouteEdgeKind, number> = {
+  local: 1.8,
+  inner_ring: -2.8,
+  outer_ring: -4.2,
+  radial: 1.35,
+  shortcut: -2.4,
+}
+
+function routeNodePoint(id: string) {
+  return ROUTE_NODES.find(node => node.id === id)!.point
+}
+
+/**
+ * Returns the simulation geometry of a transport edge. The graph remains
+ * topological, while its edges follow roads rather than straight chords.
+ */
+export function getRouteEdgePoints(edge: RouteEdge, samples = 8): MapPoint[] {
+  const start = routeNodePoint(edge.from)
+  const end = routeNodePoint(edge.to)
+  const dx = end.x - start.x
+  const dy = end.y - start.y
+  const length = Math.hypot(dx, dy)
+  const bend = edge.bend ?? DEFAULT_EDGE_BEND[edge.kind]
+  if (length === 0 || bend === 0 || samples < 2) return [{ ...start }, { ...end }]
+  const control = {
+    x: (start.x + end.x) / 2 - dy / length * bend,
+    y: (start.y + end.y) / 2 + dx / length * bend,
+  }
+  return Array.from({ length: samples + 1 }, (_, index) => {
+    const t = index / samples
+    const inverse = 1 - t
+    return {
+      x: inverse * inverse * start.x + 2 * inverse * t * control.x + t * t * end.x,
+      y: inverse * inverse * start.y + 2 * inverse * t * control.y + t * t * end.y,
+    }
+  })
+}
+
 function routeNodeAvailable(node: RouteNode, districts: DistrictStates, destinationDistrict: DistrictId, allowedHiddenNodeIds: ReadonlySet<string>) {
   if (node.id === 'metro-depot' && !allowedHiddenNodeIds.has(node.id)) return false
   const access = districts[node.districtId].access
@@ -318,6 +356,19 @@ function nearestNode(point: MapPoint, candidates: readonly RouteNode[]) {
 
 function segmentDistance(left: MapPoint, right: MapPoint) {
   return Math.hypot(right.x - left.x, right.y - left.y)
+}
+
+function routeDistance(points: readonly MapPoint[]) {
+  return points.slice(1).reduce((sum, point, index) => sum + segmentDistance(points[index], point), 0)
+}
+
+function edgeBetween(left: string, right: string) {
+  return ROUTE_EDGES.find(edge => (edge.from === left && edge.to === right) || (edge.from === right && edge.to === left))
+}
+
+function directedEdgePoints(edge: RouteEdge, from: string) {
+  const points = getRouteEdgePoints(edge)
+  return edge.from === from ? points : points.reverse()
 }
 
 export function planOperationalRoute(
@@ -353,9 +404,7 @@ export function planOperationalRoute(
     for (const edge of ROUTE_EDGES) {
       const neighbour = edge.from === current ? edge.to : edge.to === current ? edge.from : undefined
       if (!neighbour || !pending.has(neighbour) || !availableIds.has(neighbour)) continue
-      const currentNode = ROUTE_NODES.find(node => node.id === current)!
-      const nextNode = ROUTE_NODES.find(node => node.id === neighbour)!
-      const candidate = currentDistance + segmentDistance(currentNode.point, nextNode.point)
+      const candidate = currentDistance + routeDistance(getRouteEdgePoints(edge))
       if (candidate < (distances.get(neighbour) ?? Infinity)) {
         distances.set(neighbour, candidate)
         previous.set(neighbour, current)
@@ -369,10 +418,14 @@ export function planOperationalRoute(
     if (!parent) return undefined
     nodeIds.unshift(parent)
   }
-  const graphPoints = nodeIds.map(id => ROUTE_NODES.find(node => node.id === id)!.point)
+  const graphPoints = nodeIds.slice(1).flatMap((nodeId, index) => {
+    const from = nodeIds[index]
+    const edge = edgeBetween(from, nodeId)!
+    return directedEdgePoints(edge, from).slice(index === 0 ? 0 : 1)
+  })
   const points = [origin, ...graphPoints, destination].filter((point, index, all) => index === 0
     || segmentDistance(point, all[index - 1]) > 0.01)
-  const distance = points.slice(1).reduce((sum, point, index) => sum + segmentDistance(points[index], point), 0)
+  const distance = routeDistance(points)
   return { points, distance }
 }
 

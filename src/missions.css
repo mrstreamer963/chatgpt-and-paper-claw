@@ -707,7 +707,7 @@ button.cleanup-pin.enhanced-alert > b { color: #ffad76; }
 .local-streets polyline { fill:none; stroke:#81938d32; stroke-width:var(--local-street-stroke); stroke-dasharray:var(--dash-local-street); vector-effect:non-scaling-stroke; }
 .local-streets .access-silhouette { opacity:.22; }
 .local-streets .access-contact { opacity:.46; }
-.arterial-lines line { stroke:#849c9755; stroke-width:var(--arterial-stroke); vector-effect:non-scaling-stroke; }
+.arterial-lines :is(line,polyline) { fill:none; stroke:#849c9755; stroke-width:var(--arterial-stroke); vector-effect:non-scaling-stroke; }
 .arterial-lines .edge-local { stroke:#78908a48; stroke-width:var(--edge-local-stroke); stroke-dasharray:var(--dash-edge-local); }
 .arterial-lines .edge-inner_ring { stroke:#d0a86578; stroke-width:var(--inner-ring-stroke); }
 .arterial-lines .edge-outer_ring { stroke:#7fb8ad78; stroke-width:var(--outer-ring-stroke); }

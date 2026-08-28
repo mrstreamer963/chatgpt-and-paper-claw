@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { CITY_PLACES, CITY_QUARTERS, DISTRICT_DEFINITIONS, GAME_RULES, LOCAL_STREETS, ROUTE_EDGES, ROUTE_NODES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getRelationPresentation, getReturnSquadBlockReason, getSquadMapPosition, getSquadMinimumEnergy, getVisibleHeadquarters, getWaterFiltersDispatchBlockReason, isActiveAssignedMission, isSquadResting, type DistrictId, type LogEntry, type MapPoint, type Mission, type RelationOwnerId, type Squad, type State } from '@nine-lives/game-core'
+import { CITY_PLACES, CITY_QUARTERS, DISTRICT_DEFINITIONS, GAME_RULES, LOCAL_STREETS, ROUTE_EDGES, ROUTE_NODES, getAssignMissionBlockReason, getCleanupSecondsRemaining, getMoveSquadBlockReason, getNinthLifeDispatchBlockReason, getRelationPresentation, getReturnSquadBlockReason, getRouteEdgePoints, getSquadMapPosition, getSquadMinimumEnergy, getVisibleHeadquarters, getWaterFiltersDispatchBlockReason, isActiveAssignedMission, isSquadResting, type DistrictId, type LogEntry, type MapPoint, type Mission, type RelationOwnerId, type RouteEdge, type Squad, type State } from '@nine-lives/game-core'
 import { squadDisplayName, translate, type Locale } from '../i18n'
 import catTokensUrl from '../../assets/art/cat-tokens.svg?url'
 import uiIconsUrl from '../../assets/art/ui-icons.svg?url'
@@ -197,7 +197,7 @@ onMounted(() => { window.addEventListener('keydown', handleEscape); if (mapGrid.
 onBeforeUnmount(() => { window.removeEventListener('keydown', handleEscape); mapResizeObserver?.disconnect() })
 function formatLog(entry: LogEntry) { const minutes = 540 + Math.floor(entry.time / 60); return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')} · ${tr(entry.key, entry.params)}` }
 function polygonPoints(points: readonly MapPoint[]) { return points.map(point => `${point.x},${point.y}`).join(' ') }
-function routeNode(id: string) { return ROUTE_NODES.find(node => node.id === id)! }
+function routeEdgePoints(edge: RouteEdge) { return polygonPoints(getRouteEdgePoints(edge)) }
 function relationLabel(ownerId: RelationOwnerId) {
   const presentation = getRelationPresentation(props.state, ownerId)
   return `${tr(presentation.label)} · ${presentation.value}/${presentation.maximum}`
@@ -220,7 +220,7 @@ function relationLabel(ownerId: RelationOwnerId) {
           <polyline v-for="street in LOCAL_STREETS" :key="street.id" :points="polygonPoints(street.points)" :class="`access-${state.districts[street.districtId].access}`" />
         </g>
         <g class="arterial-lines">
-          <line v-for="edge in visibleRouteEdges" :key="`${edge.from}-${edge.to}`" :class="`edge-${edge.kind}`" :x1="routeNode(edge.from).point.x" :y1="routeNode(edge.from).point.y" :x2="routeNode(edge.to).point.x" :y2="routeNode(edge.to).point.y" />
+          <polyline v-for="edge in visibleRouteEdges" :key="`${edge.from}-${edge.to}`" :class="`edge-${edge.kind}`" :points="routeEdgePoints(edge)" />
         </g>
       </svg>
       <div v-for="place in visibleCityPlaces" :key="place.id" class="city-place" :class="`kind-${place.kind}`" :style="{ left: `${place.point.x}%`, top: `${place.point.y}%` }"><span></span><b>{{ tr(place.name) }}</b></div>

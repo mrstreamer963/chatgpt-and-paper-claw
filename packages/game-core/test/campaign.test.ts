@@ -16,7 +16,7 @@ import {
   type State,
   type StoryFact,
 } from '../src/simulation.ts'
-import { CITY_PLACES, CITY_QUARTERS, DISTRICT_DEFINITIONS, LOCAL_STREETS, ROUTE_EDGES, ROUTE_NODES, planOperationalRoute } from '../src/campaign.ts'
+import { CITY_PLACES, CITY_QUARTERS, DISTRICT_DEFINITIONS, LOCAL_STREETS, ROUTE_EDGES, ROUTE_NODES, getRouteEdgePoints, planOperationalRoute, positionAlongRoute } from '../src/campaign.ts'
 
 test('the city transport graph has seven outer districts, a complete orbital road, radials, and special links', () => {
   assert.equal(DISTRICT_DEFINITIONS.length, 8, 'service core plus seven outer districts')
@@ -41,6 +41,27 @@ test('the hybrid city gives every district physical quarters and local streets w
   }
   assert.ok(CITY_PLACES.filter(place => place.kind === 'square').length >= 4)
   assert.ok(CITY_QUARTERS.some(quarter => quarter.significant))
+})
+
+test('transport edges and unit movement follow curved road geometry', () => {
+  const edge = ROUTE_EDGES.find(candidate => candidate.kind === 'outer_ring')!
+  const points = getRouteEdgePoints(edge)
+  const start = ROUTE_NODES.find(node => node.id === edge.from)!.point
+  const end = ROUTE_NODES.find(node => node.id === edge.to)!.point
+  const midpoint = positionAlongRoute(points, 0.5)
+  const chordMidpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 }
+
+  assert.deepEqual(points[0], start)
+  assert.deepEqual(points.at(-1), end)
+  assert.ok(points.length > 2)
+  assert.ok(Math.hypot(midpoint.x - chordMidpoint.x, midpoint.y - chordMidpoint.y) > 1)
+})
+
+test('consecutive radial roads alternate their bend into an S-shaped route', () => {
+  const inner = ROUTE_EDGES.find(edge => edge.from === 'core-north' && edge.to === 'north-gate')!
+  const outer = ROUTE_EDGES.find(edge => edge.from === 'north-gate' && edge.to === 'ring-north')!
+
+  assert.ok((inner.bend ?? 0) * (outer.bend ?? 0) < 0)
 })
 
 test('the city starts as known silhouettes with only sanctioned operational corridors', () => {
